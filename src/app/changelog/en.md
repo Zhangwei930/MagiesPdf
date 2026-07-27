@@ -7,6 +7,7 @@
 - Sandbox Electron renderer and print windows, validate IPC callers, and restrict hidden-window network access
 - Enforce REST input limits, safe file names, HTTPS for LAN access, asynchronous jobs, and cancellation
 - Harden PDF action sanitisation and OOXML ZIP expansion limits
+- Replace the vulnerable npm `xlsx` 0.18 package with maintained SheetJS 0.20.3 and audit shipped dependencies in CI
 - Require explicit consent before downloading missing OCR language models
 
 ### Features and engineering

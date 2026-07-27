@@ -29,7 +29,7 @@
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx \"src/**/*.test.ts\" \"electron/**/*.test.cjs\" \"mirror-worker/**/*.test.mjs\"",
-    "test:coverage": "c8 --all --include=\"src/core/**/*.ts\" --include=\"electron/**/*.cjs\" --exclude=\"**/*.test.*\" --reporter=text --reporter=html --check-coverage --lines=80 --statements=80 --functions=80 --branches=75 npm test",
+    "test:coverage": "npm run build:node && c8 --all --include=\"src/core/**/*.ts\" --include=\"electron/**/*.cjs\" --exclude=\"**/*.test.*\" --reporter=text --reporter=html --check-coverage --lines=80 --statements=80 --functions=80 --branches=75 npm test",
     "verify": "npm run lint && npm run typecheck && npm run test:coverage && npm run build",
     "pack:dir": "npm run build && cross-env NODE_OPTIONS=--disable-warning=DEP0190 electron-builder --config electron-builder.config.cjs --dir --publish=never",
     "pack:mac": "npm run build && cross-env NODE_OPTIONS=--disable-warning=DEP0190 electron-builder --config electron-builder.config.cjs --mac --publish=never",
@@ -62,7 +62,7 @@
     "react-dom": "^19.2.1",
     "tailwind-merge": "^3.4.0",
     "tesseract.js": "^7.0.0",
-    "xlsx": "^0.18.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

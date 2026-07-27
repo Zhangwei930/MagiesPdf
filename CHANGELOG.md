@@ -8,6 +8,7 @@
 - Make unsigned update downloads and installation explicitly manual.
 - Add strict REST input budgets, asynchronous jobs, cancellation, and HTTPS-only LAN access.
 - Harden PDF sanitisation and OOXML ZIP expansion limits.
+- Replace the vulnerable npm `xlsx` 0.18 package with maintained SheetJS 0.20.3 and audit shipped dependencies in CI.
 - Require consent before OCR downloads missing language models.
 - Add local P12/PFX PDF signing and signed-byte integrity verification.
 - Prefer the configured external converter for high-fidelity Office import/export.
