@@ -33,22 +33,23 @@ First public release.
   });
 
   it('supports multiple versions newest first', () => {
+    // Synthetic versions only — product release is still 1.0.1.
     const entries = parseChangelog(`
-## 1.1.0 — 2026-08-01
+## 9.9.0 — 2099-01-02
 
 ### Fixes
 
 - bug
 
-## 1.0.0 — 2026-07-27
+## 9.8.0 — 2099-01-01
 
 ### Features
 
 - ship
 `);
     assert.equal(entries.length, 2);
-    assert.equal(entries[0]!.version, '1.1.0');
-    assert.equal(entries[1]!.version, '1.0.0');
+    assert.equal(entries[0]!.version, '9.9.0');
+    assert.equal(entries[1]!.version, '9.8.0');
   });
 });
 
