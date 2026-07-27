@@ -17,7 +17,15 @@ First public open-source release of **MagiesPdf**.
 ### Explicit non-goals for this release
 
 - No PDF **certificate** (PKCS#7 / X.509) signing or verification  
-- No **code signing / notarization** of installers (open-source distribution; users may need to allow the app once in the OS)
+- No **code signing / notarization** of installers (open-source distribution)
+
+### First-launch (unsigned builds)
+
+| OS | What to do |
+| --- | --- |
+| **macOS** | After install: `xattr -dr com.apple.quarantine /Applications/MagiesPdf.app` — or right-click → **Open**. Use `mac-x64` on Intel, `mac-arm64` on Apple Silicon. |
+| **Windows** | SmartScreen → **More info** → **Run anyway** |
+| **Linux AppImage** | `chmod +x MagiesPdf-*-linux-*.AppImage` then run |
 
 ### Platforms (aligned with MagiesTerminal)
 

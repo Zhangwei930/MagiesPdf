@@ -5,11 +5,36 @@ A cross-platform desktop PDF toolbox. Merge, split, convert, protect and automat
 
 Built with Electron + React 19 + TypeScript, for macOS, Windows and Linux.
 
-**Version 1.0.0** — see [CHANGELOG.md](./CHANGELOG.md).
+**Version 1.0.0** — see [CHANGELOG.md](./CHANGELOG.md) ·
+[Download](https://github.com/Zhangwei930/MagiesPdf/releases/tag/v1.0.0).
 
-Installers are **unsigned** (open source), same policy as MagiesTerminal. On first
-launch you may need to allow the app in macOS Gatekeeper or Windows SmartScreen.
+Installers are **unsigned** (open source), same policy as MagiesTerminal.
 There is no PDF certificate digital signing — only visible signatures.
+
+### First-launch notes (unsigned builds)
+
+> **macOS:** Releases are not code-signed or notarized. Gatekeeper will block
+> the first open. After dragging the app into Applications, run:
+>
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/MagiesPdf.app
+> ```
+>
+> Or right-click the app → **Open** → confirm. Intel Macs need the **`mac-x64`**
+> build; Apple Silicon needs **`mac-arm64`**.
+
+> **Windows:** SmartScreen may say “Windows protected your PC”. Choose
+> **More info** → **Run anyway**. Prefer `MagiesPdf-*-win-x64.exe` (or arm64
+> on Snapdragon / ARM PCs).
+
+> **Linux (AppImage):** make executable then run:
+>
+> ```bash
+> chmod +x MagiesPdf-*-linux-*.AppImage
+> ./MagiesPdf-*-linux-*.AppImage
+> ```
+>
+> `.deb` installs with your package manager as usual.
 
 ### Package artefacts (same family as MagiesTerminal)
 
