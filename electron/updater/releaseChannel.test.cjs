@@ -136,7 +136,7 @@ describe('applyFeed', () => {
 
 describe('isSafeDownloadTarget', () => {
   it('accepts a mirror asset', () => {
-    assert.equal(isSafeDownloadTarget(buildMirrorUrl('MagiesPdf-0.1.0-mac-arm64.dmg')), true);
+    assert.equal(isSafeDownloadTarget(buildMirrorUrl('MagiesPdf-1.0.0-mac-arm64.dmg')), true);
   });
 
   it('accepts the mirror release.json used by dual-link version check', () => {
@@ -146,7 +146,7 @@ describe('isSafeDownloadTarget', () => {
   it('accepts a GitHub release asset', () => {
     assert.equal(
       isSafeDownloadTarget(
-        'https://github.com/Zhangwei930/MagiesPdf/releases/download/v0.1.0/MagiesPdf-0.1.0-win-x64.exe',
+        'https://github.com/Zhangwei930/MagiesPdf/releases/download/v1.0.0/MagiesPdf-1.0.0-win-x64.exe',
       ),
       true,
     );

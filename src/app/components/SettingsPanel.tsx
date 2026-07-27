@@ -4,6 +4,7 @@ import { bridge, hasBridge, type UpdaterStatus } from '../bridge.ts';
 import { t } from '../i18n.ts';
 import { ArrowLeft, Languages, Monitor, Moon, Sun } from '../icons.ts';
 import { useApp } from '../store.ts';
+import { APP_VERSION } from '../version.ts';
 import { Button, Field } from './ui.tsx';
 
 function randomToken(): string {
@@ -38,7 +39,7 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
   const settings = useApp((s) => s.settings);
   const update = useApp((s) => s.updateSettings);
   const [apiStatus, setApiStatus] = useState({ running: false, address: '', enabled: false });
-  const [appVersion, setAppVersion] = useState(hasBridge() ? '' : '1.0.0');
+  const [appVersion, setAppVersion] = useState(hasBridge() ? '' : APP_VERSION);
   const [packaged, setPackaged] = useState(false);
   const [updater, setUpdater] = useState<UpdaterStatus>({ state: 'idle' });
   const [checking, setChecking] = useState(false);
@@ -67,7 +68,7 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
     void bridge()
       .getVersion()
       .then(setAppVersion)
-      .catch(() => setAppVersion(bridge().version || '1.0.0'));
+      .catch(() => setAppVersion(bridge().version || APP_VERSION));
     void bridge()
       .isPackaged()
       .then(setPackaged)

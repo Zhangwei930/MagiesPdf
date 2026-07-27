@@ -1,4 +1,5 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
+const path = require('node:path');
 
 /**
  * The renderer's entire view of the outside world.
@@ -8,10 +9,20 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
  * there is deliberately no generic "invoke any channel" escape hatch.
  */
 
+/** Same field electron-builder / app.getVersion() use — keep UI in lockstep. */
+function resolveAppVersion() {
+  if (process.env.npm_package_version) return process.env.npm_package_version;
+  try {
+    return require(path.join(__dirname, '..', 'package.json')).version;
+  } catch {
+    return '1.0.0';
+  }
+}
+
 const api = {
   platform: process.platform,
   /** Prefer the packaged app version; fall back for plain `electron .` in dev. */
-  version: process.env.npm_package_version ?? '1.0.0',
+  version: resolveAppVersion(),
 
   getVersion: () => ipcRenderer.invoke('app:getVersion'),
   isPackaged: () => ipcRenderer.invoke('app:isPackaged'),

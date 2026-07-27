@@ -1,11 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { clsx } from 'clsx';
 import { CATEGORIES } from '@core/registry.ts';
 import type { CategoryId, ToolMeta } from '@core/types.ts';
+import { bridge, hasBridge } from '../bridge.ts';
 import { uiRegistry } from '../catalog.ts';
 import { t } from '../i18n.ts';
 import { ChevronDown, ChevronRight, Search, ToolIcon } from '../icons.ts';
 import { useApp } from '../store.ts';
+import { APP_VERSION } from '../version.ts';
 
 interface SidebarProps {
   activeToolId: string | null;
@@ -28,6 +30,19 @@ export function Sidebar({
   const locale = useApp((s) => s.locale);
   const recentToolIds = useApp((s) => s.recentToolIds);
   const [filter, setFilter] = useState('');
+  const [version, setVersion] = useState(APP_VERSION);
+
+  useEffect(() => {
+    if (!hasBridge()) return;
+    void bridge()
+      .getVersion()
+      .then((v) => {
+        if (v) setVersion(v);
+      })
+      .catch(() => {
+        /* keep APP_VERSION fallback */
+      });
+  }, []);
 
   /** Folders the user has expanded by clicking. */
   const [expanded, setExpanded] = useState<Set<string>>(() => {
@@ -146,7 +161,7 @@ export function Sidebar({
           />
           <div className="min-w-0">
             <div className="truncate text-[13px] font-semibold tracking-tight">MagiesPdf</div>
-            <div className="truncate text-[10px] text-[var(--text-muted)]">v1.0.0</div>
+            <div className="truncate text-[10px] text-[var(--text-muted)]">v{version}</div>
           </div>
         </button>
 
