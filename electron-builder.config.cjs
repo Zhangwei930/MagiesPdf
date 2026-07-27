@@ -130,8 +130,8 @@ module.exports = {
     icon: 'build/icon.png',
     // Align with productName so desktop environments can match the running window.
     executableName: 'MagiesPdf',
-    desktopName: 'MagiesPdf.desktop',
     // Same target set as MagiesTerminal: AppImage + deb + rpm + pacman.
+    // Note: electron-builder 26 does not accept `desktopName` (schema reject).
     target: ['AppImage', 'deb', 'rpm', 'pacman'],
     category: 'Office',
     maintainer: 'JasonZhangDad <470059464@qq.com>',
