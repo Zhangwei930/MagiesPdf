@@ -1,0 +1,165 @@
+import { createElement } from 'react';
+import {
+  AlertCircle,
+  ArrowLeft,
+  ArrowLeftRight,
+  ArrowUpDown,
+  Ban,
+  BookOpen,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Combine,
+  Crop,
+  Eraser,
+  File as FileIcon,
+  FileCode,
+  FileImage,
+  FileMinus,
+  FileOutput,
+  FilePenLine,
+  FileSearch,
+  FileText,
+  FileX,
+  FolderOpen,
+  GalleryVertical,
+  GitCompare,
+  Globe,
+  Grid2x2,
+  Hash,
+  Image as ImageIcon,
+  Images,
+  Info,
+  Languages,
+  Layers,
+  LayoutGrid,
+  Loader2,
+  Minimize2,
+  Monitor,
+  Moon,
+  Paperclip,
+  PenLine,
+  Plus,
+  RotateCw,
+  Save,
+  Scaling,
+  ScanText,
+  Scissors,
+  Search,
+  Settings,
+  ShieldCheck,
+  Stamp,
+  Sun,
+  Table,
+  Trash2,
+  Workflow,
+  Wrench,
+  X,
+  type LucideIcon,
+  type LucideProps,
+} from 'lucide-react';
+
+/**
+ * Explicit icon registry.
+ *
+ * Tool descriptors name their icon as a string, so something has to map names to
+ * components. Importing lucide's full barrel would pull ~1500 icons into the
+ * bundle; listing the ones actually used keeps it to what we ship.
+ */
+const ICONS: Record<string, LucideIcon> = {
+  AlertCircle,
+  ArrowLeft,
+  ArrowLeftRight,
+  ArrowUpDown,
+  Ban,
+  BookOpen,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Combine,
+  Crop,
+  Eraser,
+  File: FileIcon,
+  FileCode,
+  FileImage,
+  FileMinus,
+  FileOutput,
+  FilePenLine,
+  FileSearch,
+  FileText,
+  FileX,
+  FolderOpen,
+  GalleryVertical,
+  GitCompare,
+  Globe,
+  Grid2x2,
+  Hash,
+  Image: ImageIcon,
+  Images,
+  Info,
+  Languages,
+  Layers,
+  LayoutGrid,
+  Loader2,
+  Minimize2,
+  Monitor,
+  Moon,
+  Paperclip,
+  PenLine,
+  Plus,
+  RotateCw,
+  Save,
+  Scaling,
+  ScanText,
+  Scissors,
+  Search,
+  Settings,
+  ShieldCheck,
+  Stamp,
+  Sun,
+  Table,
+  Trash2,
+  Workflow,
+  Wrench,
+  X,
+};
+
+/** Falls back to a generic file icon so a typo in a descriptor never blanks the card. */
+export function icon(name: string): LucideIcon {
+  return ICONS[name] ?? FileIcon;
+}
+
+/**
+ * Renders a descriptor's icon by name.
+ *
+ * Callers use this rather than `const Icon = icon(name)` in their own render:
+ * assigning a component to a capitalised local during render is indistinguishable
+ * from defining one there, which the React lint rules reject.
+ */
+export function ToolIcon({ name, ...props }: { name: string } & LucideProps) {
+  return createElement(icon(name), props);
+}
+
+export {
+  AlertCircle,
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Eraser,
+  FileText,
+  FolderOpen,
+  Languages,
+  Loader2,
+  Monitor,
+  Moon,
+  Plus,
+  Save,
+  Search,
+  Settings,
+  Sun,
+  Trash2,
+  X,
+  Ban,
+};
+export type { LucideIcon, LucideProps };

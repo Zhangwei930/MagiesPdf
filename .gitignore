@@ -1,0 +1,34 @@
+node_modules/
+dist/
+dist-electron/
+release/
+coverage/
+.vite/
+
+.DS_Store
+Thumbs.db
+.idea/
+*.iml
+
+*.log
+.env
+.env.*
+*.p12
+*.pfx
+
+# Local OS / editor
+*.swp
+*~
+
+# Local packaging leftovers (already covered by release/, keep explicit)
+*.blockmap
+
+# Dev UI screenshots (not shipping assets)
+build/ui-preview-*.png
+
+# Signing material if ever added locally
+*.key
+*.pem
+*.p8
+*.mobileprovision
+secrets/

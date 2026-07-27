@@ -1,0 +1,186 @@
+@import 'tailwindcss';
+
+/* Dark mode is driven by a class on <html>, set by the inline script in index.html
+   before first paint and kept in sync by the settings store. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Brand ramp — a calm, slightly desaturated indigo so long sessions stay easy. */
+  --color-brand-50: oklch(0.97 0.015 275);
+  --color-brand-100: oklch(0.94 0.03 275);
+  --color-brand-200: oklch(0.88 0.06 275);
+  --color-brand-300: oklch(0.8 0.1 275);
+  --color-brand-400: oklch(0.71 0.15 275);
+  --color-brand-500: oklch(0.62 0.18 275);
+  --color-brand-600: oklch(0.54 0.19 275);
+  --color-brand-700: oklch(0.46 0.17 275);
+  --color-brand-800: oklch(0.38 0.13 275);
+  --color-brand-900: oklch(0.3 0.09 275);
+
+  --radius-card: 0.875rem;
+}
+
+/* Semantic surface tokens. Every component reads these rather than raw palette
+   values, so the two themes stay in step and a retint is a one-place change. */
+@layer base {
+  :root {
+    --surface-app: oklch(0.98 0.003 265);
+    --surface-panel: oklch(1 0 0);
+    --surface-raised: oklch(0.995 0.002 265);
+    --surface-sunken: oklch(0.955 0.005 265);
+    --surface-hover: oklch(0.965 0.006 275);
+    --border-subtle: oklch(0.9 0.006 265);
+    --border-strong: oklch(0.82 0.01 265);
+    --text-primary: oklch(0.22 0.012 265);
+    --text-secondary: oklch(0.48 0.012 265);
+    --text-muted: oklch(0.62 0.01 265);
+    --accent: var(--color-brand-600);
+    --accent-hover: var(--color-brand-700);
+    --accent-soft: oklch(0.95 0.025 275);
+    --danger: oklch(0.55 0.19 25);
+    --danger-soft: oklch(0.95 0.03 25);
+    --success: oklch(0.58 0.13 155);
+    --success-soft: oklch(0.95 0.04 155);
+    --shadow-card: 0 1px 2px oklch(0.2 0.02 265 / 0.06), 0 4px 12px oklch(0.2 0.02 265 / 0.05);
+  }
+
+  .dark {
+    --surface-app: oklch(0.19 0.012 265);
+    --surface-panel: oklch(0.235 0.014 265);
+    --surface-raised: oklch(0.27 0.015 265);
+    --surface-sunken: oklch(0.165 0.012 265);
+    --surface-hover: oklch(0.3 0.018 270);
+    --border-subtle: oklch(0.32 0.014 265);
+    --border-strong: oklch(0.42 0.018 265);
+    --text-primary: oklch(0.95 0.005 265);
+    --text-secondary: oklch(0.74 0.01 265);
+    --text-muted: oklch(0.58 0.012 265);
+    --accent: var(--color-brand-400);
+    --accent-hover: var(--color-brand-300);
+    --accent-soft: oklch(0.32 0.06 275);
+    --danger: oklch(0.68 0.17 25);
+    --danger-soft: oklch(0.3 0.06 25);
+    --success: oklch(0.72 0.14 155);
+    --success-soft: oklch(0.28 0.05 155);
+    --shadow-card: 0 1px 2px oklch(0 0 0 / 0.3), 0 6px 18px oklch(0 0 0 / 0.28);
+  }
+
+  * {
+    border-color: var(--border-subtle);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--surface-app);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  /* The frameless macOS title bar needs an explicit drag region. */
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+
+  ::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+    background-clip: content-box;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  .surface-panel {
+    background: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-card);
+  }
+
+  .tool-card {
+    background: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-card);
+    transition:
+      transform 0.15s ease,
+      box-shadow 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .tool-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-card);
+    border-color: var(--accent);
+  }
+
+  .field-input {
+    width: 100%;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    transition:
+      border-color 0.12s ease,
+      background 0.12s ease;
+  }
+
+  .field-input:hover:not(:disabled) {
+    border-color: var(--border-strong);
+  }
+
+  .field-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--surface-panel);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 18%, transparent);
+  }
+
+  .field-input:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+}

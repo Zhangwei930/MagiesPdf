@@ -1,0 +1,12 @@
+# Cloudflare Worker for MagiesPdf mainland-China download/update mirror.
+# Deploy with: npx wrangler deploy
+# Same dual-link host as MagiesTerminal; product path keeps feeds separate.
+name = "magiespdf-mirror"
+main = "src/worker.js"
+compatibility_date = "2026-07-01"
+
+# More specific than MagiesTerminal's dl.magies.top/* route so both workers
+# can share the host.
+routes = [
+  { pattern = "dl.magies.top/magiespdf/*", zone_name = "magies.top" },
+]
