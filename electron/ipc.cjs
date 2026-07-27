@@ -208,6 +208,13 @@ function registerIpc({ pool, getWindow, onSettingsChanged }) {
         console.error('[magiespdf] settings change hook failed:', error.message);
       }
     }
+    if (patch && Object.prototype.hasOwnProperty.call(patch, 'autoUpdate')) {
+      try {
+        updater.onAutoUpdatePreferenceChanged(next.autoUpdate !== false);
+      } catch (error) {
+        console.error('[magiespdf] auto-update preference hook failed:', error.message);
+      }
+    }
     return next;
   });
 

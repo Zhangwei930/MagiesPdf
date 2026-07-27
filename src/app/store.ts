@@ -60,6 +60,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultOutputDirectory: '',
   onNameCollision: 'rename',
   recentToolIds: [],
+  autoUpdate: true,
   api: { enabled: false, port: 8737, token: '', allowLan: false },
   externalConverter: { executable: '', argumentTemplate: '', timeoutMs: 120000 },
   pipelinePresets: [],

@@ -5,8 +5,8 @@ A cross-platform desktop PDF toolbox. Merge, split, convert, protect and automat
 
 Built with Electron + React 19 + TypeScript, for macOS, Windows and Linux.
 
-**Version 1.0.0** — see [CHANGELOG.md](./CHANGELOG.md) ·
-[Download](https://github.com/Zhangwei930/MagiesPdf/releases/tag/v1.0.0).
+**Version 1.0.1** — see [CHANGELOG.md](./CHANGELOG.md) ·
+[Download](https://github.com/Zhangwei930/MagiesPdf/releases/tag/v1.0.1).
 
 Installers are **unsigned** (open source), same policy as MagiesTerminal.
 There is no PDF certificate digital signing — only visible signatures.

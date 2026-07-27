@@ -21,8 +21,8 @@ const UI = {
   expandFolder: { zh: '点击展开', en: 'Click to expand' },
   collapseFolder: { zh: '点击收起', en: 'Click to collapse' },
   sidebarHint: {
-    zh: '左侧点分类即可展开工具列表；⌘K 全局搜索。',
-    en: 'Click a category on the left to expand its tools — or press ⌘K to search.',
+    zh: '左侧点分类即可展开工具列表；首页或 ⌘K 搜索工具。',
+    en: 'Click a category on the left to expand its tools — or search from Home / ⌘K.',
   },
 
   chooseFiles: { zh: '选择文件', en: 'Choose files' },
@@ -152,10 +152,21 @@ const UI = {
   apiStatusStopped: { zh: '未运行', en: 'Stopped' },
   apiEndpoint: { zh: '地址', en: 'Endpoint' },
 
+  settingsNavAppearance: { zh: '外观', en: 'Appearance' },
+  settingsNavFiles: { zh: '文件', en: 'Files' },
+  settingsNavConverter: { zh: '转换器', en: 'Converter' },
+  settingsNavApi: { zh: 'API', en: 'API' },
+  settingsNavApp: { zh: '应用', en: 'Application' },
+
   updatesSection: { zh: '软件更新', en: 'Updates' },
   updatesHelp: {
-    zh: '与 MagiesTerminal 相同的双链更新：海外优先 GitHub Releases，大陆优先 dl.magies.top 镜像，任一侧失败自动切换。开源构建不签名；开发模式仅显示当前版本。',
-    en: 'Same dual-link updates as MagiesTerminal: GitHub Releases first overseas, dl.magies.top mirror first in mainland China, with automatic fallback. Open-source builds are unsigned; dev mode only shows the current version.',
+    zh: '双链更新：GitHub Releases（Zhangwei930/MagiesPdf）与国内镜像互为备份。开源构建不签名。',
+    en: 'Dual-link updates: GitHub Releases (Zhangwei930/MagiesPdf) with a mainland mirror as fallback. Open-source builds are unsigned.',
+  },
+  updatesAuto: { zh: '自动检查并下载更新', en: 'Automatically check and download updates' },
+  updatesAutoHelp: {
+    zh: '默认开启。发现新版本后自动下载，安装前会再提示你确认。',
+    en: 'On by default. Downloads new versions automatically; you still confirm before install.',
   },
   updatesCurrentVersion: { zh: '当前版本', en: 'Current version' },
   updatesCheck: { zh: '检查更新', en: 'Check for updates' },
@@ -172,6 +183,25 @@ const UI = {
     zh: '当前为开发运行，更新通道仅在安装包中可用。',
     en: 'Running from source — update feeds only apply to packaged builds.',
   },
+  updatesSupport: { zh: '问题咨询', en: 'Support' },
+  updatesSupportEmail: { zh: '联系邮箱', en: 'Email' },
+  updatesSupportSubtitle: {
+    zh: '复制邮箱，发送问题与建议',
+    en: 'Copy the support email to send questions',
+  },
+  updatesSupportCopied: { zh: '邮箱已复制', en: 'Email copied' },
+
+  whatsNew: { zh: '更新内容', en: "What's New" },
+  whatsNewSubtitle: { zh: '查看本机内置的版本更新说明', en: 'Release notes bundled with the app' },
+  whatsNewSummary: {
+    zh: '{versions} 个版本 · {changes} 条变更',
+    en: '{versions} versions · {changes} changes',
+  },
+  whatsNewLatest: { zh: '最新', en: 'Latest' },
+  whatsNewChangeCount: { zh: '{count} 条变更', en: '{count} changes' },
+  whatsNewEmpty: { zh: '暂无更新记录', en: 'No release notes yet' },
+  close: { zh: '关闭', en: 'Close' },
+
 
   startupFailed: { zh: '启动失败', en: 'Startup failed' },
   startupFailedHint: {

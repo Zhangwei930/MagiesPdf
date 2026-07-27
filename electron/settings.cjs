@@ -23,6 +23,11 @@ const DEFAULTS = {
    * production, which is the worst possible failure mode.
    */
   recentToolIds: [],
+  /**
+   * Check for updates on launch and auto-download when a newer release exists.
+   * User can still choose when to install. Default on (same expectation as MagiesTerminal).
+   */
+  autoUpdate: true,
   /** Local REST API, off unless the user turns it on. */
   api: {
     enabled: false,

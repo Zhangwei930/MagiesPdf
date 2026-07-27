@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.0.1 — 2026-07-27
+
+### Highlights
+
+- **Settings** left-nav sections (appearance / files / converter / API / application)
+- **What's New** in-app changelog dialog (no jump to GitHub release page)
+- **Auto-update on by default**; dual-link feeds point to `Zhangwei930/MagiesPdf`
+- Remove duplicate sidebar search bar (use Home / ⌘K)
+- Shorter update error messages when a feed is offline
+
+### First-launch (unsigned builds)
+
+| OS | What to do |
+| --- | --- |
+| **macOS** | `xattr -dr com.apple.quarantine /Applications/MagiesPdf.app` |
+| **Windows** | SmartScreen → More info → Run anyway |
+| **Linux AppImage** | `chmod +x` then run |
+
 ## 1.0.0 — 2026-07-27
 
 First public open-source release of **MagiesPdf**.

@@ -15,7 +15,7 @@ function resolveAppVersion() {
   try {
     return require(path.join(__dirname, '..', 'package.json')).version;
   } catch {
-    return '1.0.0';
+    return '1.0.1';
   }
 }
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { clsx } from 'clsx';
 import type { CategoryId } from '@core/types.ts';
 import { uiRegistry } from './catalog.ts';
 import { hasBridge } from './bridge.ts';
@@ -135,11 +136,15 @@ export function App() {
             activeToolId={main.name === 'tool' ? main.toolId : null}
             onSelectHome={openWelcome}
             onSelectTool={openTool}
-            onOpenSearch={() => setPaletteOpen(true)}
           />
         )}
 
-        <main className="min-h-0 flex-1 overflow-y-auto bg-[var(--surface-app)]">
+        <main
+          className={clsx(
+            'min-h-0 flex-1 bg-[var(--surface-app)]',
+            main.name === 'settings' ? 'overflow-hidden' : 'overflow-y-auto',
+          )}
+        >
           {main.name === 'settings' && <SettingsPanel onBack={openWelcome} />}
 
           {main.name === 'tool' &&
