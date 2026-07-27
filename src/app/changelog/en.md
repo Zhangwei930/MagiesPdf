@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.0.2 — 2026-07-27
+
+### Security and reliability
+
+- Sandbox Electron renderer and print windows, validate IPC callers, and restrict hidden-window network access
+- Enforce REST input limits, safe file names, HTTPS for LAN access, asynchronous jobs, and cancellation
+- Harden PDF action sanitisation and OOXML ZIP expansion limits
+- Require explicit consent before downloading missing OCR language models
+
+### Features and engineering
+
+- Add local P12/PFX PDF certificate signing and signed-byte integrity verification
+- Prefer the configured external converter for higher-fidelity Office import and export
+- Expand the toolbox to 58 tools and add coverage gates, CI, and dependency maintenance
+- Keep unsigned application update downloads and installation explicitly manual
+
+### First-launch (unsigned builds)
+
+- **macOS**: run `xattr -dr com.apple.quarantine /Applications/MagiesPdf.app`, or right-click → Open. Use `mac-x64` on Intel, `mac-arm64` on Apple Silicon.
+- **Windows**: SmartScreen → More info → Run anyway
+- **Linux AppImage**: `chmod +x` then run
+
 ## 1.0.1 — 2026-07-27
 
 ### Highlights

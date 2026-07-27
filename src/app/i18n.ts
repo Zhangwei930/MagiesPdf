@@ -145,9 +145,11 @@ const UI = {
   apiGenerateToken: { zh: '生成令牌', en: 'Generate token' },
   apiAllowLan: { zh: '允许局域网访问', en: 'Allow LAN access' },
   apiAllowLanHelp: {
-    zh: '默认只监听 127.0.0.1。勾选后绑定 0.0.0.0，同网段设备也能访问（务必设置强令牌）。',
-    en: 'Default is loopback only. When checked, binds 0.0.0.0 so peers on the LAN can reach it (use a strong token).',
+    zh: '默认只监听 127.0.0.1。局域网访问仅支持 HTTPS，并需要填写 PEM 证书和私钥的绝对路径。',
+    en: 'Loopback only by default. LAN access is HTTPS-only and requires absolute paths to a PEM certificate and private key.',
   },
+  apiTlsCert: { zh: 'TLS 证书路径', en: 'TLS certificate path' },
+  apiTlsKey: { zh: 'TLS 私钥路径', en: 'TLS private-key path' },
   apiStatusRunning: { zh: '运行中', en: 'Running' },
   apiStatusStopped: { zh: '未运行', en: 'Stopped' },
   apiEndpoint: { zh: '地址', en: 'Endpoint' },
@@ -163,10 +165,10 @@ const UI = {
     zh: '双链更新：GitHub Releases（Zhangwei930/MagiesPdf）与国内镜像互为备份。开源构建不签名。',
     en: 'Dual-link updates: GitHub Releases (Zhangwei930/MagiesPdf) with a mainland mirror as fallback. Open-source builds are unsigned.',
   },
-  updatesAuto: { zh: '自动检查并下载更新', en: 'Automatically check and download updates' },
+  updatesAuto: { zh: '自动检查更新', en: 'Automatically check for updates' },
   updatesAutoHelp: {
-    zh: '默认开启。发现新版本后自动下载，安装前会再提示你确认。',
-    en: 'On by default. Downloads new versions automatically; you still confirm before install.',
+    zh: '默认开启。安装包未签名，因此下载与安装始终需要你分别确认。',
+    en: 'On by default. Packages are unsigned, so download and installation always require separate confirmation.',
   },
   updatesCurrentVersion: { zh: '当前版本', en: 'Current version' },
   updatesCheck: { zh: '检查更新', en: 'Check for updates' },
@@ -201,6 +203,21 @@ const UI = {
   whatsNewChangeCount: { zh: '{count} 条变更', en: '{count} changes' },
   whatsNewEmpty: { zh: '暂无更新记录', en: 'No release notes yet' },
   close: { zh: '关闭', en: 'Close' },
+
+  updatePromptAvailableHint: {
+    zh: '发现新版本，可下载后重启安装。',
+    en: 'A new version is available. Download it, then restart to install.',
+  },
+  updatePromptDownloadHint: {
+    zh: '正在下载更新，请保持网络畅通。',
+    en: 'Downloading the update — keep your network connection active.',
+  },
+  updatePromptReadyHint: {
+    zh: '更新已下载完成。点击「退出并安装」将重启应用并完成升级。',
+    en: 'Update downloaded. Click Quit and install to restart and finish the upgrade.',
+  },
+  updatePromptLater: { zh: '稍后', en: 'Later' },
+
 
 
   startupFailed: { zh: '启动失败', en: 'Startup failed' },

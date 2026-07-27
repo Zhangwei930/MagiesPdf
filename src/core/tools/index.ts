@@ -51,6 +51,7 @@ import { flattenTool } from './security/flatten.ts';
 import { sanitizeTool } from './security/sanitize.ts';
 import { redactTool } from './security/redact.ts';
 import { addSignatureTool } from './security/sign.ts';
+import { certificateSignTool } from './security/certificateSign.ts';
 import { inspectSignaturesTool } from './security/inspectSignatures.ts';
 import { pipelineTool } from './advanced/pipeline.ts';
 import { batchTool } from './advanced/batch.ts';
@@ -102,6 +103,7 @@ export const ALL_TOOLS: readonly ToolDescriptor[] = [
   removePasswordTool,
   addWatermarkTool,
   addSignatureTool,
+  certificateSignTool,
   inspectSignaturesTool,
   redactTool,
   sanitizeTool,

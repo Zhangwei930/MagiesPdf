@@ -24,8 +24,8 @@ const DEFAULTS = {
    */
   recentToolIds: [],
   /**
-   * Check for updates on launch and auto-download when a newer release exists.
-   * User can still choose when to install. Default on (same expectation as MagiesTerminal).
+   * Check for updates on launch. Download and installation always require
+   * explicit user actions because release packages are unsigned.
    */
   autoUpdate: true,
   /** Local REST API, off unless the user turns it on. */
@@ -36,6 +36,9 @@ const DEFAULTS = {
     token: '',
     /** Bind to loopback only; exposing it on the LAN has to be deliberate. */
     allowLan: false,
+    /** LAN binding is HTTPS-only and requires user-provided PEM files. */
+    tlsCertPath: '',
+    tlsKeyPath: '',
   },
   /**
    * Optional external command-line document converter, used by the Office
@@ -97,7 +100,11 @@ function write(patch) {
   cache = merge(read(), patch);
   try {
     fs.mkdirSync(path.dirname(filePath()), { recursive: true });
-    fs.writeFileSync(filePath(), `${JSON.stringify(cache, null, 2)}\n`, 'utf8');
+    fs.writeFileSync(filePath(), `${JSON.stringify(cache, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    fs.chmodSync(filePath(), 0o600);
   } catch (error) {
     // Surfacing this beats silently losing the user's preferences.
     console.error('[magiespdf] failed to persist settings:', error.message);

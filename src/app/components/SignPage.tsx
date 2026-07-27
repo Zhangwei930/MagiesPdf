@@ -362,13 +362,14 @@ export function SignPage({ tool }: SignPageProps) {
       <footer className="flex items-center gap-2 border-t border-[var(--border-subtle)] bg-[var(--surface-panel)] px-6 py-3">
         <div className="flex-1" />
         {busy ? (
-          <Button variant="secondary" onClick={() => job && void cancelJob(job.id)}>
+          <Button variant="danger" size="lg" onClick={() => job && void cancelJob(job.id)}>
             {t('cancel', locale)}
           </Button>
-        ) : null}
-        <Button variant="primary" size="lg" loading={busy} disabled={!canRun} onClick={() => void run()}>
-          {t(busy ? 'running' : 'run', locale)}
-        </Button>
+        ) : (
+          <Button variant="primary" size="lg" disabled={!canRun} onClick={() => void run()}>
+            {t('run', locale)}
+          </Button>
+        )}
       </footer>
     </div>
   );

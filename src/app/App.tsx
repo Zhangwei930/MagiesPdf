@@ -15,6 +15,7 @@ import { SettingsPanel } from './components/SettingsPanel.tsx';
 import { Sidebar } from './components/Sidebar.tsx';
 import { SignPage } from './components/SignPage.tsx';
 import { ToolPage } from './components/ToolPage.tsx';
+import { UpdatePrompt } from './components/UpdatePrompt.tsx';
 import { Badge } from './components/ui.tsx';
 
 type MainView =
@@ -183,6 +184,7 @@ export function App() {
         <CommandPalette onClose={() => setPaletteOpen(false)} onSelect={openTool} />
       )}
       <JobPanel open={jobsOpen} onClose={() => setJobsOpen(false)} />
+      <UpdatePrompt />
     </div>
   );
 }

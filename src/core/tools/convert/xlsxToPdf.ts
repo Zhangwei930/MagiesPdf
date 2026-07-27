@@ -76,7 +76,7 @@ export const xlsxToPdfTool: ToolDescriptor = {
     const file = soleFile(ctx);
 
     if (ctx.host?.hasExternalConverter()) {
-      const output = await ctx.host.externalConvert(file, 'pdf');
+      const output = await ctx.host.externalConvert(file, 'pdf', ctx.signal);
       ctx.report(1);
       return {
         files: [pdfOutput(suffixedName(file.name, '', '.pdf'), output.bytes)],

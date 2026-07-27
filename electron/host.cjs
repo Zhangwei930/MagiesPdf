@@ -4,6 +4,7 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { BrowserWindow } = require('electron');
 const settings = require('./settings.cjs');
+const { safeFileName } = require('./security.cjs');
 
 /**
  * The main-process capabilities handed to `runtime: 'main'` tools as `ctx.host`.
@@ -18,8 +19,27 @@ const settings = require('./settings.cjs');
 /** Prints are serialised: hidden windows are cheap but not free. */
 let printChain = Promise.resolve();
 
-function htmlToPdf(html, options) {
-  const job = printChain.then(() => printHtml(html, options));
+const PRINT_WEB_PREFERENCES = Object.freeze({
+  sandbox: true,
+  contextIsolation: true,
+  nodeIntegration: false,
+  javascript: false,
+  partition: 'magiespdf-secure-print',
+});
+
+function isSafePrintRequest(url) {
+  try {
+    const protocol = new URL(url).protocol;
+    return protocol === 'data:' || protocol === 'blob:';
+  } catch {
+    return false;
+  }
+}
+
+const safeTemporaryName = safeFileName;
+
+function htmlToPdf(html, options, signal) {
+  const job = printChain.then(() => printHtml(html, options, signal));
   // Keep the chain alive even when a job fails.
   printChain = job.then(
     () => undefined,
@@ -28,18 +48,25 @@ function htmlToPdf(html, options) {
   return job;
 }
 
-async function printHtml(html, options) {
+async function printHtml(html, options, signal) {
   const window = new BrowserWindow({
     show: false,
-    webPreferences: {
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      javascript: true,
-    },
+    webPreferences: PRINT_WEB_PREFERENCES,
   });
+  const abort = () => window.destroy();
 
   try {
+    window.webContents.session.webRequest.onBeforeRequest((details, callback) => {
+      callback({ cancel: !isSafePrintRequest(details.url) });
+    });
+    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    window.webContents.on('will-navigate', (event, url) => {
+      if (!isSafePrintRequest(url)) event.preventDefault();
+    });
+
+    if (signal?.aborted) throw Object.assign(new Error('Print cancelled'), { code: 'ABORT_ERR' });
+    signal?.addEventListener('abort', abort, { once: true });
+
     await window.loadURL(
       `data:text/html;charset=utf-8;base64,${Buffer.from(html, 'utf8').toString('base64')}`,
     );
@@ -61,7 +88,8 @@ async function printHtml(html, options) {
 
     return new Uint8Array(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.length));
   } finally {
-    window.destroy();
+    signal?.removeEventListener('abort', abort);
+    if (!window.isDestroyed()) window.destroy();
   }
 }
 
@@ -86,7 +114,7 @@ function hasExternalConverter() {
  * `{in}`/`{out}` in the argument template, and picks up `<stem>.<extension>`
  * from the output dir.
  */
-async function externalConvert(input, targetExtension) {
+async function externalConvert(input, targetExtension, signal) {
   const { executable, argumentTemplate, timeoutMs } = externalConverterConfig();
   if (!hasExternalConverter()) {
     throw new Error('No external converter is configured');
@@ -94,7 +122,11 @@ async function externalConvert(input, targetExtension) {
 
   const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'magiespdf-conv-'));
   try {
-    const inputPath = path.join(workDir, input.name);
+    const inputName = safeTemporaryName(input.name);
+    if (!/^[a-z0-9]+$/i.test(targetExtension)) {
+      throw new Error('External converter target extension is invalid');
+    }
+    const inputPath = path.join(workDir, inputName);
     await fs.writeFile(inputPath, Buffer.from(input.bytes));
 
     const args = argumentTemplate
@@ -103,13 +135,20 @@ async function externalConvert(input, targetExtension) {
       .map((argument) => argument.replaceAll('{in}', inputPath).replaceAll('{out}', workDir));
 
     await new Promise((resolve, reject) => {
-      execFile(executable, args, { timeout: timeoutMs || 120000 }, (error, _stdout, stderr) => {
+      const child = execFile(executable, args, { timeout: timeoutMs || 120000 }, (error, _stdout, stderr) => {
+        signal?.removeEventListener('abort', abort);
         if (error) reject(new Error(`External converter failed: ${error.message}\n${stderr}`));
         else resolve(undefined);
       });
+      const abort = () => {
+        child.kill();
+        reject(Object.assign(new Error('External converter cancelled'), { code: 'ABORT_ERR' }));
+      };
+      if (signal?.aborted) abort();
+      else signal?.addEventListener('abort', abort, { once: true });
     });
 
-    const stem = input.name.replace(/\.[^.]+$/, '');
+    const stem = inputName.replace(/\.[^.]+$/, '');
     const expected = path.join(workDir, `${stem}.${targetExtension}`);
     const bytes = await fs.readFile(expected).catch(() => {
       throw new Error(`External converter produced no ${stem}.${targetExtension}`);
@@ -129,4 +168,10 @@ function createHostBridge() {
   return { htmlToPdf, externalConvert, hasExternalConverter };
 }
 
-module.exports = { createHostBridge, htmlToPdf };
+module.exports = {
+  createHostBridge,
+  htmlToPdf,
+  PRINT_WEB_PREFERENCES,
+  isSafePrintRequest,
+  safeTemporaryName,
+};

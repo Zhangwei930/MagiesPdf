@@ -43,6 +43,27 @@ export const OCR_LANGUAGES = [
   { value: 'rus', label: { zh: '俄语', en: 'Russian' } },
 ] as const;
 
+export function assertOcrModelConsent(
+  languages: readonly string[],
+  allowModelDownload: boolean,
+  cachePath = LANGUAGE_CACHE,
+): void {
+  const missing = languages.filter(
+    (language) => !fs.existsSync(path.join(cachePath, `${language}.traineddata`)),
+  );
+  if (missing.length > 0 && !allowModelDownload) {
+    throw new ToolError(
+      'NETWORK_CONSENT_REQUIRED',
+      `OCR language model download needs consent: ${missing.join(', ')}`,
+      {
+        zh: `尚未缓存识别模型：${missing.join('、')}。如同意从 jsDelivr 下载模型，请勾选“允许下载缺失模型”。文档本身不会上传。`,
+        en: `OCR models are not cached: ${missing.join(', ')}. Enable “Allow missing model downloads” to fetch them from jsDelivr. Your document is not uploaded.`,
+      },
+      { missingLanguages: missing },
+    );
+  }
+}
+
 interface RecognizedWord {
   text: string;
   bbox: { x0: number; y0: number; x1: number; y1: number };
@@ -135,6 +156,16 @@ export const ocrTool: ToolDescriptor = {
       minSelected: 1,
     },
     {
+      key: 'allowModelDownload',
+      type: 'boolean',
+      label: { zh: '允许下载缺失模型', en: 'Allow missing model downloads' },
+      help: {
+        zh: '仅在所选语言模型尚未缓存时访问 jsDelivr；不会上传文档。',
+        en: 'Uses jsDelivr only when a selected model is not cached; the document is never uploaded.',
+      },
+      default: false,
+    },
+    {
       key: 'output',
       type: 'select',
       label: { zh: '输出', en: 'Output' },
@@ -170,6 +201,7 @@ export const ocrTool: ToolDescriptor = {
   async run(ctx) {
     const file = soleFile(ctx);
     const languages = listParam(ctx, 'languages');
+    assertOcrModelConsent(languages, ctx.params.allowModelDownload === true);
     const outputKind = stringParam(ctx, 'output');
     const dpi = numberParam(ctx, 'dpi');
     /** Rendered pixels back to PDF points. */

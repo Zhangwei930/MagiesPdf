@@ -1,5 +1,4 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
-const path = require('node:path');
 
 /**
  * The renderer's entire view of the outside world.
@@ -11,12 +10,7 @@ const path = require('node:path');
 
 /** Same field electron-builder / app.getVersion() use — keep UI in lockstep. */
 function resolveAppVersion() {
-  if (process.env.npm_package_version) return process.env.npm_package_version;
-  try {
-    return require(path.join(__dirname, '..', 'package.json')).version;
-  } catch {
-    return '1.0.1';
-  }
+  return process.env.npm_package_version || '1.0.2';
 }
 
 const api = {

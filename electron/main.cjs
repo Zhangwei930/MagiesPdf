@@ -1,10 +1,12 @@
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { BrowserWindow, app, nativeTheme, shell } = require('electron');
 const { JobPool } = require('./jobs/pool.cjs');
 const { registerIpc } = require('./ipc.cjs');
 const settings = require('./settings.cjs');
 const { startUpdater } = require('./updater/index.cjs');
 const { syncApiServer, stopApiServer } = require('./api/server.cjs');
+const { MAIN_WINDOW_WEB_PREFERENCES, isTrustedRendererUrl } = require('./security.cjs');
 
 /**
  * MagiesPdf main process.
@@ -16,6 +18,8 @@ const { syncApiServer, stopApiServer } = require('./api/server.cjs');
 
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
 const isDev = Boolean(DEV_SERVER_URL);
+const PACKAGED_INDEX_PATH = path.join(__dirname, '..', 'dist', 'index.html');
+const RENDERER_URL = isDev ? new URL(DEV_SERVER_URL).href : pathToFileURL(PACKAGED_INDEX_PATH).href;
 
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
@@ -44,11 +48,8 @@ function createWindow() {
     backgroundColor: resolveBackgroundColor(),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
+      ...MAIN_WINDOW_WEB_PREFERENCES,
       preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      spellcheck: false,
     },
   });
 
@@ -56,19 +57,23 @@ function createWindow() {
   window.once('ready-to-show', () => window.show());
 
   if (isDev) {
-    void window.loadURL(DEV_SERVER_URL);
+    void window.loadURL(RENDERER_URL);
     window.webContents.openDevTools({ mode: 'detach' });
   } else {
-    void window.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    void window.loadFile(PACKAGED_INDEX_PATH);
   }
 
   // Documents are local; nothing in the UI should ever navigate or open a window.
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:$/.test(new URL(url).protocol)) void shell.openExternal(url);
+    try {
+      if (/^https?:$/.test(new URL(url).protocol)) void shell.openExternal(url);
+    } catch {
+      // Invalid URLs are denied below.
+    }
     return { action: 'deny' };
   });
   window.webContents.on('will-navigate', (event, url) => {
-    if (!isDev || !url.startsWith(DEV_SERVER_URL)) event.preventDefault();
+    if (!isTrustedRendererUrl(url, RENDERER_URL)) event.preventDefault();
   });
 
   // A renderer that fails to boot shows an empty window and nothing else — the
@@ -106,6 +111,7 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc({
       pool,
       getWindow: () => mainWindow,
+      trustedRendererUrl: RENDERER_URL,
       onSettingsChanged: () => {
         void syncApiServer({ pool }).catch((error) => {
           console.error('[magiespdf] REST API failed to start:', error.message);

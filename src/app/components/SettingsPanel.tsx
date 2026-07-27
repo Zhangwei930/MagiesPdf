@@ -428,6 +428,36 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
                 </label>
               </Field>
 
+              {settings.api.allowLan && (
+                <>
+                  <Field label={t('apiTlsCert', locale)}>
+                    <input
+                      className="field-input font-mono text-xs"
+                      value={settings.api.tlsCertPath}
+                      placeholder="/absolute/path/cert.pem"
+                      onChange={(e) =>
+                        void update({
+                          api: { ...settings.api, tlsCertPath: e.target.value },
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label={t('apiTlsKey', locale)}>
+                    <input
+                      className="field-input font-mono text-xs"
+                      type="password"
+                      value={settings.api.tlsKeyPath}
+                      placeholder="/absolute/path/key.pem"
+                      onChange={(e) =>
+                        void update({
+                          api: { ...settings.api, tlsKeyPath: e.target.value },
+                        })
+                      }
+                    />
+                  </Field>
+                </>
+              )}
+
               {apiStatus.running && apiStatus.address && (
                 <Field label={t('apiEndpoint', locale)}>
                   <code className="block break-all rounded-md bg-[var(--surface-sunken)] px-2 py-1.5 font-mono text-[12px]">
@@ -440,7 +470,7 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
 
           {section === 'app' && (
             <section className="surface-panel space-y-4 p-4">
-              <Field label={t('updatesSection', locale)} help={t('updatesHelp', locale)}>
+              <Field label={t('updatesSection', locale)}>
                 <p className="mb-2 text-[12px] text-[var(--text-secondary)]">
                   {t('updatesCurrentVersion', locale)}:{' '}
                   <span className="font-mono font-medium">{appVersion || '—'}</span>

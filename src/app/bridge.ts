@@ -30,9 +30,16 @@ export interface AppSettings {
   defaultOutputDirectory: string;
   onNameCollision: 'rename' | 'overwrite';
   recentToolIds: string[];
-  /** Default true: check feeds on launch and auto-download when a release is found. */
+  /** Default true: check feeds on launch. Downloads remain manual. */
   autoUpdate: boolean;
-  api: { enabled: boolean; port: number; token: string; allowLan: boolean };
+  api: {
+    enabled: boolean;
+    port: number;
+    token: string;
+    allowLan: boolean;
+    tlsCertPath: string;
+    tlsKeyPath: string;
+  };
   externalConverter: { executable: string; argumentTemplate: string; timeoutMs: number };
   pipelinePresets: PipelinePreset[];
 }

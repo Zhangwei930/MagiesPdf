@@ -5,11 +5,12 @@ A cross-platform desktop PDF toolbox. Merge, split, convert, protect and automat
 
 Built with Electron + React 19 + TypeScript, for macOS, Windows and Linux.
 
-**Version 1.0.1** — see [CHANGELOG.md](./CHANGELOG.md) ·
-[Download](https://github.com/Zhangwei930/MagiesPdf/releases/tag/v1.0.1).
+**Version 1.0.2** — see [CHANGELOG.md](./CHANGELOG.md) ·
+[Download](https://github.com/Zhangwei930/MagiesPdf/releases/tag/v1.0.2).
 
 Installers are **unsigned** (open source), same policy as MagiesTerminal.
-There is no PDF certificate digital signing — only visible signatures.
+PDF certificate signing is separate: P12/PFX material is processed locally and
+is never saved by MagiesPdf.
 
 ### First-launch notes (unsigned builds)
 
@@ -60,12 +61,14 @@ Most online PDF tools ask you to upload the document first. For a contract, a pa
 or a scan of your passport that is the wrong trade. MagiesPdf does the same work on
 your desk, with the file never leaving the machine.
 
-The only network access the app ever makes is an optional **dual-link** update
-check (same model as MagiesTerminal): GitHub Releases overseas, Cloudflare
-mirror `dl.magies.top/magiespdf/stable` in mainland China, with automatic
-fallback if the preferred source is unreachable.
+Network access is limited to an optional **dual-link** update check and
+user-approved OCR model downloads. Updates use GitHub Releases overseas and the
+Cloudflare mirror `dl.magies.top/magiespdf/stable` in mainland China, with
+automatic fallback. Unsigned packages are never downloaded or installed without
+separate user confirmation. OCR accesses jsDelivr only when a selected language
+model is missing and the user enables the download option.
 
-## Tools (57)
+## Tools (58)
 
 ### Organize
 | Tool | What it does |
@@ -86,7 +89,7 @@ fallback if the preferred source is unreachable.
 | --- | --- |
 | PDF ↔ Image | Render pages; build PDF from PNG/JPG |
 | PDF → Text / Markdown / HTML / CSV | Extract structured text |
-| PDF → Word / Excel / PowerPoint | Editable exports (text-first) |
+| PDF → Word / Excel / PowerPoint | Editable exports; optional external high-fidelity path |
 | Markdown / HTML / Text / CSV → PDF | Chromium `printToPDF` layout |
 | Word / Excel / PowerPoint → PDF | Built-in path + optional external converter |
 
@@ -96,7 +99,8 @@ fallback if the preferred source is unreachable.
 | Add / Remove password | AES-256 and related encryption |
 | Watermark | Translucent text, CJK-capable |
 | Add signature | Drawn / image / typed visible signature |
-| Inspect signature fields | List AcroForm signature widgets (no cert crypto) |
+| Certificate digital signature | Local P12/PFX PKCS#7 signing |
+| Inspect signatures | Check signed-byte integrity and list certificate details; OS trust/revocation is not claimed |
 | Redact | Permanent keyword blackout |
 | Sanitize / Flatten | Strip risky objects; bake form values |
 | Metadata | Edit or strip |
@@ -153,6 +157,9 @@ curl -X POST http://127.0.0.1:8737/v1/tools/organize.rotate \
 ```
 
 Default bind is loopback only; LAN binding is an explicit opt-in.
+LAN mode requires absolute paths to a PEM certificate and private key and serves
+HTTPS only. Add `?async=true` to a tool POST to receive a job ID; poll
+`GET /v1/jobs/<id>` or cancel with `DELETE /v1/jobs/<id>`.
 
 ---
 
@@ -164,6 +171,7 @@ Requires Node.js 22+.
 npm install
 npm run dev          # worker bundle + Vite + Electron
 npm run verify       # lint + typecheck + tests + build
+npm run test:coverage # core/Electron coverage with enforced thresholds
 ```
 
 ```bash
@@ -174,8 +182,13 @@ npm run pack:mac / pack:win / pack:linux
 
 ### If binary downloads fail
 
-`.npmrc` points Electron / electron-builder at a mirror; override with
-`ELECTRON_MIRROR=` if you prefer GitHub directly.
+Set the official Electron environment variables before installing:
+
+```bash
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
+ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ \
+npm install
+```
 
 ## Architecture
 

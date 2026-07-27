@@ -25,12 +25,13 @@ function loadCore() {
 const running = new Map();
 
 async function run(request, host, onProgress) {
-  const { registry, executeTool, toToolError } = await loadCore();
-
   const controller = new AbortController();
   running.set(request.jobId, controller);
+  let serializeToolError = null;
 
   try {
+    const { registry, executeTool, toToolError } = await loadCore();
+    serializeToolError = (cause) => toToolError(cause).toJSON();
     const tool = registry.get(request.toolId);
     const result = await executeTool(tool, {
       files: request.files,
@@ -42,7 +43,16 @@ async function run(request, host, onProgress) {
     return { files: result.files, data: result.data, summary: result.summary };
   } catch (cause) {
     // Reject with the same serialised shape the worker pool produces.
-    throw toToolError(cause).toJSON();
+    if (serializeToolError) throw serializeToolError(cause);
+    throw {
+      __toolError: true,
+      code: 'INTERNAL',
+      message: cause instanceof Error ? cause.message : String(cause),
+      userMessage: {
+        zh: '主进程工具加载失败。',
+        en: 'The main-process tool failed to load.',
+      },
+    };
   } finally {
     running.delete(request.jobId);
   }

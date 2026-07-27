@@ -117,7 +117,8 @@ describe('checkWithFallback dual-link', () => {
         const result = await updater.checkWithFallback((s) => statuses.push(s));
         assert.equal(result, null);
         assert.equal(statuses.at(-1).state, 'error');
-        assert.match(statuses.at(-1).message, /All update feeds failed/);
+        // Summarized dual-feed failure (not the raw electron-updater dump).
+        assert.match(statuses.at(-1).message, /github:.*mirror:/);
       },
     );
   });
@@ -127,6 +128,19 @@ describe('resolveUpdateChannel re-export', () => {
   it('matches releaseChannel for win arm64', async () => {
     await withUpdaterMocks({}, async ({ updater }) => {
       assert.equal(updater.resolveUpdateChannel('win32', 'arm64'), 'latest-arm64');
+    });
+  });
+});
+
+describe('manual update safety', () => {
+  it('never enables background download or install-on-quit', async () => {
+    await withUpdaterMocks({}, async ({ updater, fakeAutoUpdater }) => {
+      updater.enforceManualUpdate();
+      assert.equal(fakeAutoUpdater.autoDownload, false);
+      assert.equal(fakeAutoUpdater.autoInstallOnAppQuit, false);
+
+      updater.setAutoDownloadEnabled(true);
+      assert.equal(fakeAutoUpdater.autoDownload, false);
     });
   });
 });

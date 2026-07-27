@@ -10,7 +10,7 @@ const { pathToFileURL } = require('node:url');
  */
 
 const settings = require('../settings.cjs');
-const { createHandler } = require('./server.cjs');
+const { createHandler, resolveServerMode } = require('./server.cjs');
 const { JobPool } = require('../jobs/pool.cjs');
 
 // settings.cjs needs Electron's app path; in node:test we stub userData.
@@ -79,6 +79,17 @@ function mockReqRes({ method, url, headers = {}, body }) {
   };
 }
 
+const AUTH = { authorization: 'Bearer test-token' };
+
+function toolRequest(body, url = '/v1/tools/organize.rotate') {
+  return mockReqRes({
+    method: 'POST',
+    url,
+    headers: AUTH,
+    body: JSON.stringify(body),
+  });
+}
+
 describe('REST API handler', () => {
   /** @type {JobPool} */
   let pool;
@@ -134,6 +145,36 @@ describe('REST API handler', () => {
     assert.ok(body.tools.some((t) => t.id === 'organize.merge'));
   });
 
+  it('rejects malformed base64 instead of silently decoding it', async () => {
+    const { req, res, result } = toolRequest({
+      files: [{ name: 'one.pdf', bytesBase64: '%%%%', mime: 'application/pdf' }],
+      params: { angle: 90 },
+    });
+    await handler(req, res);
+    const response = await result();
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.body.error, 'invalid_input');
+    assert.match(response.body.message, /base64/i);
+  });
+
+  it('rejects file names that contain a path', async () => {
+    const { req, res, result } = toolRequest({
+      files: [
+        {
+          name: '../one.pdf',
+          bytesBase64: Buffer.from('%PDF-1.4').toString('base64'),
+          mime: 'application/pdf',
+        },
+      ],
+      params: { angle: 90 },
+    });
+    await handler(req, res);
+    const response = await result();
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.body.error, 'invalid_input');
+    assert.match(response.body.message, /file name/i);
+  });
+
   it('runs organize.rotate via POST and returns a PDF', async () => {
     // Minimal valid-ish PDF from the worker will validate; use pdf-lib via dynamic import.
     const { PDFDocument } = await import(pathToFileURL(
@@ -174,5 +215,144 @@ describe('REST API handler', () => {
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
+  });
+});
+
+describe('REST API transport security', () => {
+  it('uses HTTP only for loopback and requires TLS for LAN binding', () => {
+    assert.deepEqual(resolveServerMode({ allowLan: false }), {
+      host: '127.0.0.1',
+      protocol: 'http',
+    });
+    assert.throws(() => resolveServerMode({ allowLan: true }), /TLS certificate/i);
+    assert.deepEqual(
+      resolveServerMode({
+        allowLan: true,
+        tlsCertPath: '/tmp/cert.pem',
+        tlsKeyPath: '/tmp/key.pem',
+      }),
+      {
+        host: '0.0.0.0',
+        protocol: 'https',
+        tlsCertPath: '/tmp/cert.pem',
+        tlsKeyPath: '/tmp/key.pem',
+      },
+    );
+  });
+});
+
+describe('REST asynchronous jobs', () => {
+  it('caps concurrently retained jobs to protect memory', async () => {
+    const pool = {
+      run: () => new Promise(() => {}),
+      cancel: () => false,
+    };
+    const handler = createHandler({ pool, maxActiveJobs: 1 });
+    const body = {
+      files: [
+        {
+          name: 'one.pdf',
+          bytesBase64: Buffer.from('%PDF-1.4').toString('base64'),
+        },
+      ],
+    };
+
+    const first = toolRequest(body, '/v1/tools/organize.rotate?async=true');
+    await handler(first.req, first.res);
+    assert.equal((await first.result()).statusCode, 202);
+
+    const second = toolRequest(body, '/v1/tools/organize.rotate?async=true');
+    await handler(second.req, second.res);
+    const response = await second.result();
+    assert.equal(response.statusCode, 429);
+    assert.equal(response.body.error, 'too_many_jobs');
+  });
+
+  it('starts, queries, and completes an asynchronous tool job', async () => {
+    let finish;
+    const pool = {
+      run: () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+      cancel: () => false,
+    };
+    const handler = createHandler({ pool });
+    const requestBody = {
+      files: [
+        {
+          name: 'one.pdf',
+          bytesBase64: Buffer.from('%PDF-1.4').toString('base64'),
+          mime: 'application/pdf',
+        },
+      ],
+      params: { angle: 90 },
+    };
+
+    const started = toolRequest(requestBody, '/v1/tools/organize.rotate?async=true');
+    await handler(started.req, started.res);
+    const startResponse = await started.result();
+    assert.equal(startResponse.statusCode, 202);
+    assert.match(startResponse.body.jobId, /^[0-9a-f-]+$/);
+
+    const running = mockReqRes({
+      method: 'GET',
+      url: `/v1/jobs/${startResponse.body.jobId}`,
+      headers: AUTH,
+    });
+    await handler(running.req, running.res);
+    assert.equal((await running.result()).body.status, 'running');
+
+    finish({
+      files: [{ name: 'done.pdf', mime: 'application/pdf', bytes: new Uint8Array([1, 2]) }],
+      summary: { zh: '完成', en: 'Done' },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const completed = mockReqRes({
+      method: 'GET',
+      url: `/v1/jobs/${startResponse.body.jobId}`,
+      headers: AUTH,
+    });
+    await handler(completed.req, completed.res);
+    const completedResponse = await completed.result();
+    assert.equal(completedResponse.body.status, 'done');
+    assert.equal(completedResponse.body.result.files[0].bytesBase64, 'AQI=');
+  });
+
+  it('cancels an asynchronous worker job', async () => {
+    let cancelled = '';
+    const pool = {
+      run: () => new Promise(() => {}),
+      cancel: (jobId) => {
+        cancelled = jobId;
+        return true;
+      },
+    };
+    const handler = createHandler({ pool });
+    const started = toolRequest(
+      {
+        files: [
+          {
+            name: 'one.pdf',
+            bytesBase64: Buffer.from('%PDF-1.4').toString('base64'),
+          },
+        ],
+      },
+      '/v1/tools/organize.rotate?async=true',
+    );
+    await handler(started.req, started.res);
+    const { body } = await started.result();
+
+    const cancel = mockReqRes({
+      method: 'DELETE',
+      url: `/v1/jobs/${body.jobId}`,
+      headers: AUTH,
+    });
+    await handler(cancel.req, cancel.res);
+    const response = await cancel.result();
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.status, 'cancelled');
+    assert.equal(cancelled, body.jobId);
   });
 });

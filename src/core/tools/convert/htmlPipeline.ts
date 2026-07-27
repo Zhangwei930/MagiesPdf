@@ -141,7 +141,7 @@ export async function htmlThroughHost(
   }
 
   const html = wrapHtmlDocument(bodyHtml, sourceName);
-  const bytes = await ctx.host.htmlToPdf(html, pageSetupOf(ctx));
+  const bytes = await ctx.host.htmlToPdf(html, pageSetupOf(ctx), ctx.signal);
   ctx.report(1);
 
   return {

@@ -131,7 +131,7 @@ export default [
 
   // Electron main process: CommonJS, Node globals.
   {
-    files: ['electron/**/*.cjs'],
+    files: ['electron/**/*.cjs', 'electron-builder.config.cjs'],
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'commonjs',

@@ -61,7 +61,14 @@ const DEFAULT_SETTINGS: AppSettings = {
   onNameCollision: 'rename',
   recentToolIds: [],
   autoUpdate: true,
-  api: { enabled: false, port: 8737, token: '', allowLan: false },
+  api: {
+    enabled: false,
+    port: 8737,
+    token: '',
+    allowLan: false,
+    tlsCertPath: '',
+    tlsKeyPath: '',
+  },
   externalConverter: { executable: '', argumentTemplate: '', timeoutMs: 120000 },
   pipelinePresets: [],
 };
@@ -189,53 +196,77 @@ export const useApp = create<AppState>((set, get) => ({
       };
     });
 
-    try {
-      const result = await bridge().runJob({
-        jobId,
-        toolId: tool.id,
-        files: files.map((f) => ({ name: f.name, bytes: f.bytes, mime: f.mime })),
-        params,
-      });
+    // Return jobId immediately so the UI can show Cancel while the job runs.
+    // Completion is applied asynchronously via progress events + this worker.
+    void (async () => {
+      try {
+        const result = await bridge().runJob({
+          jobId,
+          toolId: tool.id,
+          files: files.map((f) => ({ name: f.name, bytes: f.bytes, mime: f.mime })),
+          params,
+        });
 
-      set((state) => ({
-        jobs: state.jobs.map((job) =>
-          job.id === jobId
-            ? { ...job, status: 'done', fraction: 1, result, finishedAt: Date.now() }
-            : job,
-        ),
-      }));
-    } catch (cause) {
-      const error: SerializedToolError = isToolError(cause)
-        ? cause
-        : {
-            __toolError: true,
-            code: 'INTERNAL',
-            message: cause instanceof Error ? cause.message : String(cause),
-            userMessage: {
-              zh: '处理失败，请重试。',
-              en: 'Processing failed. Please try again.',
-            },
-          };
+        set((state) => ({
+          jobs: state.jobs.map((job) =>
+            job.id === jobId && job.status !== 'cancelled'
+              ? { ...job, status: 'done', fraction: 1, result, finishedAt: Date.now() }
+              : job,
+          ),
+        }));
+      } catch (cause) {
+        const error: SerializedToolError = isToolError(cause)
+          ? cause
+          : {
+              __toolError: true,
+              code: 'INTERNAL',
+              message: cause instanceof Error ? cause.message : String(cause),
+              userMessage: {
+                zh: '处理失败，请重试。',
+                en: 'Processing failed. Please try again.',
+              },
+            };
 
-      set((state) => ({
-        jobs: state.jobs.map((job) =>
-          job.id === jobId
-            ? {
-                ...job,
-                status: error.code === 'CANCELLED' ? 'cancelled' : 'error',
-                error,
-                finishedAt: Date.now(),
-              }
-            : job,
-        ),
-      }));
-    }
+        set((state) => ({
+          jobs: state.jobs.map((job) =>
+            job.id === jobId && job.status !== 'cancelled'
+              ? {
+                  ...job,
+                  status: error.code === 'CANCELLED' ? 'cancelled' : 'error',
+                  error,
+                  finishedAt: Date.now(),
+                }
+              : job,
+          ),
+        }));
+      }
+    })();
 
     return jobId;
   },
 
   async cancelJob(jobId) {
-    if (hasBridge()) await bridge().cancelJob(jobId);
+    if (hasBridge()) {
+      await bridge().cancelJob(jobId);
+    }
+    // Optimistic UI: mark cancelled even if the worker is mid-chunk.
+    set((state) => ({
+      jobs: state.jobs.map((job) =>
+        job.id === jobId && (job.status === 'queued' || job.status === 'running')
+          ? {
+              ...job,
+              status: 'cancelled' as JobStatus,
+              finishedAt: Date.now(),
+              error: {
+                __toolError: true as const,
+                code: 'CANCELLED',
+                message: 'cancelled',
+                userMessage: { zh: '已取消', en: 'Cancelled' },
+              },
+            }
+          : job,
+      ),
+    }));
   },
 
   clearFinishedJobs() {

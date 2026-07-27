@@ -1,5 +1,27 @@
 # 更新日志
 
+## 1.0.2 — 2026-07-27
+
+### 安全与可靠性
+
+- 隔离 Electron 渲染与打印窗口，校验 IPC 调用来源，并限制隐藏窗口联网
+- 为 REST API 增加输入限制、安全文件名、局域网 HTTPS、异步任务与取消能力
+- 强化 PDF 动作清理与 OOXML ZIP 解压大小限制
+- OCR 缺少语言模型时必须获得明确下载授权
+
+### 功能与工程
+
+- 新增本地 P12/PFX PDF 证书签名与签名字节完整性校验
+- Office 导入导出优先使用已配置的外部转换器
+- 工具总数增加到 58，并加入覆盖率门禁、CI 与依赖维护
+- 未签名应用的更新下载和安装保持手动确认
+
+### 首次打开（未签名安装包）
+
+- **macOS**：执行 `xattr -dr com.apple.quarantine /Applications/MagiesPdf.app`，或右键 → 打开。Intel 用 `mac-x64`，Apple Silicon 用 `mac-arm64`
+- **Windows**：SmartScreen → 更多信息 → 仍要运行
+- **Linux AppImage**：先 `chmod +x` 再运行
+
 ## 1.0.1 — 2026-07-27
 
 ### 亮点

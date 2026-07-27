@@ -258,19 +258,19 @@ export function BatchPage({ tool }: BatchPageProps) {
           {target ? ` · ${target.name[locale]}` : ''}
         </div>
         {busy ? (
-          <Button variant="secondary" onClick={() => job && void cancelJob(job.id)}>
+          <Button variant="danger" size="lg" onClick={() => job && void cancelJob(job.id)}>
             {t('cancel', locale)}
           </Button>
-        ) : null}
-        <Button
-          variant="primary"
-          size="lg"
-          loading={busy}
-          disabled={!enoughFiles || !targetId}
-          onClick={() => void run()}
-        >
-          {t(busy ? 'running' : 'run', locale)}
-        </Button>
+        ) : (
+          <Button
+            variant="primary"
+            size="lg"
+            disabled={!enoughFiles || !targetId}
+            onClick={() => void run()}
+          >
+            {t('run', locale)}
+          </Button>
+        )}
       </footer>
     </div>
   );

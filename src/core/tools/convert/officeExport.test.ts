@@ -32,6 +32,7 @@ describe('convert.pdf-to-xlsx', () => {
     const result = await executeTool(pdfToXlsxTool, {
       files: [asInput(await samplePdf({ pages: 2, label: (n) => `Cell${n}` }), 'r.pdf')],
       params: {},
+      host: mockHost(),
     });
 
     assert.equal(result.files[0]!.name, 'r.xlsx');
@@ -51,6 +52,7 @@ describe('convert.pdf-to-xlsx', () => {
     const result = await executeTool(pdfToXlsxTool, {
       files: [asInput(await samplePdf({ pages: 2, label: (n) => `P${n}` }), 'r.pdf')],
       params: { layout: 'perPage' },
+      host: mockHost(),
     });
     const workbook = XLSX.read(result.files[0]!.bytes, { type: 'array' });
     assert.equal(workbook.SheetNames.length, 2);
@@ -62,6 +64,7 @@ describe('convert.pdf-to-pptx', () => {
     const result = await executeTool(pdfToPptxTool, {
       files: [asInput(await samplePdf({ pages: 2, label: (n) => `SlideLabel${n}` }), 'deck.pdf')],
       params: {},
+      host: mockHost(),
     });
 
     assert.equal(result.files[0]!.name, 'deck.pptx');
@@ -87,6 +90,7 @@ describe('convert.pptx-to-pdf', () => {
     const pptx = await executeTool(pdfToPptxTool, {
       files: [asInput(await samplePdf({ pages: 1, label: () => 'HelloDeck' }), 'x.pdf')],
       params: {},
+      host: mockHost(),
     });
     const host = mockHost();
     const result = await executeTool(pptxToPdfTool, {

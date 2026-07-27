@@ -30,7 +30,7 @@ export const htmlToPdfTool: ToolDescriptor = {
 
     // The user's HTML is rendered as-is — their own styles, not our shell.
     const html = new TextDecoder().decode(file.bytes);
-    const bytes = await ctx.host.htmlToPdf(html, pageSetupOf(ctx));
+    const bytes = await ctx.host.htmlToPdf(html, pageSetupOf(ctx), ctx.signal);
     ctx.report(1);
 
     return {

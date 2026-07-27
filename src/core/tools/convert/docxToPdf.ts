@@ -48,7 +48,7 @@ export const docxToPdfTool: ToolDescriptor = {
     // The user-configured external converter, when present, produces the most
     // faithful layout — the built-in path is the always-available fallback.
     if (ctx.host?.hasExternalConverter()) {
-      const output = await ctx.host.externalConvert(file, 'pdf');
+      const output = await ctx.host.externalConvert(file, 'pdf', ctx.signal);
       ctx.report(1);
       return {
         files: [pdfOutput(suffixedName(file.name, '', '.pdf'), output.bytes)],

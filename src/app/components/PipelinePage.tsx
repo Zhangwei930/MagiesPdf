@@ -432,13 +432,14 @@ export function PipelinePage({ tool }: PipelinePageProps) {
           {steps.length} {t('pipelineStepCount', locale)}
         </div>
         {busy ? (
-          <Button variant="secondary" onClick={() => job && void cancelJob(job.id)}>
+          <Button variant="danger" size="lg" onClick={() => job && void cancelJob(job.id)}>
             {t('cancel', locale)}
           </Button>
-        ) : null}
-        <Button variant="primary" size="lg" loading={busy} disabled={!canRun} onClick={() => void run()}>
-          {t(busy ? 'running' : 'run', locale)}
-        </Button>
+        ) : (
+          <Button variant="primary" size="lg" disabled={!canRun} onClick={() => void run()}>
+            {t('run', locale)}
+          </Button>
+        )}
       </footer>
     </div>
   );

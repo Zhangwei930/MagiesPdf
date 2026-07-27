@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 import { executeTool } from '../../execute.ts';
 import { openDocument } from '../../pdf/document.ts';
 import { renderPage } from '../../pdf/render.ts';
 import { allPageText, asInput, samplePdf } from '../../testing/fixtures.ts';
 import { imageToPdfTool } from '../convert/imageToPdf.ts';
-import { ocrTool } from './ocr.ts';
+import { assertOcrModelConsent, ocrTool } from './ocr.ts';
 
 /**
  * OCR end-to-end. The first run downloads the English model (~5 MB, cached in
@@ -40,6 +43,23 @@ function isOfflineFailure(error: unknown): boolean {
 }
 
 describe('edit.ocr', () => {
+  it('requires explicit consent before a missing language model can use the network', () => {
+    const cache = fs.mkdtempSync(path.join(os.tmpdir(), 'magiespdf-ocr-consent-'));
+    try {
+      assert.throws(
+        () => assertOcrModelConsent(['eng'], false, cache),
+        (error: unknown) => {
+          assert.equal((error as { code?: string }).code, 'NETWORK_CONSENT_REQUIRED');
+          return true;
+        },
+      );
+      fs.writeFileSync(path.join(cache, 'eng.traineddata'), 'cached');
+      assert.doesNotThrow(() => assertOcrModelConsent(['eng'], false, cache));
+    } finally {
+      fs.rmSync(cache, { recursive: true, force: true });
+    }
+  });
+
   it('produces a searchable PDF whose text layer contains the printed words', { timeout: 120000 }, async (t) => {
     const scan = asInput(await scannedPdf(), 'scan.pdf');
 
@@ -50,7 +70,12 @@ describe('edit.ocr', () => {
     try {
       result = await executeTool(ocrTool, {
         files: [scan],
-        params: { languages: ['eng'], output: 'searchable', dpi: 300 },
+        params: {
+          languages: ['eng'],
+          output: 'searchable',
+          dpi: 300,
+          allowModelDownload: true,
+        },
       });
     } catch (error) {
       if (isOfflineFailure(error)) return t.skip('OCR model not cached and no network');
@@ -70,7 +95,7 @@ describe('edit.ocr', () => {
     try {
       result = await executeTool(ocrTool, {
         files: [scan],
-        params: { languages: ['eng'], output: 'text' },
+        params: { languages: ['eng'], output: 'text', allowModelDownload: true },
       });
     } catch (error) {
       if (isOfflineFailure(error)) return t.skip('OCR model not cached and no network');

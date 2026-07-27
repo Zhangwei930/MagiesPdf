@@ -5,7 +5,9 @@ const settings = require('./settings.cjs');
 const mainRunner = require('./jobs/mainRunner.cjs');
 const { createHostBridge } = require('./host.cjs');
 const { collectFilePaths } = require('./files/walk.cjs');
+const { InputBudget } = require('./files/inputBudget.cjs');
 const updater = require('./updater/index.cjs');
+const { isTrustedIpcSender, safeFileName } = require('./security.cjs');
 
 /**
  * IPC handlers. Every one of these is a boundary between untrusted renderer
@@ -14,7 +16,9 @@ const updater = require('./updater/index.cjs');
  */
 
 /** Refuse to slurp anything that cannot plausibly be a document we can process. */
-const MAX_INPUT_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_INPUT_BYTES = 512 * 1024 * 1024;
+const MAX_TOTAL_INPUT_BYTES = 1024 * 1024 * 1024;
+const MAX_INPUT_FILES = 200;
 
 const MIME_BY_EXTENSION = {
   '.pdf': 'application/pdf',
@@ -39,12 +43,10 @@ function mimeOf(name) {
   return MIME_BY_EXTENSION[path.extname(name).toLowerCase()] ?? 'application/octet-stream';
 }
 
-async function readOne(absolutePath) {
+async function readOne(absolutePath, budget) {
   const stat = await fs.stat(absolutePath);
   if (!stat.isFile()) throw new Error(`Not a file: ${absolutePath}`);
-  if (stat.size > MAX_INPUT_BYTES) {
-    throw new Error(`File is too large to open (${(stat.size / 1024 ** 3).toFixed(1)} GB)`);
-  }
+  budget.add(stat.size);
 
   const buffer = await fs.readFile(absolutePath);
   return {
@@ -56,6 +58,17 @@ async function readOne(absolutePath) {
     // pooled Buffer slab is not shipped across the IPC boundary.
     bytes: new Uint8Array(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.length)),
   };
+}
+
+async function readMany(paths) {
+  const budget = new InputBudget({
+    maxFileBytes: MAX_INPUT_BYTES,
+    maxTotalBytes: MAX_TOTAL_INPUT_BYTES,
+    maxFiles: MAX_INPUT_FILES,
+  });
+  const files = [];
+  for (const absolutePath of paths) files.push(await readOne(absolutePath, budget));
+  return files;
 }
 
 /** `report.pdf` → `report (2).pdf` until the name is free. */
@@ -86,10 +99,19 @@ function readCatalog() {
   return catalogCache;
 }
 
-function registerIpc({ pool, getWindow, onSettingsChanged }) {
-  ipcMain.handle('catalog:get', () => readCatalog().tools);
+function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl }) {
+  const handle = (channel, handler) => {
+    ipcMain.handle(channel, (event, ...args) => {
+      if (!isTrustedIpcSender(event, getWindow(), trustedRendererUrl)) {
+        throw new Error(`Rejected untrusted IPC request: ${channel}`);
+      }
+      return handler(event, ...args);
+    });
+  };
 
-  ipcMain.handle('files:pick', async (_event, { accept, multiple }) => {
+  handle('catalog:get', () => readCatalog().tools);
+
+  handle('files:pick', async (_event, { accept, multiple }) => {
     const extensions = (accept ?? ['.pdf']).map((e) => e.replace(/^\./, ''));
     const result = await dialog.showOpenDialog(getWindow(), {
       properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'],
@@ -100,15 +122,15 @@ function registerIpc({ pool, getWindow, onSettingsChanged }) {
     });
 
     if (result.canceled) return [];
-    return Promise.all(result.filePaths.map(readOne));
+    return readMany(result.filePaths);
   });
 
-  ipcMain.handle('files:read', async (_event, { paths }) => {
+  handle('files:read', async (_event, { paths }) => {
     if (!Array.isArray(paths)) return [];
-    return Promise.all(paths.filter((p) => typeof p === 'string' && p !== '').map(readOne));
+    return readMany(paths.filter((p) => typeof p === 'string' && p !== ''));
   });
 
-  ipcMain.handle('files:pickDirectory', async () => {
+  handle('files:pickDirectory', async () => {
     const result = await dialog.showOpenDialog(getWindow(), { properties: ['openDirectory', 'createDirectory'] });
     return result.canceled ? '' : (result.filePaths[0] ?? '');
   });
@@ -117,7 +139,7 @@ function registerIpc({ pool, getWindow, onSettingsChanged }) {
    * Pick a folder and load matching files (optionally recursive) for batch work.
    * Caps at 200 files so a mistaken root directory cannot freeze the app.
    */
-  ipcMain.handle('files:pickFolderFiles', async (_event, { accept, recursive }) => {
+  handle('files:pickFolderFiles', async (_event, { accept, recursive }) => {
     const result = await dialog.showOpenDialog(getWindow(), {
       properties: ['openDirectory'],
     });
@@ -134,11 +156,11 @@ function registerIpc({ pool, getWindow, onSettingsChanged }) {
     // maxFiles is a hard stop inside the walker; if we hit exactly 200 there
     // may be more on disk — surface that so the UI can warn.
     const truncated = paths.length >= 200;
-    const files = await Promise.all(paths.map(readOne));
+    const files = await readMany(paths);
     return { directory, files, truncated };
   });
 
-  ipcMain.handle('files:save', async (_event, { files, options }) => {
+  handle('files:save', async (_event, { files, options }) => {
     if (!Array.isArray(files) || files.length === 0) return null;
 
     let directory = options?.directory || settings.read().defaultOutputDirectory;
@@ -156,7 +178,8 @@ function registerIpc({ pool, getWindow, onSettingsChanged }) {
 
     const written = [];
     for (const file of files) {
-      const name = overwrite ? file.name : await freeName(directory, file.name);
+      const safeName = safeFileName(file.name);
+      const name = overwrite ? safeName : await freeName(directory, safeName);
       const target = path.join(directory, name);
       await fs.writeFile(target, Buffer.from(file.bytes));
       written.push(target);
@@ -165,15 +188,15 @@ function registerIpc({ pool, getWindow, onSettingsChanged }) {
     return { directory, written };
   });
 
-  ipcMain.handle('files:saveAs', async (_event, { file }) => {
-    const result = await dialog.showSaveDialog(getWindow(), { defaultPath: file.name });
+  handle('files:saveAs', async (_event, { file }) => {
+    const result = await dialog.showSaveDialog(getWindow(), { defaultPath: safeFileName(file.name) });
     if (result.canceled || !result.filePath) return null;
 
     await fs.writeFile(result.filePath, Buffer.from(file.bytes));
     return { written: [result.filePath], directory: path.dirname(result.filePath) };
   });
 
-  ipcMain.handle('shell:reveal', (_event, { path: target }) => {
+  handle('shell:reveal', (_event, { path: target }) => {
     if (typeof target === 'string' && target !== '') shell.showItemInFolder(target);
     return true;
   });
@@ -182,7 +205,7 @@ function registerIpc({ pool, getWindow, onSettingsChanged }) {
   const runtimeOf = (toolId) =>
     readCatalog().tools.find((tool) => tool.id === toolId)?.runtime ?? 'worker';
 
-  ipcMain.handle('job:run', async (event, request) => {
+  handle('job:run', async (event, request) => {
     const onProgress = (fraction, message) => {
       if (event.sender.isDestroyed()) return;
       event.sender.send('job:progress', { jobId: request.jobId, fraction, message });
@@ -195,10 +218,10 @@ function registerIpc({ pool, getWindow, onSettingsChanged }) {
       : pool.run(request, onProgress);
   });
 
-  ipcMain.handle('job:cancel', (_event, { jobId }) => pool.cancel(jobId) || mainRunner.cancel(jobId));
+  handle('job:cancel', (_event, { jobId }) => pool.cancel(jobId) || mainRunner.cancel(jobId));
 
-  ipcMain.handle('settings:get', () => settings.read());
-  ipcMain.handle('settings:update', (_event, patch) => {
+  handle('settings:get', () => settings.read());
+  handle('settings:update', (_event, patch) => {
     const next = settings.write(patch);
     // API bind address / token changes need a live server restart.
     if (patch && Object.prototype.hasOwnProperty.call(patch, 'api')) {
@@ -219,27 +242,35 @@ function registerIpc({ pool, getWindow, onSettingsChanged }) {
   });
 
   const { getApiStatus } = require('./api/server.cjs');
-  ipcMain.handle('api:status', () => getApiStatus());
+  handle('api:status', () => getApiStatus());
 
-  ipcMain.handle('app:getVersion', () => app.getVersion());
-  ipcMain.handle('app:isPackaged', () => app.isPackaged);
+  handle('app:getVersion', () => app.getVersion());
+  handle('app:isPackaged', () => app.isPackaged);
 
   // Manual update actions from Settings. Builds are unsigned (open source).
-  ipcMain.handle('updater:check', async (event) => {
+  handle('updater:check', async (event) => {
     const send = (status) => {
       if (!event.sender.isDestroyed()) event.sender.send('updater:status', status);
     };
     await updater.checkNow(send);
     return true;
   });
-  ipcMain.handle('updater:download', async () => {
+  handle('updater:download', async () => {
     await updater.downloadUpdate();
     return true;
   });
-  ipcMain.handle('updater:install', () => {
+  handle('updater:install', () => {
     updater.quitAndInstall();
     return true;
   });
 }
 
-module.exports = { registerIpc, readCatalog, mimeOf, freeName, MAX_INPUT_BYTES };
+module.exports = {
+  registerIpc,
+  readCatalog,
+  mimeOf,
+  freeName,
+  MAX_INPUT_BYTES,
+  MAX_TOTAL_INPUT_BYTES,
+  MAX_INPUT_FILES,
+};

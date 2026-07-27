@@ -142,9 +142,17 @@ export interface ToolOutputFile {
  */
 export interface HostBridge {
   /** Render HTML to PDF via Chromium's own print pipeline. */
-  htmlToPdf(html: string, options: HtmlToPdfOptions): Promise<Uint8Array>;
+  htmlToPdf(
+    html: string,
+    options: HtmlToPdfOptions,
+    signal?: AbortSignal,
+  ): Promise<Uint8Array>;
   /** Invoke the user-configured external document converter, if any. */
-  externalConvert(input: ToolInputFile, targetExtension: string): Promise<ToolOutputFile>;
+  externalConvert(
+    input: ToolInputFile,
+    targetExtension: string,
+    signal?: AbortSignal,
+  ): Promise<ToolOutputFile>;
   /** Whether an external converter is configured and its executable exists. */
   hasExternalConverter(): boolean;
 }

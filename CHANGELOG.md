@@ -1,12 +1,25 @@
 # Changelog
 
+## 1.0.2 — 2026-07-27
+
+### Security and completeness
+
+- Sandbox the renderer and print windows; validate IPC origins and file names.
+- Make unsigned update downloads and installation explicitly manual.
+- Add strict REST input budgets, asynchronous jobs, cancellation, and HTTPS-only LAN access.
+- Harden PDF sanitisation and OOXML ZIP expansion limits.
+- Require consent before OCR downloads missing language models.
+- Add local P12/PFX PDF signing and signed-byte integrity verification.
+- Prefer the configured external converter for high-fidelity Office import/export.
+- Add coverage gates, mirror-worker tests, CI, and Dependabot.
+
 ## 1.0.1 — 2026-07-27
 
 ### Highlights
 
 - **Settings** left-nav sections (appearance / files / converter / API / application)
 - **What's New** in-app changelog dialog (no jump to GitHub release page)
-- **Auto-update on by default**; dual-link feeds point to `Zhangwei930/MagiesPdf`
+- **Automatic update checks on by default**; downloads and installation remain manual
 - Remove duplicate sidebar search bar (use Home / ⌘K)
 - Shorter update error messages when a feed is offline
 

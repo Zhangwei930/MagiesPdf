@@ -1,9 +1,12 @@
 const fs = require('node:fs');
 const http = require('node:http');
+const https = require('node:https');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const settings = require('../settings.cjs');
 const mainRunner = require('../jobs/mainRunner.cjs');
+const { constantTimeTokenEqual, safeFileName } = require('../security.cjs');
+const { InputBudget } = require('../files/inputBudget.cjs');
 
 /** Tool catalogue on disk — same file the IPC layer serves. Avoid importing ipc (Electron). */
 let catalogCache = null;
@@ -26,7 +29,13 @@ function readCatalog() {
  *   POST /v1/tools/:id   JSON body { files:[{name,bytesBase64,mime?}], params? }
  */
 
-const MAX_BODY_BYTES = 256 * 1024 * 1024;
+const MAX_BODY_BYTES = 192 * 1024 * 1024;
+const MAX_FILE_BYTES = 96 * 1024 * 1024;
+const MAX_TOTAL_FILE_BYTES = 128 * 1024 * 1024;
+const MAX_FILES = 50;
+const MAX_ACTIVE_JOBS = 4;
+const MAX_RETAINED_JOBS = 8;
+const JOB_RETENTION_MS = 5 * 60 * 1000;
 
 /** @type {http.Server | null} */
 let server = null;
@@ -38,12 +47,30 @@ function isEnabled() {
   return Boolean(api?.enabled && api?.token);
 }
 
+function resolveServerMode(api) {
+  if (!api?.allowLan) return { host: '127.0.0.1', protocol: 'http' };
+  if (
+    typeof api.tlsCertPath !== 'string' ||
+    typeof api.tlsKeyPath !== 'string' ||
+    !path.isAbsolute(api.tlsCertPath) ||
+    !path.isAbsolute(api.tlsKeyPath)
+  ) {
+    throw new Error('LAN API access requires absolute TLS certificate and private-key paths');
+  }
+  return {
+    host: '0.0.0.0',
+    protocol: 'https',
+    tlsCertPath: api.tlsCertPath,
+    tlsKeyPath: api.tlsKeyPath,
+  };
+}
+
 function authOk(req) {
   const { token } = settings.read().api;
   if (!token) return false;
   const header = req.headers.authorization || '';
   const match = /^Bearer\s+(.+)$/i.exec(header);
-  return Boolean(match && match[1] === token);
+  return Boolean(match && constantTimeTokenEqual(match[1], token));
 }
 
 function sendJson(res, status, body) {
@@ -80,15 +107,94 @@ function toolMeta(tool) {
   return { id, category, name, description, icon, keywords, input, output, params, runtime };
 }
 
+function decodeBase64(value) {
+  if (
+    value.length === 0 ||
+    value.length % 4 !== 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+  ) {
+    throw new Error('Invalid base64');
+  }
+  return Buffer.from(value, 'base64');
+}
+
+function serializeResult(result) {
+  return {
+    files: (result.files || []).map((file) => ({
+      name: file.name,
+      mime: file.mime,
+      bytesBase64: Buffer.from(file.bytes).toString('base64'),
+    })),
+    data: result.data,
+    summary: result.summary,
+  };
+}
+
+function serializeToolError(cause) {
+  if (cause && typeof cause === 'object' && cause.__toolError) return cause;
+  return {
+    code: 'INTERNAL',
+    message: cause instanceof Error ? cause.message : String(cause),
+    userMessage: {
+      zh: '处理失败',
+      en: 'Processing failed',
+    },
+  };
+}
+
 /**
- * @param {{ pool: import('../jobs/pool.cjs').JobPool }} deps
+ * @param {{
+ *   pool: import('../jobs/pool.cjs').JobPool,
+ *   maxActiveJobs?: number
+ * }} deps
  */
-function createHandler({ pool }) {
+function createHandler({ pool, maxActiveJobs = MAX_ACTIVE_JOBS }) {
   // Lazily constructed: host.cjs loads Electron, which node:test does not have.
   let hostBridge = null;
   const host = () => {
     if (!hostBridge) hostBridge = require('../host.cjs').createHostBridge();
     return hostBridge;
+  };
+  const jobs = new Map();
+
+  const pruneJobs = () => {
+    const now = Date.now();
+    for (const [jobId, job] of jobs) {
+      if (job.status !== 'running' && now - (job.completedAt ?? now) > JOB_RETENTION_MS) {
+        jobs.delete(jobId);
+      }
+    }
+    for (const [jobId, job] of jobs) {
+      if (jobs.size < MAX_RETAINED_JOBS) break;
+      if (job.status !== 'running') jobs.delete(jobId);
+    }
+  };
+
+  const runRequest = (request, runtime) =>
+    runtime === 'main'
+      ? mainRunner.run(request, host(), () => {})
+      : pool.run(request, () => {});
+
+  const startAsyncJob = (request, runtime) => {
+    const job = { jobId: request.jobId, runtime, status: 'running' };
+    jobs.set(request.jobId, job);
+    void runRequest(request, runtime).then(
+      (result) => {
+        if (job.status === 'running') {
+          job.status = 'done';
+          job.result = serializeResult(result);
+          job.completedAt = Date.now();
+        }
+      },
+      (cause) => {
+        if (job.status === 'running') {
+          job.status = 'failed';
+          job.error = serializeToolError(cause);
+          job.completedAt = Date.now();
+        }
+      },
+    );
+    return job;
   };
 
   return async (req, res) => {
@@ -101,6 +207,7 @@ function createHandler({ pool }) {
       }
 
       const url = new URL(req.url || '/', 'http://127.0.0.1');
+      pruneJobs();
 
       if (url.pathname === '/v1/health' && req.method === 'GET') {
         sendJson(res, 200, { ok: true, service: 'MagiesPdf', version: require('../../package.json').version });
@@ -115,6 +222,26 @@ function createHandler({ pool }) {
       if (url.pathname === '/v1/tools' && req.method === 'GET') {
         const tools = readCatalog().tools.map(toolMeta);
         sendJson(res, 200, { tools });
+        return;
+      }
+
+      const jobMatch = /^\/v1\/jobs\/([^/]+)$/.exec(url.pathname);
+      if (jobMatch && (req.method === 'GET' || req.method === 'DELETE')) {
+        const jobId = decodeURIComponent(jobMatch[1]);
+        const job = jobs.get(jobId);
+        if (!job) {
+          sendJson(res, 404, { error: 'not_found', message: `Unknown job: ${jobId}` });
+          return;
+        }
+        if (req.method === 'DELETE' && job.status === 'running') {
+          const cancelled =
+            job.runtime === 'main' ? mainRunner.cancel(jobId) : pool.cancel(jobId);
+          if (cancelled) {
+            job.status = 'cancelled';
+            job.completedAt = Date.now();
+          }
+        }
+        sendJson(res, 200, job);
         return;
       }
 
@@ -133,6 +260,16 @@ function createHandler({ pool }) {
         }
 
         if (req.method === 'POST') {
+          if (
+            url.searchParams.get('async') === 'true' &&
+            [...jobs.values()].filter((job) => job.status === 'running').length >= maxActiveJobs
+          ) {
+            sendJson(res, 429, {
+              error: 'too_many_jobs',
+              message: `At most ${maxActiveJobs} asynchronous jobs may run at once`,
+            });
+            return;
+          }
           const raw = await readBody(req);
           let body;
           try {
@@ -149,6 +286,11 @@ function createHandler({ pool }) {
           }
 
           const files = [];
+          const budget = new InputBudget({
+            maxFileBytes: MAX_FILE_BYTES,
+            maxTotalBytes: MAX_TOTAL_FILE_BYTES,
+            maxFiles: MAX_FILES,
+          });
           for (const entry of filesIn) {
             if (!entry || typeof entry.name !== 'string' || typeof entry.bytesBase64 !== 'string') {
               sendJson(res, 400, {
@@ -159,9 +301,30 @@ function createHandler({ pool }) {
             }
             let buffer;
             try {
-              buffer = Buffer.from(entry.bytesBase64, 'base64');
+              safeFileName(entry.name);
             } catch {
-              sendJson(res, 400, { error: 'invalid_input', message: `Bad base64 for ${entry.name}` });
+              sendJson(res, 400, {
+                error: 'invalid_input',
+                message: 'Each file name must be a plain name without a path',
+              });
+              return;
+            }
+            try {
+              buffer = decodeBase64(entry.bytesBase64);
+            } catch {
+              sendJson(res, 400, {
+                error: 'invalid_input',
+                message: `Bad base64 for ${entry.name}`,
+              });
+              return;
+            }
+            try {
+              budget.add(buffer.length);
+            } catch (cause) {
+              sendJson(res, 413, {
+                error: 'input_too_large',
+                message: cause instanceof Error ? cause.message : String(cause),
+              });
               return;
             }
             // Own the bytes: Buffer views often sit on a pooled ArrayBuffer that
@@ -183,34 +346,17 @@ function createHandler({ pool }) {
           };
 
           const runtime = tool.runtime ?? 'worker';
+          if (url.searchParams.get('async') === 'true') {
+            startAsyncJob(request, runtime);
+            sendJson(res, 202, { jobId: request.jobId, status: 'running' });
+            return;
+          }
           try {
-            const result =
-              runtime === 'main'
-                ? await mainRunner.run(request, host(), () => {})
-                : await pool.run(request, () => {});
-
-            sendJson(res, 200, {
-              files: (result.files || []).map((file) => ({
-                name: file.name,
-                mime: file.mime,
-                bytesBase64: Buffer.from(file.bytes).toString('base64'),
-              })),
-              data: result.data,
-              summary: result.summary,
-            });
+            const result = await runRequest(request, runtime);
+            sendJson(res, 200, serializeResult(result));
           } catch (cause) {
             // Worker pool rejects with SerializedToolError; mainRunner does too.
-            const err =
-              cause && typeof cause === 'object' && cause.__toolError
-                ? cause
-                : {
-                    code: 'INTERNAL',
-                    message: cause instanceof Error ? cause.message : String(cause),
-                    userMessage: {
-                      zh: '处理失败',
-                      en: 'Processing failed',
-                    },
-                  };
+            const err = serializeToolError(cause);
             sendJson(res, 422, {
               error: 'tool_error',
               code: err.code,
@@ -247,11 +393,22 @@ async function syncApiServer(deps) {
   }
 
   const { api } = settings.read();
-  const host = api.allowLan ? '0.0.0.0' : '127.0.0.1';
+  const mode = resolveServerMode(api);
+  const host = mode.host;
   const port = Number(api.port) || 8737;
 
   return new Promise((resolve, reject) => {
-    server = http.createServer(createHandler(deps));
+    const handler = createHandler(deps);
+    server =
+      mode.protocol === 'https'
+        ? https.createServer(
+            {
+              cert: fs.readFileSync(mode.tlsCertPath),
+              key: fs.readFileSync(mode.tlsKeyPath),
+            },
+            handler,
+          )
+        : http.createServer(handler);
     server.once('error', (error) => {
       server = null;
       listenInfo = '';
@@ -261,8 +418,8 @@ async function syncApiServer(deps) {
       const address = server.address();
       listenInfo =
         typeof address === 'object' && address
-          ? `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${address.port}`
-          : `http://127.0.0.1:${port}`;
+          ? `${mode.protocol}://${host}:${address.port}`
+          : `${mode.protocol}://${host}:${port}`;
       console.log(`[magiespdf] REST API listening on ${listenInfo}`);
       resolve({ running: true, address: listenInfo });
     });
@@ -297,4 +454,10 @@ module.exports = {
   createHandler,
   isEnabled,
   MAX_BODY_BYTES,
+  MAX_FILE_BYTES,
+  MAX_TOTAL_FILE_BYTES,
+  MAX_FILES,
+  MAX_ACTIVE_JOBS,
+  MAX_RETAINED_JOBS,
+  resolveServerMode,
 };

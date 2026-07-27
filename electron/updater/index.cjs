@@ -18,7 +18,8 @@ const {
  *   - Cloudflare mirror at dl.magies.top/magiespdf/stable
  *
  * Preferred feed first; the other is always the fallback. Windows arm64 uses
- * channel `latest-arm64`. Auto-download follows `settings.autoUpdate` (default on).
+ * channel `latest-arm64`. Updates are checked automatically but downloaded and
+ * installed only after explicit user actions.
  */
 
 const CHECK_DELAY_MS = 8000;
@@ -36,12 +37,17 @@ function readAutoUpdateEnabled() {
   }
 }
 
-function setAutoDownloadEnabled(enabled) {
+function enforceManualUpdate() {
   try {
-    autoUpdater.autoDownload = enabled !== false;
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = false;
   } catch {
     // ignore
   }
+}
+
+function setAutoDownloadEnabled() {
+  enforceManualUpdate();
 }
 
 function currentFeeds() {
@@ -120,8 +126,7 @@ function startUpdater(onStatus) {
   started = true;
   statusSink = onStatus;
 
-  autoUpdater.autoDownload = readAutoUpdateEnabled();
-  autoUpdater.autoInstallOnAppQuit = true;
+  enforceManualUpdate();
   autoUpdater.logger = null;
   try {
     autoUpdater.channel = resolveUpdateChannel();
@@ -164,6 +169,7 @@ function downloadUpdate() {
   } catch {
     // ignore
   }
+  enforceManualUpdate();
   return autoUpdater.downloadUpdate();
 }
 
@@ -205,6 +211,7 @@ module.exports = {
   currentFeeds,
   onAutoUpdatePreferenceChanged,
   setAutoDownloadEnabled,
+  enforceManualUpdate,
   applyFeed,
   detectPreferredFeed,
   resolveUpdateChannel,

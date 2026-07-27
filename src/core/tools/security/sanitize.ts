@@ -22,32 +22,81 @@ function names(doc: mupdf.PDFDocument): mupdf.PDFObject | null {
   return n && !n.isNull() ? n : null;
 }
 
-/** Entries in a name tree (flat /Names arrays, recursing into /Kids). */
-function countNameTree(tree: mupdf.PDFObject | null | undefined): number {
-  if (!tree || tree.isNull()) return 0;
-  let count = 0;
-  const flat = tree.get('Names');
-  if (flat && !flat.isNull() && flat.isArray()) count += Math.floor(flat.length / 2);
-  const kids = tree.get('Kids');
-  if (kids && !kids.isNull() && kids.isArray()) {
-    for (let i = 0; i < kids.length; i += 1) count += countNameTree(kids.get(i));
-  }
-  return count;
+interface ObjectLocation {
+  object: mupdf.PDFObject;
+  parent: mupdf.PDFObject | null;
+  key: number | string | null;
+  path: string;
 }
 
-/** All annotation dictionaries of a page. */
-function pageAnnotations(doc: mupdf.PDFDocument, pageIndex: number): mupdf.PDFObject[] {
-  const annots = doc.loadPage(pageIndex).getObject().get('Annots');
-  if (!annots || annots.isNull() || !annots.isArray()) return [];
-  const list: mupdf.PDFObject[] = [];
-  for (let i = 0; i < annots.length; i += 1) list.push(annots.get(i));
-  return list;
+/**
+ * Walk every object reachable from the catalogue once. PDF object graphs are
+ * cyclic, so indirect object numbers are the identity boundary.
+ */
+function walkObjects(
+  object: mupdf.PDFObject | null | undefined,
+  visit: (location: ObjectLocation) => void,
+  parent: mupdf.PDFObject | null = null,
+  key: number | string | null = null,
+  path = '$',
+  seen = new Set<number>(),
+): void {
+  if (!object || object.isNull()) return;
+
+  let current = object;
+  if (current.isIndirect()) {
+    const objectNumber = current.asIndirect();
+    if (seen.has(objectNumber)) return;
+    seen.add(objectNumber);
+    current = current.resolve();
+  }
+
+  visit({ object: current, parent, key, path });
+  if (!current.isArray() && !current.isDictionary() && !current.isStream()) return;
+
+  const children: Array<{ value: mupdf.PDFObject; key: number | string }> = [];
+  current.forEach((value, childKey) => children.push({ value, key: childKey }));
+  for (const child of children) {
+    walkObjects(
+      child.value,
+      visit,
+      current,
+      child.key,
+      `${path}/${String(child.key)}`,
+      seen,
+    );
+  }
 }
 
 function actionType(annotation: mupdf.PDFObject): string {
   const action = annotation.get('A');
   if (!action || action.isNull()) return '';
   return String(action.get('S'));
+}
+
+function isAction(object: mupdf.PDFObject, types: ReadonlySet<string>): boolean {
+  return (
+    (object.isDictionary() || object.isStream()) &&
+    types.has(String(object.get('S')))
+  );
+}
+
+function removeActions(doc: mupdf.PDFDocument, types: ReadonlySet<string>): void {
+  const removals: Array<{ parent: mupdf.PDFObject; key: number | string }> = [];
+  walkObjects(root(doc), ({ object, parent, key }) => {
+    if (parent && key !== null && isAction(object, types)) {
+      removals.push({ parent, key });
+    }
+  });
+  for (const removal of removals) removal.parent.delete(removal.key);
+}
+
+function removeKeyEverywhere(doc: mupdf.PDFDocument, key: string): void {
+  walkObjects(root(doc), ({ object }) => {
+    if (!object.isDictionary() && !object.isStream()) return;
+    const value = object.get(key);
+    if (value && !value.isNull()) object.delete(key);
+  });
 }
 
 export interface FoundScript {
@@ -70,82 +119,49 @@ function scriptSource(action: mupdf.PDFObject): string {
 /** Every script in the document, with its source — powers the Show JavaScript tool. */
 export function collectJavaScript(doc: mupdf.PDFDocument): FoundScript[] {
   const scripts: FoundScript[] = [];
-
-  const openAction = root(doc)?.get('OpenAction');
-  if (openAction && !openAction.isNull() && String(openAction.get('S')) === '/JavaScript') {
-    scripts.push({ location: 'open-action', source: scriptSource(openAction) });
-  }
-
-  const walkTree = (tree: mupdf.PDFObject | null | undefined): void => {
-    if (!tree || tree.isNull()) return;
-    const flat = tree.get('Names');
-    if (flat && !flat.isNull() && flat.isArray()) {
-      for (let i = 0; i + 1 < flat.length; i += 2) {
-        const name = flat.get(i).asString();
-        const action = flat.get(i + 1);
-        if (action && !action.isNull()) {
-          scripts.push({ location: `named: ${name}`, source: scriptSource(action) });
-        }
-      }
+  const javascript = new Set(['/JavaScript']);
+  walkObjects(root(doc), ({ object, path }) => {
+    if (isAction(object, javascript)) {
+      const location =
+        path === '$/OpenAction'
+          ? 'open-action'
+          : path.includes('/Names/JavaScript')
+            ? 'named'
+            : path.includes('/Annots')
+              ? 'annotation'
+              : path;
+      scripts.push({ location, source: scriptSource(object) });
     }
-    const kids = tree.get('Kids');
-    if (kids && !kids.isNull() && kids.isArray()) {
-      for (let i = 0; i < kids.length; i += 1) walkTree(kids.get(i));
-    }
-  };
-  walkTree(names(doc)?.get('JavaScript'));
-
-  const pageCount = doc.countPages();
-  for (let i = 0; i < pageCount; i += 1) {
-    for (const annotation of pageAnnotations(doc, i)) {
-      const action = annotation.get('A');
-      if (action && !action.isNull() && String(action.get('S')) === '/JavaScript') {
-        scripts.push({ location: `page ${i + 1} annotation`, source: scriptSource(action) });
-      }
-    }
-  }
+  });
 
   return scripts;
 }
 
 export function countJavaScript(doc: mupdf.PDFDocument): number {
-  let count = countNameTree(names(doc)?.get('JavaScript'));
-
-  const openAction = root(doc)?.get('OpenAction');
-  if (openAction && !openAction.isNull() && String(openAction.get('S')) === '/JavaScript') {
-    count += 1;
-  }
-
-  const pageCount = doc.countPages();
-  for (let i = 0; i < pageCount; i += 1) {
-    for (const annotation of pageAnnotations(doc, i)) {
-      if (actionType(annotation) === '/JavaScript') count += 1;
-    }
-  }
-  return count;
+  return collectJavaScript(doc).length;
 }
 
 export function countEmbeddedFiles(doc: mupdf.PDFDocument): number {
-  let count = countNameTree(names(doc)?.get('EmbeddedFiles'));
-  const pageCount = doc.countPages();
-  for (let i = 0; i < pageCount; i += 1) {
-    for (const annotation of pageAnnotations(doc, i)) {
-      if (String(annotation.get('Subtype')) === '/FileAttachment') count += 1;
+  let count = 0;
+  walkObjects(root(doc), ({ object }) => {
+    if (
+      (object.isDictionary() || object.isStream()) &&
+      String(object.get('Type')) === '/Filespec' &&
+      !object.get('EF').isNull()
+    ) {
+      count += 1;
     }
-  }
+  });
   return count;
 }
 
-/** Link annotations whose action leaves the document: URI, Launch, remote GoTo. */
+/** Every action that leaves the document: URI, Launch, or remote GoTo. */
 export function countExternalLinks(doc: mupdf.PDFDocument): number {
   let count = 0;
-  const pageCount = doc.countPages();
-  for (let i = 0; i < pageCount; i += 1) {
-    for (const annotation of pageAnnotations(doc, i)) {
-      if (String(annotation.get('Subtype')) !== '/Link') continue;
-      if (['/URI', '/Launch', '/GoToR'].includes(actionType(annotation))) count += 1;
-    }
-  }
+  const external = new Set(['/URI', '/Launch', '/GoToR']);
+  walkObjects(root(doc), ({ object }) => {
+    if (isAction(object, external)) count += 1;
+  });
   return count;
 }
 
@@ -228,25 +244,23 @@ export const sanitizeTool: ToolDescriptor = {
 
       if (strip.has('javascript')) {
         namesObj?.delete('JavaScript');
-        // Document-level additional-actions can hold scripts too.
-        rootObj?.delete('AA');
-        const openAction = rootObj?.get('OpenAction');
-        if (openAction && !openAction.isNull() && String(openAction.get('S')) === '/JavaScript') {
-          rootObj?.delete('OpenAction');
-        }
+        removeActions(doc, new Set(['/JavaScript']));
+        // Additional-action dictionaries can live on the catalogue, pages,
+        // annotations and AcroForm fields. Dropping the container is the only
+        // reliable way to avoid a JavaScript action hidden behind an event key.
+        removeKeyEverywhere(doc, 'AA');
         filterAnnotations(doc, (a) => actionType(a) !== '/JavaScript');
       }
 
       if (strip.has('openActions')) {
         rootObj?.delete('OpenAction');
-        const pageCount = doc.countPages();
-        for (let i = 0; i < pageCount; i += 1) {
-          doc.loadPage(i).getObject().delete('AA');
-        }
+        removeKeyEverywhere(doc, 'AA');
       }
 
       if (strip.has('embeddedFiles')) {
         namesObj?.delete('EmbeddedFiles');
+        removeKeyEverywhere(doc, 'AF');
+        removeKeyEverywhere(doc, 'EF');
         filterAnnotations(doc, (a) => String(a.get('Subtype')) !== '/FileAttachment');
       }
 
@@ -257,6 +271,7 @@ export const sanitizeTool: ToolDescriptor = {
             String(a.get('Subtype')) !== '/Link' ||
             !['/URI', '/Launch', '/GoToR'].includes(actionType(a)),
         );
+        removeActions(doc, new Set(['/URI', '/Launch', '/GoToR']));
       }
 
       // `sanitize` additionally makes MuPDF re-emit content streams, dropping

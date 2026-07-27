@@ -2,22 +2,22 @@ import { openDocument } from '../../pdf/document.ts';
 import type { ToolDescriptor } from '../../types.ts';
 import type { ReportRow } from '../edit/getInfo.ts';
 import { PDF_ONE, passwordParam, soleFile, stringParam } from '../shared.ts';
+import { verifyPdfSignatures } from './certificateSign.ts';
 
 /**
  * Inventory interactive signature widgets (AcroForm `/Sig` fields).
  *
- * This does not cryptographically validate PKCS#7 payloads — MuPDF's JS build
- * does not expose that. It answers "does this PDF claim to have signature
- * fields, and what are their names/values?" which is still useful before
- * trusting a document.
+ * Lists signature widgets and verifies PKCS#7 integrity over each declared
+ * ByteRange. Certificate trust and revocation are intentionally reported as
+ * unevaluated because this tool does not use the operating-system trust store.
  */
 export const inspectSignaturesTool: ToolDescriptor = {
   id: 'security.inspect-signatures',
   category: 'security',
   name: { zh: '检查签名域', en: 'Inspect Signature Fields' },
   description: {
-    zh: '列出文档中的签名表单域（若有）。不验证数字证书真伪，只做结构检查。',
-    en: 'List signature form fields, if any. Structural only — does not validate certificates.',
+    zh: '列出签名域并检查数字签名覆盖内容是否被篡改；不判断证书是否受系统信任或已吊销。',
+    en: 'List signature fields and check signed-byte integrity; OS certificate trust and revocation are not evaluated.',
   },
   icon: 'ShieldCheck',
   keywords: [
@@ -66,6 +66,37 @@ export const inspectSignaturesTool: ToolDescriptor = {
         }
       }
 
+      const verified = await verifyPdfSignatures(file.bytes);
+      for (const signature of verified) {
+        rows.push({
+          label: {
+            zh: `密码学完整性 · 签名 ${signature.index}`,
+            en: `Cryptographic integrity · signature ${signature.index}`,
+          },
+          value: signature.cryptographicallyValid
+            ? 'Valid (certificate trust not evaluated)'
+            : `Invalid${signature.error ? ` — ${signature.error}` : ''}`,
+        });
+        if (signature.subject) {
+          rows.push({
+            label: {
+              zh: `证书主体 · 签名 ${signature.index}`,
+              en: `Certificate subject · signature ${signature.index}`,
+            },
+            value: signature.subject,
+          });
+        }
+        if (signature.issuer) {
+          rows.push({
+            label: {
+              zh: `证书签发者 · 签名 ${signature.index}`,
+              en: `Certificate issuer · signature ${signature.index}`,
+            },
+            value: signature.issuer,
+          });
+        }
+      }
+
       rows.unshift({
         label: { zh: '签名域数量', en: 'Signature fields' },
         value: String(sigCount),
@@ -79,7 +110,7 @@ export const inspectSignaturesTool: ToolDescriptor = {
         value:
           sigCount === 0
             ? 'No AcroForm signature fields found. Visible ink stamps are not listed here.'
-            : 'Field inventory only — cryptographic certificate validation is not performed.',
+            : 'Integrity is checked cryptographically. Certificate trust/revocation is not evaluated against the operating-system trust store.',
       });
 
       ctx.report(1);
@@ -89,11 +120,11 @@ export const inspectSignaturesTool: ToolDescriptor = {
         summary: {
           zh:
             sigCount > 0
-              ? `发现 ${sigCount} 个签名域（未做证书校验）`
+              ? `发现 ${sigCount} 个签名域，已检查 ${verified.length} 个数字签名的完整性`
               : '未发现签名表单域',
           en:
             sigCount > 0
-              ? `Found ${sigCount} signature field(s) (not cryptographically verified)`
+              ? `Found ${sigCount} signature field(s); checked ${verified.length} digital signature(s) for integrity`
               : 'No signature form fields found',
         },
       };

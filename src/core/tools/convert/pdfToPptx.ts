@@ -4,6 +4,7 @@ import { pageBlocks } from '../../pdf/text.ts';
 import { stemOf } from '../../naming.ts';
 import type { ToolDescriptor } from '../../types.ts';
 import { PDF_ONE, passwordParam, resolvePages, soleFile, stringParam } from '../shared.ts';
+import { externalOfficeExport } from './officeExternal.ts';
 
 export const pdfToPptxTool: ToolDescriptor = {
   id: 'convert.pdf-to-pptx',
@@ -27,10 +28,12 @@ export const pdfToPptxTool: ToolDescriptor = {
     },
     passwordParam(),
   ],
-  runtime: 'worker',
+  runtime: 'main',
 
   async run(ctx) {
     const file = soleFile(ctx);
+    const external = await externalOfficeExport(ctx, file, 'pptx');
+    if (external) return external;
 
     return withDocumentSync(file.bytes, stringParam(ctx, 'password'), (doc) => {
       const pages = resolvePages(ctx, 'pages', doc.countPages());

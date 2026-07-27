@@ -33,7 +33,7 @@ First public release.
   });
 
   it('supports multiple versions newest first', () => {
-    // Synthetic versions only — product release is still 1.0.1.
+    // Synthetic versions only — product release is still 1.0.2.
     const entries = parseChangelog(`
 ## 9.9.0 — 2099-01-02
 
@@ -57,13 +57,13 @@ describe('locale changelog sources', () => {
   it('zh markdown is Chinese', () => {
     const raw = readFileSync(join(dir, 'changelog/zh.md'), 'utf8');
     assert.match(raw, /更新日志|亮点|首次打开/);
-    assert.match(raw, /1\.0\.1/);
+    assert.match(raw, /1\.0\.2/);
   });
 
   it('en markdown is English', () => {
     const raw = readFileSync(join(dir, 'changelog/en.md'), 'utf8');
     assert.match(raw, /Changelog|Highlights|First-launch/i);
-    assert.match(raw, /1\.0\.1/);
+    assert.match(raw, /1\.0\.2/);
   });
 
   it('zh and en share the same version set', () => {

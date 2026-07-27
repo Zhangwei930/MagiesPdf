@@ -12,6 +12,18 @@ export interface ZipEntry {
   data: Uint8Array | string;
 }
 
+export interface ZipReadLimits {
+  maxEntries: number;
+  maxEntryBytes: number;
+  maxTotalBytes: number;
+}
+
+const DEFAULT_READ_LIMITS: ZipReadLimits = {
+  maxEntries: 10_000,
+  maxEntryBytes: 128 * 1024 * 1024,
+  maxTotalBytes: 512 * 1024 * 1024,
+};
+
 export function zipStore(entries: readonly ZipEntry[]): Uint8Array {
   const encoder = new TextEncoder();
   const locals: Uint8Array[] = [];
@@ -90,7 +102,10 @@ export function crc32(bytes: Uint8Array): number {
  * Reads a ZIP archive into a name → bytes map.
  * Directory entries are skipped. Unsupported compression methods throw.
  */
-export function zipRead(bytes: Uint8Array): Map<string, Uint8Array> {
+export function zipRead(
+  bytes: Uint8Array,
+  limits: ZipReadLimits = DEFAULT_READ_LIMITS,
+): Map<string, Uint8Array> {
   if (bytes.length < 22 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
     throw new Error('Not a ZIP archive');
   }
@@ -106,41 +121,81 @@ export function zipRead(bytes: Uint8Array): Map<string, Uint8Array> {
   if (eocd < 0) throw new Error('ZIP end-of-central-directory not found');
 
   const entryCount = view.getUint16(eocd + 10, true);
+  if (entryCount > limits.maxEntries) {
+    throw new Error(`Too many ZIP entries (${entryCount}; limit ${limits.maxEntries})`);
+  }
   let offset = view.getUint32(eocd + 16, true);
   const out = new Map<string, Uint8Array>();
   const decoder = new TextDecoder();
+  let totalBytes = 0;
 
   for (let n = 0; n < entryCount; n += 1) {
+    if (offset < 0 || offset + 46 > bytes.length) {
+      throw new Error('ZIP central directory is outside the archive');
+    }
     if (view.getUint32(offset, true) !== 0x02014b50) {
       throw new Error('ZIP central directory is corrupt');
     }
     const method = view.getUint16(offset + 10, true);
     const compSize = view.getUint32(offset + 20, true);
+    const expandedSize = view.getUint32(offset + 24, true);
     const nameLen = view.getUint16(offset + 28, true);
     const extraLen = view.getUint16(offset + 30, true);
     const commentLen = view.getUint16(offset + 32, true);
     const localOffset = view.getUint32(offset + 42, true);
+    const centralEnd = offset + 46 + nameLen + extraLen + commentLen;
+    if (centralEnd > bytes.length) throw new Error('ZIP central directory entry is truncated');
     const name = decoder.decode(bytes.subarray(offset + 46, offset + 46 + nameLen));
     offset += 46 + nameLen + extraLen + commentLen;
 
     if (name.endsWith('/')) continue;
+    if (expandedSize > limits.maxEntryBytes) {
+      throw new Error(`ZIP entry exceeds expanded-size limit: ${name}`);
+    }
+    if (totalBytes + expandedSize > limits.maxTotalBytes) {
+      throw new Error('ZIP expanded data exceeds total-size limit');
+    }
 
+    if (localOffset < 0 || localOffset + 30 > bytes.length) {
+      throw new Error(`ZIP local header is outside the archive for ${name}`);
+    }
     if (view.getUint32(localOffset, true) !== 0x04034b50) {
       throw new Error(`ZIP local header missing for ${name}`);
     }
     const localNameLen = view.getUint16(localOffset + 26, true);
     const localExtraLen = view.getUint16(localOffset + 28, true);
     const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+    if (dataStart > bytes.length || compSize > bytes.length - dataStart) {
+      throw new Error(`ZIP data is truncated for ${name}`);
+    }
     const compressed = bytes.subarray(dataStart, dataStart + compSize);
 
     let data: Uint8Array;
     if (method === 0) {
       data = compressed.slice();
     } else if (method === 8) {
-      data = new Uint8Array(inflateRawSync(compressed));
+      try {
+        data = new Uint8Array(
+          inflateRawSync(compressed, {
+            maxOutputLength: Math.min(
+              limits.maxEntryBytes,
+              limits.maxTotalBytes - totalBytes,
+            ),
+          }),
+        );
+      } catch (cause) {
+        throw new Error(
+          `ZIP entry exceeds expanded-size limit or is corrupt: ${name}`,
+          { cause },
+        );
+      }
     } else {
       throw new Error(`Unsupported ZIP compression method ${method} for ${name}`);
     }
+    if (data.length > limits.maxEntryBytes || totalBytes + data.length > limits.maxTotalBytes) {
+      throw new Error(`ZIP expanded data exceeds limit for ${name}`);
+    }
+    totalBytes += data.length;
     out.set(name, data);
   }
 

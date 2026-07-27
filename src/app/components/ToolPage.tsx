@@ -34,6 +34,7 @@ export function ToolPage({ tool }: ToolPageProps) {
 
   const run = useCallback(async () => {
     setSavedTo('');
+    // runTool returns the job id immediately so Cancel is available while running.
     setJobId(await runTool(tool, files, values));
   }, [files, runTool, tool, values]);
 
@@ -103,13 +104,14 @@ export function ToolPage({ tool }: ToolPageProps) {
         </Button>
         <div className="flex-1" />
         {busy ? (
-          <Button variant="secondary" onClick={() => job && void cancelJob(job.id)}>
+          <Button variant="danger" size="lg" onClick={() => job && void cancelJob(job.id)}>
             {t('cancel', locale)}
           </Button>
-        ) : null}
-        <Button variant="primary" size="lg" loading={busy} disabled={!enoughFiles} onClick={run}>
-          {t(busy ? 'running' : 'run', locale)}
-        </Button>
+        ) : (
+          <Button variant="primary" size="lg" disabled={!enoughFiles} onClick={() => void run()}>
+            {t('run', locale)}
+          </Button>
+        )}
       </footer>
     </div>
   );
@@ -161,7 +163,7 @@ function JobStatusCard({
         <span className="shrink-0 font-mono text-xs text-[var(--text-muted)]">
           {Math.round(job.fraction * 100)}%
         </span>
-        <Button size="sm" variant="ghost" onClick={onCancel}>
+        <Button size="sm" variant="danger" onClick={onCancel}>
           {t('cancel', locale)}
         </Button>
       </div>

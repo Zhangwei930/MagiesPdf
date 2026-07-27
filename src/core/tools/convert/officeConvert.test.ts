@@ -13,7 +13,7 @@ import { pdfToHtmlTool } from './pdfToHtml.ts';
 import { textToPdfTool } from './textToPdf.ts';
 import { xlsxToHtml, xlsxToPdfTool } from './xlsxToPdf.ts';
 
-function mockHost(): HostBridge & { lastHtml: string | null } {
+function mockHost(overrides: Partial<HostBridge> = {}): HostBridge & { lastHtml: string | null } {
   const host: HostBridge & { lastHtml: string | null } = {
     lastHtml: null,
     async htmlToPdf(html: string, _options: HtmlToPdfOptions) {
@@ -28,6 +28,7 @@ function mockHost(): HostBridge & { lastHtml: string | null } {
       throw new Error('not configured');
     },
     hasExternalConverter: () => false,
+    ...overrides,
   };
   return host;
 }
@@ -147,10 +148,35 @@ describe('convert.pdf-to-html', () => {
 });
 
 describe('convert.pdf-to-docx', () => {
+  it('prefers the configured external converter for high-fidelity output', async () => {
+    let target = '';
+    const expected = new Uint8Array([0x50, 0x4b, 3, 4]);
+    const host = mockHost({
+      hasExternalConverter: () => true,
+      async externalConvert(_input, extension) {
+        target = extension;
+        return {
+          name: `converted.${extension}`,
+          bytes: expected,
+          mime: 'application/octet-stream',
+        };
+      },
+    });
+    const result = await executeTool(pdfToDocxTool, {
+      files: [asInput(await samplePdf({ pages: 1 }), 'report.pdf')],
+      params: {},
+      host,
+    });
+
+    assert.equal(target, 'docx');
+    assert.deepEqual(result.files[0]!.bytes, expected);
+  });
+
   it('produces a real docx that mammoth can re-read', async () => {
     const result = await executeTool(pdfToDocxTool, {
       files: [asInput(await samplePdf({ pages: 2, label: (n) => `Page${n}` }), 'report.pdf')],
       params: {},
+      host: mockHost(),
     });
 
     assert.equal(result.files[0]!.name, 'report.docx');
@@ -165,10 +191,10 @@ describe('convert.pdf-to-docx', () => {
     const result = await executeTool(pdfToDocxTool, {
       files: [asInput(await samplePdf({ pages: 3, label: (n) => `X${n}` }), 'r.pdf')],
       params: { pages: '2' },
+      host: mockHost(),
     });
     const { html } = await docxToHtml(result.files[0]!.bytes);
     assert.ok(html.includes('X2'));
     assert.ok(!html.includes('X1'));
   });
 });
-

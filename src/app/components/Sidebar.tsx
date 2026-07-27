@@ -27,6 +27,7 @@ export function Sidebar({
 }: SidebarProps) {
   const locale = useApp((s) => s.locale);
   const recentToolIds = useApp((s) => s.recentToolIds);
+  const [filter, setFilter] = useState('');
   const [version, setVersion] = useState(APP_VERSION);
 
   useEffect(() => {
@@ -77,9 +78,27 @@ export function Sidebar({
     ];
   }, [locale, recent]);
 
+  const needle = filter.trim().toLowerCase();
+
+  const filteredGroups = useMemo(() => {
+    if (!needle) return groups;
+    return groups
+      .map((group) => ({
+        ...group,
+        tools: group.tools.filter((tool) => {
+          const hay =
+            `${tool.name.zh} ${tool.name.en} ${tool.id} ${tool.keywords.join(' ')}`.toLowerCase();
+          return hay.includes(needle);
+        }),
+      }))
+      .filter((group) => group.tools.length > 0);
+  }, [groups, needle]);
+
   const activeTool = activeToolId ? uiRegistry.tryGet(activeToolId) : undefined;
 
   const isExpanded = (key: string) => {
+    // Filtering: keep hit folders open so results stay visible.
+    if (needle) return true;
     // User collapse always wins.
     if (collapsed.has(key)) return false;
     if (expanded.has(key)) return true;
@@ -93,6 +112,7 @@ export function Sidebar({
 
   /** Click category header → expand or collapse. */
   const toggleFolder = (key: string) => {
+    if (needle) return;
     const currentlyOpen = isExpanded(key);
     if (currentlyOpen) {
       setCollapsed((prev) => new Set(prev).add(key));
@@ -123,7 +143,7 @@ export function Sidebar({
 
   return (
     <aside className="flex h-full w-[268px] shrink-0 flex-col border-r border-[var(--border-subtle)] bg-[var(--surface-panel)]">
-      <div className="no-drag shrink-0 border-b border-[var(--border-subtle)] px-3 py-3">
+      <div className="no-drag shrink-0 space-y-2.5 border-b border-[var(--border-subtle)] px-3 py-3">
         <button
           type="button"
           onClick={onSelectHome}
@@ -142,11 +162,24 @@ export function Sidebar({
             <div className="truncate text-[10px] text-[var(--text-muted)]">v{version}</div>
           </div>
         </button>
+
+        {/* Filter only — global search stays on Home / ⌘K */}
+        <input
+          className="field-input py-1.5 text-[12px]"
+          value={filter}
+          placeholder={t('filterTools', locale)}
+          onChange={(e) => setFilter(e.target.value)}
+        />
       </div>
 
       <nav className="no-drag min-h-0 flex-1 overflow-y-auto px-2 py-2">
+        {filteredGroups.length === 0 ? (
+          <p className="px-2 py-8 text-center text-[12px] text-[var(--text-muted)]">
+            {t('noResults', locale)}
+          </p>
+        ) : (
         <ul className="space-y-0.5">
-          {groups.map((group) => {
+          {filteredGroups.map((group) => {
             const open = isExpanded(group.key);
             const hasActive = group.tools.some((tool) => tool.id === activeToolId);
 
@@ -219,6 +252,7 @@ export function Sidebar({
             );
           })}
         </ul>
+        )}
       </nav>
     </aside>
   );

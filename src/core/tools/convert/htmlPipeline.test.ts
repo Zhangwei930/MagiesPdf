@@ -19,16 +19,20 @@ import { markdownToPdfTool } from './markdownToPdf.ts';
 function mockHost(overrides: Partial<HostBridge> = {}): HostBridge & {
   lastHtml: string | null;
   lastOptions: HtmlToPdfOptions | null;
+  lastSignal: AbortSignal | null;
 } {
   const host: HostBridge & {
     lastHtml: string | null;
     lastOptions: HtmlToPdfOptions | null;
+    lastSignal: AbortSignal | null;
   } = {
     lastHtml: null,
     lastOptions: null,
-    async htmlToPdf(html, options) {
+    lastSignal: null,
+    async htmlToPdf(html, options, signal?: AbortSignal) {
       host.lastHtml = html;
       host.lastOptions = options;
+      host.lastSignal = signal ?? null;
       // Produce a real one-page PDF so callers can open the result.
       const doc = await PDFDocument.create();
       const page = doc.addPage([595, 842]);
@@ -93,10 +97,12 @@ describe('convert.markdown-to-pdf', () => {
 
   it('sends GFM-rendered HTML through the host and returns a PDF', async () => {
     const host = mockHost();
+    const controller = new AbortController();
     const result = await executeTool(markdownToPdfTool, {
       files: [textFile('# Title\n\nHello **world**', 'notes.md', 'text/markdown')],
       params: { pageSize: 'Letter', landscape: true, marginInches: 0.5 },
       host,
+      signal: controller.signal,
     });
 
     assert.equal(result.files[0]!.name, 'notes.pdf');
@@ -107,6 +113,7 @@ describe('convert.markdown-to-pdf', () => {
     assert.equal(host.lastOptions?.pageSize, 'Letter');
     assert.equal(host.lastOptions?.landscape, true);
     assert.equal(host.lastOptions?.margins.top, 0.5);
+    assert.equal(host.lastSignal, controller.signal);
 
     const opened = openDocument(result.files[0]!.bytes);
     try {
@@ -166,10 +173,12 @@ describe('convert.docx-to-pdf', () => {
 
   it('prefers the external converter when one is configured', async () => {
     let called = false;
+    let receivedSignal: AbortSignal | undefined;
     const host = mockHost({
       hasExternalConverter: () => true,
-      async externalConvert(input, ext) {
+      async externalConvert(input, ext, signal?: AbortSignal) {
         called = true;
+        receivedSignal = signal;
         assert.equal(input.name, 'letter.docx');
         assert.equal(ext, 'pdf');
         const doc = await PDFDocument.create();
@@ -182,13 +191,16 @@ describe('convert.docx-to-pdf', () => {
       },
     });
 
+    const controller = new AbortController();
     const result = await executeTool(docxToPdfTool, {
       files: [asInput(await minimalDocx('x'), 'letter.docx')],
       params: {},
       host,
+      signal: controller.signal,
     });
 
     assert.ok(called);
+    assert.equal(receivedSignal, controller.signal);
     assert.equal(result.files[0]!.name, 'letter.pdf');
     assert.equal(host.lastHtml, null, 'built-in path must not run when external is used');
   });

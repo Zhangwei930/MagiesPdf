@@ -12,7 +12,7 @@ import {
   sanitizeTool,
 } from './sanitize.ts';
 
-/** Decorates a clean fixture with a JS open action, an embedded file and link annots. */
+/** Decorates a clean fixture with active content in every PDF action location we support. */
 async function nastyPdf(): Promise<Uint8Array> {
   const doc = openDocument(await samplePdf({ pages: 1, label: () => 'BODY' }));
   try {
@@ -23,6 +23,17 @@ async function nastyPdf(): Promise<Uint8Array> {
     jsAction.put('S', doc.newName('JavaScript'));
     jsAction.put('JS', doc.newString('app.alert("boo")'));
     rootObj.put('OpenAction', doc.addObject(jsAction));
+
+    const additionalAction = (source: string) => {
+      const action = doc.newDictionary();
+      action.put('S', doc.newName('JavaScript'));
+      action.put('JS', doc.newString(source));
+      return doc.addObject(action);
+    };
+
+    const rootActions = doc.newDictionary();
+    rootActions.put('WC', additionalAction('app.alert("catalog")'));
+    rootObj.put('AA', rootActions);
 
     // A named JavaScript tree entry.
     const namedJs = doc.newDictionary();
@@ -42,9 +53,10 @@ async function nastyPdf(): Promise<Uint8Array> {
     filespec.put('Type', doc.newName('Filespec'));
     filespec.put('F', 'payload.txt');
     filespec.put('EF', embedded);
+    const filespecRef = doc.addObject(filespec);
     const efNames = doc.newArray();
     efNames.push('payload.txt');
-    efNames.push(doc.addObject(filespec));
+    efNames.push(filespecRef);
     const efTree = doc.newDictionary();
     efTree.put('Names', efNames);
 
@@ -52,6 +64,9 @@ async function nastyPdf(): Promise<Uint8Array> {
     namesDict.put('JavaScript', jsTree);
     namesDict.put('EmbeddedFiles', efTree);
     rootObj.put('Names', namesDict);
+    const associatedFiles = doc.newArray();
+    associatedFiles.push(filespecRef);
+    rootObj.put('AF', associatedFiles);
 
     // One external link and one internal-style link annotation.
     const uriAction = doc.newDictionary();
@@ -67,11 +82,40 @@ async function nastyPdf(): Promise<Uint8Array> {
     internalLink.put('Type', doc.newName('Annot'));
     internalLink.put('Subtype', doc.newName('Link'));
     internalLink.put('Rect', doc.newArray());
+    const annotationActions = doc.newDictionary();
+    annotationActions.put('E', additionalAction('app.alert("annotation")'));
+    internalLink.put('AA', annotationActions);
 
     const annots = doc.newArray();
     annots.push(doc.addObject(externalLink));
     annots.push(doc.addObject(internalLink));
-    doc.loadPage(0).getObject().put('Annots', annots);
+    const pageObj = doc.loadPage(0).getObject();
+    pageObj.put('Annots', annots);
+    const pageActions = doc.newDictionary();
+    pageActions.put('O', additionalAction('app.alert("page")'));
+    pageObj.put('AA', pageActions);
+
+    const field = doc.newDictionary();
+    field.put('FT', doc.newName('Tx'));
+    field.put('T', 'unsafe-field');
+    const fieldActions = doc.newDictionary();
+    fieldActions.put('K', additionalAction('app.alert("field")'));
+    field.put('AA', fieldActions);
+    const fields = doc.newArray();
+    fields.push(doc.addObject(field));
+    const acroForm = doc.newDictionary();
+    acroForm.put('Fields', fields);
+    rootObj.put('AcroForm', acroForm);
+
+    const outlineAction = doc.newDictionary();
+    outlineAction.put('S', doc.newName('URI'));
+    outlineAction.put('URI', 'https://example.com/outline');
+    const outlineItem = doc.newDictionary();
+    outlineItem.put('Title', 'external');
+    outlineItem.put('A', outlineAction);
+    const outlines = doc.newDictionary();
+    outlines.put('First', doc.addObject(outlineItem));
+    rootObj.put('Outlines', outlines);
 
     return saveDocument(doc);
   } finally {
@@ -171,9 +215,9 @@ describe('sanitize detectors', () => {
   it('count the planted nasties on the fixture', async () => {
     const doc = openDocument(await nastyPdf());
     try {
-      assert.equal(countJavaScript(doc), 2, 'javascript');
+      assert.equal(countJavaScript(doc), 6, 'javascript');
       assert.equal(countEmbeddedFiles(doc), 1, 'embedded');
-      assert.equal(countExternalLinks(doc), 1, 'links');
+      assert.equal(countExternalLinks(doc), 2, 'links');
     } finally {
       doc.destroy();
     }
@@ -203,8 +247,18 @@ describe('security.sanitize', () => {
       assert.equal(countJavaScript(cleaned), 0, 'javascript survived');
       assert.equal(countEmbeddedFiles(cleaned), 0, 'embedded file survived');
       assert.equal(countExternalLinks(cleaned), 0, 'external link survived');
-      const openAction = cleaned.getTrailer().get('Root').get('OpenAction');
+      const rootObj = cleaned.getTrailer().get('Root');
+      const openAction = rootObj.get('OpenAction');
       assert.ok(!openAction || openAction.isNull(), 'OpenAction survived');
+      assert.ok(rootObj.get('AA').isNull(), 'catalog additional actions survived');
+      assert.ok(rootObj.get('AF').isNull(), 'associated files survived');
+      assert.ok(cleaned.loadPage(0).getObject().get('AA').isNull(), 'page actions survived');
+      const internal = cleaned.loadPage(0).getObject().get('Annots').get(0);
+      assert.ok(internal.get('AA').isNull(), 'annotation actions survived');
+      const formField = rootObj.get('AcroForm', 'Fields', 0);
+      assert.ok(formField.get('AA').isNull(), 'form-field actions survived');
+      const outline = rootObj.get('Outlines', 'First');
+      assert.ok(outline.get('A').isNull(), 'outline external action survived');
     } finally {
       cleaned.destroy();
     }
@@ -248,7 +302,7 @@ describe('security.sanitize', () => {
       files: [asInput(await nastyPdf(), 'nasty.pdf')],
       params: {},
     });
-    assert.match(result.summary?.zh ?? '', /2 处脚本/);
+    assert.match(result.summary?.zh ?? '', /6 处脚本/);
     assert.match(result.summary?.zh ?? '', /1 个内嵌文件/);
   });
 });
@@ -287,4 +341,3 @@ describe('security.flatten', () => {
     assert.match(result.summary?.zh ?? '', /没有表单域/);
   });
 });
-
