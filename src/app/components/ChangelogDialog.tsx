@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { clsx } from 'clsx';
-import changelogRaw from '../../../CHANGELOG.md?raw';
 import { countChangelogItems, parseChangelog, type ChangelogEntry } from '../changelog.ts';
+import { getChangelogRaw } from '../changelogLocales.ts';
 import { t } from '../i18n.ts';
 import { ChevronDown, ChevronRight, X } from '../icons.ts';
 import { useApp } from '../store.ts';
@@ -111,7 +111,11 @@ function VersionCard({
  */
 export function ChangelogDialog({ open, onOpenChange }: ChangelogDialogProps) {
   const locale = useApp((s) => s.locale);
-  const entries = useMemo(() => parseChangelog(changelogRaw), []);
+  // Re-parse when the UI language changes so section titles and bullets switch.
+  const entries = useMemo(
+    () => parseChangelog(getChangelogRaw(locale)),
+    [locale],
+  );
   const totalChanges = useMemo(
     () => entries.reduce((n, e) => n + countChangelogItems(e), 0),
     [entries],

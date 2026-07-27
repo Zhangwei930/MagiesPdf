@@ -1,6 +1,8 @@
 /**
- * Lightweight CHANGELOG.md parser — same role as MagiesTerminal's
- * `domain/changelog.ts`, simplified for MagiesPdf's single root file.
+ * Lightweight changelog parser — same role as MagiesTerminal's
+ * `domain/changelog.ts`. Locale-specific markdown lives in
+ * `changelog/zh.md` / `changelog/en.md` and is selected via
+ * `getChangelogRaw` in `changelogLocales.ts`.
  */
 
 export interface ChangelogSection {
@@ -14,7 +16,7 @@ export interface ChangelogEntry {
   sections: ChangelogSection[];
 }
 
-/** Parse MagiesPdf root CHANGELOG.md (## version headers, ### sections, - items). */
+/** Parse MagiesPdf changelog markdown (## version headers, ### sections, - items). */
 export function parseChangelog(raw: string): ChangelogEntry[] {
   const lines = raw.replace(/\r\n/g, '\n').split('\n');
   const entries: ChangelogEntry[] = [];

@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { countChangelogItems, parseChangelog } from './changelog.ts';
+
+const dir = dirname(fileURLToPath(import.meta.url));
 
 describe('parseChangelog', () => {
   it('parses version headers, sections and bullets', () => {
@@ -44,5 +49,29 @@ First public release.
     assert.equal(entries.length, 2);
     assert.equal(entries[0]!.version, '1.1.0');
     assert.equal(entries[1]!.version, '1.0.0');
+  });
+});
+
+describe('locale changelog sources', () => {
+  it('zh markdown is Chinese', () => {
+    const raw = readFileSync(join(dir, 'changelog/zh.md'), 'utf8');
+    assert.match(raw, /更新日志|亮点|首次打开/);
+    assert.match(raw, /1\.0\.1/);
+  });
+
+  it('en markdown is English', () => {
+    const raw = readFileSync(join(dir, 'changelog/en.md'), 'utf8');
+    assert.match(raw, /Changelog|Highlights|First-launch/i);
+    assert.match(raw, /1\.0\.1/);
+  });
+
+  it('zh and en share the same version set', () => {
+    const zh = parseChangelog(readFileSync(join(dir, 'changelog/zh.md'), 'utf8')).map(
+      (e) => e.version,
+    );
+    const en = parseChangelog(readFileSync(join(dir, 'changelog/en.md'), 'utf8')).map(
+      (e) => e.version,
+    );
+    assert.deepEqual(zh, en);
   });
 });
