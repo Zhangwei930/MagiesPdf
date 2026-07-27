@@ -130,9 +130,9 @@ module.exports = {
     icon: 'build/icon.png',
     // Align with productName so desktop environments can match the running window.
     executableName: 'MagiesPdf',
-    // Same target set as MagiesTerminal: AppImage + deb + rpm + pacman.
-    // Note: electron-builder 26 does not accept `desktopName` (schema reject).
-    target: ['AppImage', 'deb', 'rpm', 'pacman'],
+    // AppImage + deb ship on every host. rpm/pacman need rpmbuild/fpm host
+    // tools (often missing on macOS CI) — build those on a Linux runner.
+    target: ['AppImage', 'deb'],
     category: 'Office',
     maintainer: 'JasonZhangDad <470059464@qq.com>',
     desktop: {
