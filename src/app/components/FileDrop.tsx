@@ -4,7 +4,7 @@ import type { ToolInputSpec } from '@core/types.ts';
 import { bridge } from '../bridge.ts';
 import type { PickedFile } from '../bridge.ts';
 import { formatBytes, t, type Locale } from '../i18n.ts';
-import { ChevronDown, ChevronRight, FileText, Plus, Trash2, X } from '../icons.ts';
+import { ChevronDown, ChevronRight, Eye, FileText, Plus, Trash2, X } from '../icons.ts';
 import { Button } from './ui.tsx';
 
 interface FileDropProps {
@@ -12,9 +12,10 @@ interface FileDropProps {
   files: PickedFile[];
   locale: Locale;
   onChange(files: PickedFile[]): void;
+  onPreview?(file: PickedFile): void;
 }
 
-export function FileDrop({ spec, files, locale, onChange }: FileDropProps) {
+export function FileDrop({ spec, files, locale, onChange, onPreview }: FileDropProps) {
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState('');
   // Nested dragenter/dragleave pairs fire per child element; counting them is the
@@ -187,6 +188,16 @@ export function FileDrop({ spec, files, locale, onChange }: FileDropProps) {
                 <span className="shrink-0 font-mono text-[11px] text-[var(--text-muted)]">
                   {formatBytes(file.size, locale)}
                 </span>
+                {onPreview && file.name.toLowerCase().endsWith('.pdf') && (
+                  <button
+                    type="button"
+                    aria-label={t('previewPdf', locale)}
+                    onClick={() => onPreview(file)}
+                    className="shrink-0 rounded p-0.5 text-[var(--text-muted)] opacity-0 transition-all group-hover:opacity-100 hover:text-[var(--accent)]"
+                  >
+                    <Eye size={13} />
+                  </button>
+                )}
                 <button
                   type="button"
                   aria-label={t('removeFile', locale)}
