@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.0.3 — 2026-07-28
+
+### Open a PDF and edit it in place
+
+- **New viewer** — open a PDF from Home and read it: page thumbnails, zoom, paging. Also reachable from the eye icon on any file you have picked or any PDF a tool produced.
+- **Page editing** — rotate, delete and drag-reorder pages straight from the thumbnail rail.
+- **Redact by dragging a box** — contents inside the box are permanently removed, not covered over.
+- **Stamp by clicking** — pick a PNG/JPG seal or signature and click where it should go.
+- **Fill forms on the page** — type into the fields drawn over the document instead of typing field names.
+- Undo (10 steps), Save as…, and a **Choose a tool** handoff that carries your edits into any of the 58 tools.
+
+### Correctness
+
+- Clicked positions stay correct on rotated pages: renderers show a page with its rotation applied, while the drawing layer works in the unrotated page box, and the two are now reconciled.
+- Encrypted PDFs can be opened with a password, which is reused for every edit. Because saving drops encryption, the viewer says so rather than letting it pass unnoticed.
+- Form fields whose names contain `=` or a line break are skipped and reported, instead of being written to the wrong field.
+- Updates now download automatically when enabled, and Restart to install works.
+
 ## 1.0.2 — 2026-07-27
 
 ### Security and completeness
