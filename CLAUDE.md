@@ -12,8 +12,9 @@ Node.js 22+. Licensed AGPL-3.0-or-later (MuPDF is AGPL; that choice is load-bear
 
 ```bash
 npm run dev       # worker bundle + catalogue, then Vite and Electron concurrently
-npm run verify    # lint + typecheck + test + build — run this before committing
-npm test          # node:test via tsx
+npm run verify    # lint + typecheck + test:coverage + build — run this before committing
+npm test          # node:test via tsx (src/, electron/, mirror-worker/)
+npm run test:coverage  # c8, gated at 80% lines/statements/functions, 75% branches
 node --test --import tsx src/core/pageRange.test.ts    # single file
 node --test electron/jobs/pool.test.cjs                # needs `npm run build:node` first
 npm run pack:mac / pack:win / pack:linux
