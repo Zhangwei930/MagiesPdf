@@ -247,7 +247,8 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   handle('app:getVersion', () => app.getVersion());
   handle('app:isPackaged', () => app.isPackaged);
 
-  // Manual update actions from Settings. Builds are unsigned (open source).
+  // Update actions from Settings / corner prompt. Packages are unsigned (open source);
+  // download may be automatic when autoUpdate is on, install is always explicit.
   handle('updater:check', async (event) => {
     const send = (status) => {
       if (!event.sender.isDestroyed()) event.sender.send('updater:status', status);
@@ -259,10 +260,20 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     await updater.downloadUpdate();
     return true;
   });
-  handle('updater:install', () => {
-    updater.quitAndInstall();
-    return true;
+  handle('updater:install', async (event) => {
+    const send = (status) => {
+      if (!event.sender.isDestroyed()) event.sender.send('updater:status', status);
+    };
+    try {
+      await updater.quitAndInstall();
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      send({ state: 'error', message, version: updater.getLastStatus?.()?.version });
+      return { success: false, error: message };
+    }
   });
+  handle('updater:status', () => updater.getLastStatus?.() ?? { state: 'idle' });
 }
 
 module.exports = {

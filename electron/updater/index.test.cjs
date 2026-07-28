@@ -13,8 +13,17 @@ const { describe, it } = require('node:test');
 const INDEX_PATH = require.resolve('./index.cjs');
 const CHANNEL_PATH = require.resolve('./releaseChannel.cjs');
 
-async function withUpdaterMocks({ checkForUpdates, appLocale = 'en-US' } = {}, fn) {
+async function withUpdaterMocks(
+  {
+    checkForUpdates,
+    appLocale = 'en-US',
+    platform = 'darwin',
+    isPackaged = true,
+  } = {},
+  fn,
+) {
   const feeds = [];
+  const listeners = new Map();
   const fakeAutoUpdater = {
     autoDownload: false,
     autoInstallOnAppQuit: true,
@@ -31,7 +40,14 @@ async function withUpdaterMocks({ checkForUpdates, appLocale = 'en-US' } = {}, f
     },
     downloadUpdate: async () => true,
     quitAndInstall() {},
-    on() {},
+    on(event, handler) {
+      const list = listeners.get(event) || [];
+      list.push(handler);
+      listeners.set(event, list);
+    },
+    emit(event, payload) {
+      for (const handler of listeners.get(event) || []) handler(payload);
+    },
   };
 
   const originalLoad = Module._load;
@@ -42,23 +58,29 @@ async function withUpdaterMocks({ checkForUpdates, appLocale = 'en-US' } = {}, f
     if (request === 'electron') {
       return {
         app: {
-          isPackaged: true,
+          isPackaged,
           getLocale: () => appLocale,
           getVersion: () => '1.0.0',
+          getPath: () => '/Applications/MagiesPdf.app/Contents/MacOS/MagiesPdf',
+          relaunch() {},
+          quit() {},
         },
       };
     }
     return originalLoad.call(this, request, parent, isMain);
   };
 
+  const settingsPath = require.resolve('../settings.cjs');
   delete require.cache[INDEX_PATH];
+  delete require.cache[settingsPath];
   // releaseChannel has no electron dep; leave it cached.
   try {
     const updater = require('./index.cjs');
-    return await fn({ updater, feeds, fakeAutoUpdater });
+    return await fn({ updater, feeds, fakeAutoUpdater, listeners, platform });
   } finally {
     Module._load = originalLoad;
     delete require.cache[INDEX_PATH];
+    delete require.cache[settingsPath];
   }
 }
 
@@ -132,15 +154,59 @@ describe('resolveUpdateChannel re-export', () => {
   });
 });
 
-describe('manual update safety', () => {
-  it('never enables background download or install-on-quit', async () => {
+describe('auto-download preference', () => {
+  it('enables autoDownload when preference is on; never auto-installs on quit', async () => {
     await withUpdaterMocks({}, async ({ updater, fakeAutoUpdater }) => {
-      updater.enforceManualUpdate();
-      assert.equal(fakeAutoUpdater.autoDownload, false);
+      updater.applyDownloadPreference(true);
+      assert.equal(fakeAutoUpdater.autoDownload, true);
       assert.equal(fakeAutoUpdater.autoInstallOnAppQuit, false);
 
-      updater.setAutoDownloadEnabled(true);
+      updater.applyDownloadPreference(false);
       assert.equal(fakeAutoUpdater.autoDownload, false);
+      assert.equal(fakeAutoUpdater.autoInstallOnAppQuit, false);
+    });
+  });
+
+  it('setAutoDownloadEnabled mirrors the preference (not a no-op)', async () => {
+    await withUpdaterMocks({}, async ({ updater, fakeAutoUpdater }) => {
+      updater.setAutoDownloadEnabled(true);
+      assert.equal(fakeAutoUpdater.autoDownload, true);
+      updater.setAutoDownloadEnabled(false);
+      assert.equal(fakeAutoUpdater.autoDownload, false);
+    });
+  });
+});
+
+describe('status snapshot', () => {
+  it('getLastStatus starts idle and tracks emit via startUpdater path', async () => {
+    await withUpdaterMocks({}, async ({ updater, fakeAutoUpdater }) => {
+      assert.equal(updater.getLastStatus().state, 'idle');
+      const statuses = [];
+      updater.startUpdater((s) => statuses.push(s));
+      // Preference defaults to on → autoDownload true → report downloading.
+      fakeAutoUpdater.autoDownload = true;
+      fakeAutoUpdater.emit('update-available', { version: '2.0.0' });
+      const last = updater.getLastStatus();
+      assert.equal(last.state, 'downloading');
+      assert.equal(last.version, '2.0.0');
+      assert.equal(statuses.at(-1).state, 'downloading');
+
+      fakeAutoUpdater.emit('update-downloaded', {
+        version: '2.0.0',
+        downloadedFile: '/tmp/MagiesPdf-2.0.0-mac.zip',
+      });
+      assert.equal(updater.getLastStatus().state, 'ready');
+      assert.equal(updater.getLastStatus().version, '2.0.0');
+    });
+  });
+
+  it('reports available (not downloading) when autoDownload is off', async () => {
+    await withUpdaterMocks({}, async ({ updater, fakeAutoUpdater }) => {
+      updater.startUpdater(() => {});
+      fakeAutoUpdater.autoDownload = false;
+      fakeAutoUpdater.emit('update-available', { version: '2.1.0' });
+      assert.equal(updater.getLastStatus().state, 'available');
+      assert.equal(updater.getLastStatus().version, '2.1.0');
     });
   });
 });

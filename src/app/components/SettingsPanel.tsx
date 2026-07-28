@@ -74,6 +74,7 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
   const [packaged, setPackaged] = useState(false);
   const [updater, setUpdater] = useState<UpdaterStatus>({ state: 'idle' });
   const [checking, setChecking] = useState(false);
+  const [installing, setInstalling] = useState(false);
   const [changelogOpen, setChangelogOpen] = useState(false);
   const [emailCopied, setEmailCopied] = useState(false);
 
@@ -106,9 +107,18 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
       .isPackaged()
       .then(setPackaged)
       .catch(() => setPackaged(false));
+    void bridge()
+      .getUpdaterStatus?.()
+      .then((snap) => {
+        if (snap?.state) setUpdater(snap);
+      })
+      .catch(() => {
+        // Older preloads without getUpdaterStatus — ignore.
+      });
     return bridge().onUpdaterStatus((status) => {
       setUpdater(status);
       setChecking(false);
+      if (status.state === 'ready' || status.state === 'error') setInstalling(false);
     });
   }, []);
 
@@ -532,8 +542,9 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
                     <Button
                       size="sm"
                       variant="secondary"
+                      type="button"
                       onClick={() => {
-                        setUpdater({ ...updater, state: 'downloading' });
+                        setUpdater({ ...updater, state: 'downloading', message: '0%' });
                         void bridge()
                           .downloadUpdate()
                           .catch((error: unknown) => {
@@ -548,7 +559,35 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
                     </Button>
                   )}
                   {updater.state === 'ready' && (
-                    <Button size="sm" variant="primary" onClick={() => void bridge().installUpdate()}>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      type="button"
+                      loading={installing}
+                      onClick={() => {
+                        setInstalling(true);
+                        void bridge()
+                          .installUpdate()
+                          .then((result) => {
+                            if (result && typeof result === 'object' && result.success === false) {
+                              setInstalling(false);
+                              setUpdater({
+                                state: 'error',
+                                message: result.error || t('updatesError', locale),
+                                version: updater.version,
+                              });
+                            }
+                          })
+                          .catch((error: unknown) => {
+                            setInstalling(false);
+                            setUpdater({
+                              state: 'error',
+                              message: error instanceof Error ? error.message : String(error),
+                              version: updater.version,
+                            });
+                          });
+                      }}
+                    >
                       {t('updatesInstall', locale)}
                     </Button>
                   )}
