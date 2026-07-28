@@ -1,24 +1,26 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { CATEGORIES } from '@core/registry.ts';
 import type { CategoryId, ToolMeta } from '@core/types.ts';
 import { uiRegistry } from '../catalog.ts';
 import { t } from '../i18n.ts';
-import { Search, ToolIcon } from '../icons.ts';
+import { AlertCircle, Eye, Search, ToolIcon } from '../icons.ts';
 import { useApp } from '../store.ts';
 
 interface HomeProps {
   onOpenTool(toolId: string): void;
   onOpenSearch(): void;
   onOpenCategory(categoryId: CategoryId): void;
+  onOpenPreview(): Promise<void>;
 }
 
 /**
  * Welcome / overview panel shown in the main column when no tool is selected.
  * Tool navigation lives in the sidebar; this surface is orientation + shortcuts.
  */
-export function Home({ onOpenTool, onOpenSearch, onOpenCategory }: HomeProps) {
+export function Home({ onOpenTool, onOpenSearch, onOpenCategory, onOpenPreview }: HomeProps) {
   const locale = useApp((s) => s.locale);
   const recentToolIds = useApp((s) => s.recentToolIds);
+  const [previewError, setPreviewError] = useState('');
 
   const recent = useMemo(
     () =>
@@ -68,6 +70,26 @@ export function Home({ onOpenTool, onOpenSearch, onOpenCategory }: HomeProps) {
             ⌘K
           </kbd>
         </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setPreviewError('');
+            onOpenPreview().catch((cause) => {
+              setPreviewError(cause instanceof Error ? cause.message : String(cause));
+            });
+          }}
+          className="mx-auto mt-2.5 flex w-full max-w-md items-center gap-2.5 rounded-xl border border-dashed border-[var(--border-subtle)] px-4 py-2.5 text-left transition-colors hover:border-[var(--accent)]"
+        >
+          <Eye size={16} className="shrink-0 text-[var(--text-muted)]" />
+          <span className="flex-1 text-sm text-[var(--text-muted)]">{t('openPreview', locale)}</span>
+        </button>
+        {previewError && (
+          <p className="mx-auto mt-2 flex max-w-md items-center gap-1.5 text-xs text-[var(--danger)]">
+            <AlertCircle size={12} />
+            {previewError}
+          </p>
+        )}
       </section>
 
       {recent.length > 0 && (

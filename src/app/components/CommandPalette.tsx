@@ -8,20 +8,27 @@ import { useApp } from '../store.ts';
 interface CommandPaletteProps {
   onClose(): void;
   onSelect(toolId: string): void;
+  /** When set, only tools that accept this file extension are shown (e.g. from the Viewer's "Choose a tool"). */
+  filterAccept?: string;
 }
 
 /**
  * Rendered only while open, so query and cursor reset naturally on mount rather
  * than through an effect that would fire an extra render on every open.
  */
-export function CommandPalette({ onClose, onSelect }: CommandPaletteProps) {
+export function CommandPalette({ onClose, onSelect, filterAccept }: CommandPaletteProps) {
   const locale = useApp((s) => s.locale);
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
-  const results = useMemo(() => uiRegistry.search(query, locale, 20), [query, locale]);
+  const results = useMemo(() => {
+    const found = uiRegistry.search(query, locale, 20);
+    return filterAccept
+      ? found.filter((tool) => tool.input.accept.includes(filterAccept))
+      : found;
+  }, [query, locale, filterAccept]);
 
   useEffect(() => {
     // Autofocus has to wait for the input to actually be in the DOM.

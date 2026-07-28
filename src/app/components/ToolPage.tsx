@@ -4,7 +4,7 @@ import type { ParamValues, ToolMeta, ToolOutputFile } from '@core/types.ts';
 import { bridge } from '../bridge.ts';
 import type { JobResult, PickedFile } from '../bridge.ts';
 import { formatBytes, localized, t } from '../i18n.ts';
-import { AlertCircle, Check, FileText, FolderOpen, Save, ToolIcon } from '../icons.ts';
+import { AlertCircle, Check, Eye, FileText, FolderOpen, Save, ToolIcon } from '../icons.ts';
 import { useApp } from '../store.ts';
 import { FileDrop } from './FileDrop.tsx';
 import { ParamForm } from './ParamForm.tsx';
@@ -13,16 +13,18 @@ import { Button, ProgressBar } from './ui.tsx';
 interface ToolPageProps {
   tool: ToolMeta;
   onBack(): void;
+  initialFile?: PickedFile;
+  onPreviewFile?(file: PickedFile): void;
 }
 
-export function ToolPage({ tool }: ToolPageProps) {
+export function ToolPage({ tool, initialFile, onPreviewFile }: ToolPageProps) {
   const locale = useApp((s) => s.locale);
   const runTool = useApp((s) => s.runTool);
   const cancelJob = useApp((s) => s.cancelJob);
   const markJobSaved = useApp((s) => s.markJobSaved);
   const jobs = useApp((s) => s.jobs);
 
-  const [files, setFiles] = useState<PickedFile[]>([]);
+  const [files, setFiles] = useState<PickedFile[]>(() => (initialFile ? [initialFile] : []));
   const [values, setValues] = useState<ParamValues>(() => defaultParams(tool.params));
   const [jobId, setJobId] = useState<string | null>(null);
   const [savedTo, setSavedTo] = useState('');
@@ -64,7 +66,13 @@ export function ToolPage({ tool }: ToolPageProps) {
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 pb-6">
         {needsFiles && (
-          <FileDrop spec={tool.input} files={files} locale={locale} onChange={setFiles} />
+          <FileDrop
+            spec={tool.input}
+            files={files}
+            locale={locale}
+            onChange={setFiles}
+            onPreview={onPreviewFile}
+          />
         )}
 
         {tool.params.length > 0 && (
@@ -89,6 +97,7 @@ export function ToolPage({ tool }: ToolPageProps) {
             result={job.result}
             savedTo={savedTo}
             onSaveAll={() => void saveAll(job.result!.files)}
+            onPreview={onPreviewFile}
           />
         )}
       </div>
@@ -189,10 +198,12 @@ function ResultsCard({
   result,
   savedTo,
   onSaveAll,
+  onPreview,
 }: {
   result: JobResult;
   savedTo: string;
   onSaveAll(): void;
+  onPreview?(file: PickedFile): void;
 }) {
   const locale = useApp((s) => s.locale);
   const reportRows = asReportRows(result.data);
@@ -238,6 +249,18 @@ function ResultsCard({
             <span className="shrink-0 font-mono text-[11px] text-[var(--text-muted)]">
               {formatBytes(file.bytes.length, locale)}
             </span>
+            {onPreview && file.name.toLowerCase().endsWith('.pdf') && (
+              <button
+                type="button"
+                aria-label={t('previewPdf', locale)}
+                onClick={() =>
+                  onPreview({ name: file.name, path: '', size: file.bytes.length, mime: file.mime, bytes: file.bytes })
+                }
+                className="shrink-0 rounded p-0.5 text-[var(--text-muted)] opacity-0 transition-all group-hover:opacity-100 hover:text-[var(--accent)]"
+              >
+                <Eye size={13} />
+              </button>
+            )}
             <button
               type="button"
               onClick={() => void bridge().saveOutputAs(file)}

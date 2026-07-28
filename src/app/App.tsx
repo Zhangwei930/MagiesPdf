@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import type { CategoryId } from '@core/types.ts';
 import { uiRegistry } from './catalog.ts';
-import { hasBridge } from './bridge.ts';
+import { bridge, hasBridge, type PickedFile } from './bridge.ts';
 import { t } from './i18n.ts';
 import { AlertCircle, Loader2, Settings } from './icons.ts';
 import { activeJobCount, useApp } from './store.ts';
@@ -16,11 +16,18 @@ import { Sidebar } from './components/Sidebar.tsx';
 import { SignPage } from './components/SignPage.tsx';
 import { ToolPage } from './components/ToolPage.tsx';
 import { UpdatePrompt } from './components/UpdatePrompt.tsx';
-import { Badge } from './components/ui.tsx';
+import { Badge, Button } from './components/ui.tsx';
+
+// pdfjs-dist is only needed once someone actually opens a preview, so the
+// Viewer (and its ~1MB dependency) load as a separate chunk, not the main bundle.
+const Viewer = lazy(() =>
+  import('./components/Viewer.tsx').then((module) => ({ default: module.Viewer })),
+);
 
 type MainView =
   | { name: 'welcome' }
-  | { name: 'tool'; toolId: string }
+  | { name: 'tool'; toolId: string; initialFile?: PickedFile }
+  | { name: 'viewer'; file: PickedFile }
   | { name: 'settings' };
 
 export function App() {
@@ -32,28 +39,95 @@ export function App() {
 
   const [main, setMain] = useState<MainView>({ name: 'welcome' });
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Set while the palette was opened from the Viewer's "Choose a tool" button,
+  // so picking a tool there both scopes the results to PDF-accepting tools and
+  // carries the already-open file straight into the tool page.
+  const [viewerPaletteFile, setViewerPaletteFile] = useState<PickedFile | null>(null);
   const [jobsOpen, setJobsOpen] = useState(false);
+  // The Viewer's edits live in its own state, so leaving would drop them. It
+  // reports dirtiness up and the shell holds any navigation until confirmed.
+  const [viewerDirty, setViewerDirty] = useState(false);
+  const [pendingNav, setPendingNav] = useState<(() => void) | null>(null);
 
   useEffect(() => {
     void initialize();
   }, [initialize]);
 
-  const openTool = useCallback((toolId: string) => {
+  /**
+   * Runs `action`, unless the Viewer has unsaved edits — then it is held until
+   * the user confirms. Every route out of the Viewer goes through this.
+   */
+  const guarded = useCallback(
+    (action: () => void) => {
+      if (viewerDirty) setPendingNav(() => action);
+      else action();
+    },
+    [viewerDirty],
+  );
+
+  const openTool = useCallback(
+    (toolId: string) => {
+      guarded(() => {
+        setPaletteOpen(false);
+        setMain({ name: 'tool', toolId });
+      });
+    },
+    [guarded],
+  );
+
+  const onPaletteSelect = useCallback(
+    (toolId: string) => {
+      setPaletteOpen(false);
+      const file = viewerPaletteFile;
+      setViewerPaletteFile(null);
+      // Coming from the Viewer the edits travel with the file, so nothing is
+      // lost and the unsaved-changes guard would only be noise.
+      if (file) {
+        setMain({ name: 'tool', toolId, initialFile: file });
+        return;
+      }
+      guarded(() => setMain({ name: 'tool', toolId }));
+    },
+    [guarded, viewerPaletteFile],
+  );
+
+  const closePalette = useCallback(() => {
     setPaletteOpen(false);
-    setMain({ name: 'tool', toolId });
+    setViewerPaletteFile(null);
   }, []);
 
   const openWelcome = useCallback(() => {
-    setMain({ name: 'welcome' });
+    guarded(() => setMain({ name: 'welcome' }));
+  }, [guarded]);
+
+  const openSettings = useCallback(() => {
+    guarded(() => setMain({ name: 'settings' }));
+  }, [guarded]);
+
+  const openViewer = useCallback((file: PickedFile) => {
+    setMain({ name: 'viewer', file });
+  }, []);
+
+  const openViewerPicker = useCallback(async () => {
+    const [file] = await bridge().pickFiles(['.pdf'], false);
+    if (file) openViewer(file);
+  }, [openViewer]);
+
+  const openToolPickerFor = useCallback((file: PickedFile) => {
+    setViewerPaletteFile(file);
+    setPaletteOpen(true);
   }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
+        // ⌘K always means "search everything" — drop any Viewer scoping.
+        setViewerPaletteFile(null);
         setPaletteOpen((open) => !open);
       } else if (event.key === 'Escape') {
         setPaletteOpen(false);
+        setViewerPaletteFile(null);
         setJobsOpen(false);
       }
     };
@@ -116,7 +190,7 @@ export function App() {
 
         <button
           type="button"
-          onClick={() => setMain({ name: 'settings' })}
+          onClick={openSettings}
           aria-label={t('settings', locale)}
           className="no-drag rounded-md p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
         >
@@ -143,10 +217,27 @@ export function App() {
         <main
           className={clsx(
             'min-h-0 flex-1 bg-[var(--surface-app)]',
-            main.name === 'settings' ? 'overflow-hidden' : 'overflow-y-auto',
+            main.name === 'settings' || main.name === 'viewer' ? 'overflow-hidden' : 'overflow-y-auto',
           )}
         >
           {main.name === 'settings' && <SettingsPanel onBack={openWelcome} />}
+
+          {main.name === 'viewer' && (
+            <Suspense
+              fallback={
+                <div className="flex h-full items-center justify-center">
+                  <Loader2 size={22} className="animate-spin text-[var(--text-muted)]" />
+                </div>
+              }
+            >
+              <Viewer
+                key={`${main.file.path}|${main.file.name}|${main.file.size}`}
+                file={main.file}
+                onChooseTool={openToolPickerFor}
+                onDirtyChange={setViewerDirty}
+              />
+            </Suspense>
+          )}
 
           {main.name === 'tool' &&
             (tool ? (
@@ -157,13 +248,20 @@ export function App() {
               ) : tool.id === 'security.add-signature' ? (
                 <SignPage key={tool.id} tool={tool} onBack={openWelcome} />
               ) : (
-                <ToolPage key={tool.id} tool={tool} onBack={openWelcome} />
+                <ToolPage
+                  key={tool.id}
+                  tool={tool}
+                  onBack={openWelcome}
+                  initialFile={main.initialFile}
+                  onPreviewFile={openViewer}
+                />
               )
             ) : (
               <Home
                 onOpenTool={openTool}
                 onOpenSearch={() => setPaletteOpen(true)}
                 onOpenCategory={(_categoryId: CategoryId) => openWelcome()}
+                onOpenPreview={openViewerPicker}
               />
             ))}
 
@@ -175,16 +273,59 @@ export function App() {
                 // Categories live in the drawer; keep welcome and let the user expand there.
                 openWelcome();
               }}
+              onOpenPreview={openViewerPicker}
             />
           )}
         </main>
       </div>
 
       {paletteOpen && (
-        <CommandPalette onClose={() => setPaletteOpen(false)} onSelect={openTool} />
+        <CommandPalette
+          onClose={closePalette}
+          onSelect={onPaletteSelect}
+          filterAccept={viewerPaletteFile ? '.pdf' : undefined}
+        />
       )}
       <JobPanel open={jobsOpen} onClose={() => setJobsOpen(false)} />
       <UpdatePrompt />
+
+      {pendingNav && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm"
+          role="presentation"
+        >
+          <div
+            className="w-full max-w-sm space-y-4 rounded-xl border border-[var(--border-strong)] bg-[var(--surface-panel)] p-5 shadow-2xl"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t('viewerDiscardTitle', locale)}
+          >
+            <div>
+              <h2 className="text-sm font-semibold">{t('viewerDiscardTitle', locale)}</h2>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--text-secondary)]">
+                {t('viewerDiscardHint', locale)}
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setPendingNav(null)}>
+                {t('viewerDiscardStay', locale)}
+              </Button>
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() => {
+                  const go = pendingNav;
+                  setPendingNav(null);
+                  setViewerDirty(false);
+                  go();
+                }}
+              >
+                {t('viewerDiscardLeave', locale)}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
