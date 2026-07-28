@@ -2,11 +2,8 @@ import { useEffect, useState } from 'react';
 import { bridge, hasBridge, type UpdaterStatus } from '../bridge.ts';
 import { t } from '../i18n.ts';
 import { useApp } from '../store.ts';
+import { isActionable, shouldShowToast, type Dismissal } from '../updateToast.ts';
 import { Button, ProgressBar } from './ui.tsx';
-
-function isActionable(state: UpdaterStatus['state']): boolean {
-  return state === 'available' || state === 'downloading' || state === 'ready';
-}
 
 /**
  * Bottom-right update toast (MagiesTerminal-style):
@@ -16,7 +13,7 @@ function isActionable(state: UpdaterStatus['state']): boolean {
 export function UpdatePrompt() {
   const locale = useApp((s) => s.locale);
   const [status, setStatus] = useState<UpdaterStatus>({ state: 'idle' });
-  const [dismissedVersion, setDismissedVersion] = useState<string | null>(null);
+  const [dismissed, setDismissed] = useState<Dismissal | null>(null);
   const [open, setOpen] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
@@ -26,13 +23,7 @@ export function UpdatePrompt() {
 
     const apply = (next: UpdaterStatus) => {
       setStatus(next);
-      if (!isActionable(next.state)) {
-        if (next.state === 'error') setOpen(true);
-        return;
-      }
-      if (next.version && next.version === dismissedVersion && next.state === 'available') {
-        return;
-      }
+      if (!shouldShowToast(next, dismissed)) return;
       setOpen(true);
       if (next.state === 'ready') setInstallError(null);
     };
@@ -47,7 +38,7 @@ export function UpdatePrompt() {
       });
 
     return bridge().onUpdaterStatus(apply);
-  }, [dismissedVersion]);
+  }, [dismissed]);
 
   if (!open) return null;
   if (!isActionable(status.state) && status.state !== 'error') return null;
@@ -93,21 +84,19 @@ export function UpdatePrompt() {
               <span className="ml-2 font-mono text-[12px] text-[var(--accent)]">v{status.version}</span>
             ) : null}
           </h2>
-          {(status.state === 'available' || status.state === 'error') && (
-            <button
-              type="button"
-              className="shrink-0 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
-              aria-label={t('close', locale)}
-              onClick={() => {
-                if (status.state === 'available') {
-                  setDismissedVersion(status.version ?? null);
-                }
-                setOpen(false);
-              }}
-            >
-              ×
-            </button>
-          )}
+          {/* Closable in every state, `ready` included: the toast is a notice,
+              and Settings keeps the install button once it is gone. */}
+          <button
+            type="button"
+            className="shrink-0 rounded-md px-1.5 py-0.5 text-[12px] text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+            aria-label={t('close', locale)}
+            onClick={() => {
+              setDismissed({ version: status.version ?? null, state: status.state });
+              setOpen(false);
+            }}
+          >
+            ×
+          </button>
         </div>
 
         {hint ? (
@@ -135,7 +124,7 @@ export function UpdatePrompt() {
                 size="sm"
                 variant="ghost"
                 onClick={() => {
-                  setDismissedVersion(status.version ?? null);
+                  setDismissed({ version: status.version ?? null, state: status.state });
                   setOpen(false);
                 }}
               >
