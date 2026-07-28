@@ -1,6 +1,7 @@
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, degrees } from 'pdf-lib';
 import { ToolError } from '../../errors.ts';
 import { decryptToBytes } from '../../pdf/document.ts';
+import { asRotation, displayPointToMedia, displayedSize } from '../../pdf/placement.ts';
 import { suffixedName } from '../../naming.ts';
 import type { ToolDescriptor } from '../../types.ts';
 import { sniffImage } from '../convert/imageToPdf.ts';
@@ -30,10 +31,45 @@ export const addStampTool: ToolDescriptor = {
   output: 'single',
   params: [
     {
+      key: 'placement',
+      type: 'select',
+      label: { zh: '定位方式', en: 'Placement' },
+      default: 'preset',
+      options: [
+        { value: 'preset', label: { zh: '页面角落', en: 'Page corner' } },
+        { value: 'point', label: { zh: '指定坐标', en: 'Exact point' } },
+      ],
+    },
+    {
+      key: 'centerX',
+      type: 'number',
+      label: { zh: '中心 X', en: 'Centre X' },
+      help: {
+        zh: '一般由预览界面点击自动填写。单位为磅，原点在页面左上角，按页面显示方向计算。',
+        en: 'Normally filled in by clicking in the preview. Points from the page top-left, as the page is displayed.',
+      },
+      unit: { zh: '磅', en: 'pt' },
+      default: 0,
+      min: 0,
+      max: 20000,
+      visibleWhen: { key: 'placement', equals: ['point'] },
+    },
+    {
+      key: 'centerY',
+      type: 'number',
+      label: { zh: '中心 Y', en: 'Centre Y' },
+      unit: { zh: '磅', en: 'pt' },
+      default: 0,
+      min: 0,
+      max: 20000,
+      visibleWhen: { key: 'placement', equals: ['point'] },
+    },
+    {
       key: 'position',
       type: 'select',
       label: { zh: '位置', en: 'Position' },
       default: 'bottom-right',
+      visibleWhen: { key: 'placement', equals: ['preset'] },
       options: [
         { value: 'bottom-right', label: { zh: '右下', en: 'Bottom right' } },
         { value: 'bottom-left', label: { zh: '左下', en: 'Bottom left' } },
@@ -99,6 +135,7 @@ export const addStampTool: ToolDescriptor = {
     const image =
       kind === 'png' ? await doc.embedPng(imageFile.bytes) : await doc.embedJpg(imageFile.bytes);
 
+    const byPoint = stringParam(ctx, 'placement') === 'point';
     const position = stringParam(ctx, 'position') as Corner;
     const widthPercent = numberParam(ctx, 'widthPercent') / 100;
     const opacity = numberParam(ctx, 'opacity');
@@ -109,6 +146,53 @@ export const addStampTool: ToolDescriptor = {
       checkCancelled(ctx);
       const page = doc.getPage(pageNumber - 1);
       const { width: pageWidth, height: pageHeight } = page.getSize();
+
+      if (byPoint) {
+        // The click arrives in the space the page is *displayed* in, which is
+        // the media box turned by /Rotate; pdf-lib draws in the raw one.
+        const rotation = asRotation(page.getRotation().angle);
+        const media = { width: pageWidth, height: pageHeight };
+        const shown = displayedSize(media, rotation);
+        const centre = { x: numberParam(ctx, 'centerX'), y: numberParam(ctx, 'centerY') };
+
+        if (centre.x > shown.width || centre.y > shown.height) {
+          throw new ToolError(
+            'INVALID_PARAM',
+            `Point ${centre.x},${centre.y} is outside the ${shown.width}x${shown.height} page`,
+            {
+              zh: `指定的位置超出了第 ${pageNumber} 页的范围。`,
+              en: `That point falls outside page ${pageNumber}.`,
+            },
+          );
+        }
+
+        const drawWidth = shown.width * widthPercent;
+        const drawHeight = drawWidth * (image.height / image.width);
+        const anchor = displayPointToMedia(centre, media, rotation);
+
+        // Turning the stamp with the page keeps it upright on screen; pdf-lib
+        // spins the box about its own corner, so the corner is derived from
+        // where the centre has to end up.
+        const radians = (rotation * Math.PI) / 180;
+        const cos = Math.cos(radians);
+        const sin = Math.sin(radians);
+        const offsetX = (drawWidth / 2) * cos - (drawHeight / 2) * sin;
+        const offsetY = (drawWidth / 2) * sin + (drawHeight / 2) * cos;
+
+        page.drawImage(image, {
+          x: anchor.x - offsetX,
+          y: anchor.y - offsetY,
+          width: drawWidth,
+          height: drawHeight,
+          rotate: degrees(rotation),
+          opacity,
+        });
+        reportStep(ctx, index + 1, targets.length, {
+          zh: `正在盖章第 ${pageNumber} 页`,
+          en: `Stamping page ${pageNumber}`,
+        });
+        continue;
+      }
 
       const drawWidth = pageWidth * widthPercent;
       const drawHeight = drawWidth * (image.height / image.width);
