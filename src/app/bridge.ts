@@ -30,7 +30,7 @@ export interface AppSettings {
   defaultOutputDirectory: string;
   onNameCollision: 'rename' | 'overwrite';
   recentToolIds: string[];
-  /** Default true: check feeds on launch. Downloads remain manual. */
+  /** Default true: check feeds on launch and auto-download; install is manual. */
   autoUpdate: boolean;
   api: {
     enabled: boolean;
@@ -81,9 +81,10 @@ export interface MagiesPdfBridge {
   cancelJob(jobId: string): Promise<boolean>;
   onJobProgress(callback: (event: ProgressEvent) => void): () => void;
   onUpdaterStatus(callback: (status: UpdaterStatus) => void): () => void;
+  getUpdaterStatus(): Promise<UpdaterStatus>;
   checkForUpdates(): Promise<boolean>;
   downloadUpdate(): Promise<boolean>;
-  installUpdate(): Promise<boolean>;
+  installUpdate(): Promise<{ success: boolean; error?: string } | boolean>;
   getSettings(): Promise<AppSettings>;
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
   getApiStatus(): Promise<{ running: boolean; address: string; enabled: boolean }>;

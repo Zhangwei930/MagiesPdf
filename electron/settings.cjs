@@ -24,8 +24,9 @@ const DEFAULTS = {
    */
   recentToolIds: [],
   /**
-   * Check for updates on launch. Download and installation always require
-   * explicit user actions because release packages are unsigned.
+   * Check for updates on launch and download in the background when a newer
+   * build is found. Installation still always requires an explicit restart
+   * click — packages are unsigned, so we never install silently.
    */
   autoUpdate: true,
   /** Local REST API, off unless the user turns it on. */

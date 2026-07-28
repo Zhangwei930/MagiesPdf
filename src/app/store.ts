@@ -60,6 +60,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultOutputDirectory: '',
   onNameCollision: 'rename',
   recentToolIds: [],
+  /** Check + auto-download on launch; install still requires a restart click. */
   autoUpdate: true,
   api: {
     enabled: false,

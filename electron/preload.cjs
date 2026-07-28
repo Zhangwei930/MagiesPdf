@@ -67,6 +67,8 @@ const api = {
     ipcRenderer.on('updater:status', listener);
     return () => ipcRenderer.removeListener('updater:status', listener);
   },
+  /** Latest known updater status (hydrates Settings / toast after late mount). */
+  getUpdaterStatus: () => ipcRenderer.invoke('updater:status'),
   checkForUpdates: () => ipcRenderer.invoke('updater:check'),
   downloadUpdate: () => ipcRenderer.invoke('updater:download'),
   installUpdate: () => ipcRenderer.invoke('updater:install'),

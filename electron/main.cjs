@@ -125,8 +125,8 @@ if (!app.requestSingleInstanceLock()) {
       console.error('[magiespdf] REST API failed to start:', error.message);
     });
 
-    // Overseas installs check GitHub, mainland ones the mirror; either way the
-    // user is only notified, never updated behind their back.
+    // Overseas installs check GitHub, mainland ones the mirror. When autoUpdate
+    // is on we check + download automatically; install still needs a click.
     startUpdater((status) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('updater:status', status);
     });
