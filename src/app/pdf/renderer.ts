@@ -1,6 +1,6 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { rectFromDrag, toFractionRect, type Rect } from './geometry.ts';
+import { rectFromDrag, toFractionRect, type Rect, type Size } from './geometry.ts';
 
 /**
  * Read-only page rendering for the in-app viewer. This is the renderer's own
@@ -121,20 +121,58 @@ export async function getFormFields(
 }
 
 /**
+ * Every page's size in PDF points, with `/Rotate` already applied — the input
+ * the continuous-scroll layout needs before it can draw anything.
+ */
+export async function getPageSizes(doc: PdfDocumentHandle): Promise<Size[]> {
+  const sizes: Size[] = [];
+  for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
+    const viewport = (await doc.getPage(pageNumber)).getViewport({ scale: 1 });
+    sizes.push({ width: viewport.width, height: viewport.height });
+  }
+  return sizes;
+}
+
+/**
  * Draws a page and reports its size in PDF points (rotation already applied),
  * which is what maps a click on the canvas back to a place in the document.
+ *
+ * The page is drawn offscreen and blitted in one go. Assigning to `canvas.width`
+ * clears it, so rendering straight onto the visible canvas makes every re-render
+ * — a zoom, or the reload after an edit — flash blank first.
+ *
+ * `dpr` multiplies the pixel buffer without changing the layout size, which is
+ * what keeps text crisp on a retina display. Coordinate mapping is unaffected:
+ * clicks are measured against the displayed box, so the ratio cancels out.
+ *
+ * `isStale` is consulted once the drawing is done. Zooming fires renders faster
+ * than they finish, and without this the last one to *complete* wins — leaving
+ * the page stuck at a scale the reader has already zoomed past.
  */
 export async function renderPageToCanvas(
   doc: PdfDocumentHandle,
   pageNumber: number,
   canvas: HTMLCanvasElement,
   scale: number,
-): Promise<{ width: number; height: number }> {
+  dpr = 1,
+  isStale: () => boolean = () => false,
+): Promise<Size> {
   const page = await doc.getPage(pageNumber);
-  const viewport = page.getViewport({ scale });
-  canvas.width = viewport.width;
-  canvas.height = viewport.height;
-  await page.render({ canvas, viewport }).promise;
+  const viewport = page.getViewport({ scale: scale * dpr });
   const unscaled = page.getViewport({ scale: 1 });
+
+  const buffer = document.createElement('canvas');
+  buffer.width = Math.max(1, Math.floor(viewport.width));
+  buffer.height = Math.max(1, Math.floor(viewport.height));
+  await page.render({ canvas: buffer, viewport }).promise;
+
+  if (isStale()) return { width: unscaled.width, height: unscaled.height };
+
+  canvas.width = buffer.width;
+  canvas.height = buffer.height;
+  canvas.style.width = `${buffer.width / dpr}px`;
+  canvas.style.height = `${buffer.height / dpr}px`;
+  canvas.getContext('2d')?.drawImage(buffer, 0, 0);
+
   return { width: unscaled.width, height: unscaled.height };
 }
