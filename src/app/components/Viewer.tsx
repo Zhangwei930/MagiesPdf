@@ -11,6 +11,7 @@ import {
   Lock,
   Maximize,
   MoveHorizontal,
+  Redo2,
   RotateCw,
   Save,
   Stamp,
@@ -34,6 +35,7 @@ import {
   zoomStep,
 } from '../pdf/layout.ts';
 import { classifyLoadError, type PdfLoadFailure } from '../pdf/loadError.ts';
+import { currentPlatform, isTypingTarget, matchShortcut } from '../shortcuts.ts';
 import { reorderedPages } from '../pdf/pageOrder.ts';
 import {
   getFormFields,
@@ -71,11 +73,6 @@ function devicePixels(): number {
   return Math.min(MAX_DPR, window.devicePixelRatio || 1);
 }
 
-function isTypingTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
-}
-
 /**
  * PDF viewer with page-level editing.
  *
@@ -93,6 +90,10 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
 
   const [bytes, setBytes] = useState<Uint8Array>(file.bytes);
   const [history, setHistory] = useState<Uint8Array[]>([]);
+  /** Undone states, newest first — what redo walks back into. */
+  const [future, setFuture] = useState<Uint8Array[]>([]);
+  /** When the current bytes last reached disk; 0 means they never have. */
+  const [savedAt, setSavedAt] = useState(0);
   const [doc, setDoc] = useState<PdfDocumentHandle | null>(null);
   /** Unscaled page sizes, in PDF points — the input to the whole layout. */
   const [sizes, setSizes] = useState<Size[]>([]);
@@ -284,12 +285,16 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
     };
   }, []);
 
+  /**
+   * Jumps are instant, not animated. Asking for a page and then watching three
+   * seconds of scrolling go by is the opposite of responsive — and every reader
+   * people already use lands immediately. Reading is what scrolling is for.
+   */
   const goToPage = useCallback(
     (target: number) => {
-      scrollRef.current?.scrollTo({
-        top: scrollTopForPage(offsets, target) + PAGE_PADDING,
-        behavior: 'smooth',
-      });
+      const element = scrollRef.current;
+      if (!element) return;
+      element.scrollTop = scrollTopForPage(offsets, target) + PAGE_PADDING;
     },
     [offsets],
   );
@@ -318,6 +323,9 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
         const output = result.files[0];
         if (!output) throw new Error('the tool produced no output');
         setHistory((past) => [...past, bytes].slice(-HISTORY_LIMIT));
+        // A fresh edit is a new branch: whatever was undone is not coming back.
+        setFuture([]);
+        setSavedAt(0);
         setBytes(output.bytes);
       } catch (cause) {
         setEditError(cause instanceof Error ? cause.message : String(cause));
@@ -446,23 +454,145 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
     setMode('stamp');
   };
 
-  const undo = () => {
-    const previous = history[history.length - 1];
-    if (!previous) return;
-    setHistory((past) => past.slice(0, -1));
-    setBytes(previous);
-  };
+  const undo = useCallback(() => {
+    setHistory((past) => {
+      const previous = past[past.length - 1];
+      if (!previous) return past;
+      setFuture((ahead) => [bytes, ...ahead].slice(0, HISTORY_LIMIT));
+      setBytes(previous);
+      return past.slice(0, -1);
+    });
+  }, [bytes]);
 
-  const save = () =>
-    void bridge().saveOutputAs({ name: file.name, bytes, mime: 'application/pdf' });
+  const redo = useCallback(() => {
+    setFuture((ahead) => {
+      const next = ahead[0];
+      if (!next) return ahead;
+      setHistory((past) => [...past, bytes].slice(-HISTORY_LIMIT));
+      setBytes(next);
+      return ahead.slice(1);
+    });
+  }, [bytes]);
+
+  /**
+   * ⌘S overwrites the file that was opened, the way it does everywhere else.
+   * A document with no path behind it — the output of a tool run, handed over
+   * in memory — has nowhere to write back to, so it falls through to Save As.
+   */
+  const save = useCallback(async () => {
+    setEditError('');
+    try {
+      if (file.path === '') {
+        const result = await bridge().saveOutputAs({
+          name: file.name,
+          bytes,
+          mime: 'application/pdf',
+        });
+        if (result) setSavedAt(Date.now());
+        return;
+      }
+      await bridge().writeToPath(file.path, bytes);
+      setSavedAt(Date.now());
+    } catch (cause) {
+      setEditError(
+        `${t('viewerSaveFailed', locale)} — ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
+  }, [bytes, file.name, file.path, locale]);
+
+  const saveAs = useCallback(async () => {
+    const result = await bridge().saveOutputAs({
+      name: file.name,
+      bytes,
+      mime: 'application/pdf',
+    });
+    if (result) setSavedAt(Date.now());
+  }, [bytes, file.name]);
 
   const edited = history.length > 0;
+  /** Cleared by any further edit, so the badge only marks a saved state. */
+  const saved = savedAt > 0;
 
-  // Let the shell warn before it navigates away from unsaved edits.
+  // Let the shell warn before it navigates away from unsaved edits. Edits that
+  // have reached disk are not worth warning about.
+  const dirty = edited && !saved;
   useEffect(() => {
-    onDirtyChange(edited);
+    onDirtyChange(dirty);
     return () => onDirtyChange(false);
-  }, [edited, onDirtyChange]);
+  }, [dirty, onDirtyChange]);
+
+  /**
+   * The document's own shortcuts. The shell owns the ones that are not about a
+   * document (⌘O, ⌘W, ⌘K); the two sets do not overlap, so both listeners can
+   * sit on the window and ignore what is not theirs.
+   */
+  useEffect(() => {
+    const platform = currentPlatform();
+    const onKeyDown = (event: KeyboardEvent) => {
+      const action = matchShortcut(event, platform, { typing: isTypingTarget(event.target) });
+
+      switch (action) {
+        case 'save':
+          void save();
+          break;
+        case 'saveAs':
+          void saveAs();
+          break;
+        case 'undo':
+          if (!busy) undo();
+          break;
+        case 'redo':
+          if (!busy) redo();
+          break;
+        case 'zoomIn':
+          zoomBy(1);
+          break;
+        case 'zoomOut':
+          zoomBy(-1);
+          break;
+        case 'zoomReset':
+          zoomTo(1, viewport.height / 2);
+          break;
+        case 'fitWidth':
+          setFit('width');
+          break;
+        case 'fitPage':
+          setFit('page');
+          break;
+        case 'nextPage':
+          goToPage(page + 1);
+          break;
+        case 'prevPage':
+          goToPage(page - 1);
+          break;
+        case 'firstPage':
+          goToPage(1);
+          break;
+        case 'lastPage':
+          goToPage(pageCount);
+          break;
+        default:
+          // Not a document shortcut — leave it for the shell or the browser.
+          return;
+      }
+      event.preventDefault();
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    busy,
+    goToPage,
+    page,
+    pageCount,
+    redo,
+    save,
+    saveAs,
+    undo,
+    viewport.height,
+    zoomBy,
+    zoomTo,
+  ]);
 
   const switchMode = (next: ViewMode) => {
     setMode((current) => (current === next ? 'view' : next));
@@ -543,8 +673,15 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
           </span>
 
           {edited && (
-            <span className="shrink-0 rounded-md bg-[var(--accent-soft)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--accent)]">
-              {t('viewerEdited', locale)}
+            <span
+              className={clsx(
+                'shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium',
+                saved
+                  ? 'bg-[var(--success-soft)] text-[var(--success)]'
+                  : 'bg-[var(--accent-soft)] text-[var(--accent)]',
+              )}
+            >
+              {t(saved ? 'viewerSaved' : 'viewerEdited', locale)}
             </span>
           )}
 
@@ -597,6 +734,13 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
             >
               <Undo2 size={15} />
             </ToolbarButton>
+            <ToolbarButton
+              label={t('viewerRedo', locale)}
+              disabled={future.length === 0 || busy}
+              onClick={redo}
+            >
+              <Redo2 size={15} />
+            </ToolbarButton>
           </div>
 
           <Button
@@ -632,9 +776,18 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
             {t(mode === 'redact' ? 'viewerRedactExit' : 'viewerRedactMode', locale)}
           </Button>
 
-          <Button size="sm" variant="secondary" disabled={!doc || busy} onClick={save}>
+          <Button size="sm" variant="secondary" disabled={!doc || busy} onClick={() => void save()}>
             <Save size={13} />
             {t('viewerSave', locale)}
+          </Button>
+
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!doc || busy}
+            onClick={() => void saveAs()}
+          >
+            {t('viewerSaveAs', locale)}
           </Button>
 
           <Button
