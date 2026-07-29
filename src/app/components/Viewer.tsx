@@ -6,6 +6,7 @@ import { useApp } from '../store.ts';
 import {
   AlertCircle,
   Eraser,
+  FileOutput,
   FilePenLine,
   Loader2,
   Lock,
@@ -25,14 +26,17 @@ import { clampRect, rectFromDrag, toPdfPoint, type Point, type Size } from '../p
 import {
   PAGE_GAP,
   PAGE_PADDING,
+  anchorAt,
   clampScale,
   fitScale,
+  offsetForAnchor,
   pageAtOffset,
   pageOffsets,
   scrollTopAfterZoom,
   scrollTopForPage,
   visibleRange,
   zoomStep,
+  type ScrollAnchor,
 } from '../pdf/layout.ts';
 import { classifyLoadError, type PdfLoadFailure } from '../pdf/loadError.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from '../shortcuts.ts';
@@ -133,6 +137,8 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
   const pendingScroll = useRef<number | null>(null);
   const scaleRef = useRef(1);
   const scrollFrame = useRef(0);
+  /** Where the reader was when an edit started, to be restored once it lands. */
+  const restoreAnchor = useRef<ScrollAnchor | null>(null);
   const panFrom = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
 
   const pageCount = sizes.length;
@@ -217,6 +223,21 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
     if (element) element.scrollTop = pendingScroll.current;
     pendingScroll.current = null;
   }, [scale]);
+
+  /**
+   * An edit rewrites the file, so a page above the reader can change height and
+   * carry everything below it along. Putting the anchor back is what keeps a
+   * rotate from also scrolling you somewhere you were not.
+   */
+  useLayoutEffect(() => {
+    const anchor = restoreAnchor.current;
+    if (!anchor || sizes.length === 0) return;
+    restoreAnchor.current = null;
+    const element = scrollRef.current;
+    if (element) {
+      element.scrollTop = offsetForAnchor(offsets, sizes, scale, anchor) + PAGE_PADDING;
+    }
+  }, [offsets, scale, sizes]);
 
   const onScroll = useCallback(() => {
     if (scrollFrame.current) return;
@@ -308,6 +329,10 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
    */
   const runEdit = useCallback(
     async (toolId: string, params: Record<string, unknown>, extra?: PickedFile) => {
+      const element = scrollRef.current;
+      if (element) {
+        restoreAnchor.current = anchorAt(offsets, sizes, scale, element.scrollTop - PAGE_PADDING);
+      }
       setBusy(true);
       setEditError('');
       try {
@@ -333,7 +358,7 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
         setBusy(false);
       }
     },
-    [bytes, file.name, password],
+    [bytes, file.name, offsets, password, scale, sizes],
   );
 
   const rotatePage = (pageNumber: number) =>
@@ -666,7 +691,12 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
           ))}
       </aside>
 
-      <div className="flex min-h-0 flex-1 flex-col">
+      {/* min-w-0 matters: without it a flex item cannot shrink below its
+          content, so the toolbar getting one element wider — the "edited" badge
+          appearing after the first edit — would push this column past the
+          window, widen the page area, and re-solve fit-width. The whole
+          document would visibly re-zoom on the first rotate. */}
+      <div className="flex min-h-0 w-0 min-w-0 flex-1 flex-col">
         <header className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-4 py-2.5">
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={file.name}>
             {file.name}
@@ -743,52 +773,52 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
             </ToolbarButton>
           </div>
 
-          <Button
-            size="sm"
-            variant={mode === 'form' ? 'primary' : 'secondary'}
-            disabled={!doc || busy}
-            onClick={() => switchMode('form')}
-          >
-            <FilePenLine size={13} />
-            {t(mode === 'form' ? 'viewerFormExit' : 'viewerFormMode', locale)}
-          </Button>
-
-          <Button
-            size="sm"
-            variant={mode === 'stamp' ? 'primary' : 'secondary'}
-            disabled={!doc || busy}
-            onClick={() => {
-              if (mode === 'stamp') switchMode('stamp');
-              else void enterStampMode();
-            }}
-          >
-            <Stamp size={13} />
-            {t(mode === 'stamp' ? 'viewerStampExit' : 'viewerStampMode', locale)}
-          </Button>
-
-          <Button
-            size="sm"
-            variant={mode === 'redact' ? 'danger' : 'secondary'}
-            disabled={!doc || busy}
-            onClick={() => switchMode('redact')}
-          >
-            <Eraser size={13} />
-            {t(mode === 'redact' ? 'viewerRedactExit' : 'viewerRedactMode', locale)}
-          </Button>
+          {/* The mode switches are icons, the way a toolbar is: their labels
+              are long in both languages and would crowd out the filename.
+              Whichever mode is on says so in the banner under the toolbar. */}
+          <div className="flex shrink-0 items-center gap-1 border-l border-[var(--border-subtle)] pl-2">
+            <ToolbarButton
+              label={t(mode === 'form' ? 'viewerFormExit' : 'viewerFormMode', locale)}
+              active={mode === 'form'}
+              disabled={!doc || busy}
+              onClick={() => switchMode('form')}
+            >
+              <FilePenLine size={15} />
+            </ToolbarButton>
+            <ToolbarButton
+              label={t(mode === 'stamp' ? 'viewerStampExit' : 'viewerStampMode', locale)}
+              active={mode === 'stamp'}
+              disabled={!doc || busy}
+              onClick={() => {
+                if (mode === 'stamp') switchMode('stamp');
+                else void enterStampMode();
+              }}
+            >
+              <Stamp size={15} />
+            </ToolbarButton>
+            <ToolbarButton
+              label={t(mode === 'redact' ? 'viewerRedactExit' : 'viewerRedactMode', locale)}
+              active={mode === 'redact'}
+              tone="danger"
+              disabled={!doc || busy}
+              onClick={() => switchMode('redact')}
+            >
+              <Eraser size={15} />
+            </ToolbarButton>
+          </div>
 
           <Button size="sm" variant="secondary" disabled={!doc || busy} onClick={() => void save()}>
             <Save size={13} />
             {t('viewerSave', locale)}
           </Button>
 
-          <Button
-            size="sm"
-            variant="ghost"
+          <ToolbarButton
+            label={t('viewerSaveAs', locale)}
             disabled={!doc || busy}
             onClick={() => void saveAs()}
           >
-            {t('viewerSaveAs', locale)}
-          </Button>
+            <FileOutput size={15} />
+          </ToolbarButton>
 
           <Button
             size="sm"
@@ -944,12 +974,15 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
 function ToolbarButton({
   label,
   active,
+  tone = 'accent',
   disabled,
   onClick,
   children,
 }: {
   label: string;
   active?: boolean;
+  /** What being active looks like — redaction destroys content, so it warns. */
+  tone?: 'accent' | 'danger';
   disabled?: boolean;
   onClick(): void;
   children: React.ReactNode;
@@ -963,10 +996,10 @@ function ToolbarButton({
       disabled={disabled}
       onClick={onClick}
       className={clsx(
-        'rounded-md p-1.5 transition-colors disabled:opacity-30',
-        active
-          ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
-          : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]',
+        'shrink-0 rounded-md p-1.5 transition-colors disabled:opacity-30',
+        !active && 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]',
+        active && tone === 'accent' && 'bg-[var(--accent-soft)] text-[var(--accent)]',
+        active && tone === 'danger' && 'bg-[var(--danger-soft)] text-[var(--danger)]',
       )}
     >
       {children}

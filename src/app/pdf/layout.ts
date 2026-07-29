@@ -114,6 +114,61 @@ export function pageAtOffset(offsets: number[], scrollTop: number, viewportHeigh
   return best;
 }
 
+/**
+ * A reading position expressed relative to the document rather than to the
+ * scroll column: page `page`, `fraction` of the way down it.
+ *
+ * An edit rewrites the whole file, so page heights can change and every offset
+ * below the edit moves. Holding a raw scrollTop across that would drift the
+ * reader somewhere else; holding an anchor puts them back where they were.
+ */
+export interface ScrollAnchor {
+  page: number;
+  fraction: number;
+}
+
+export function anchorAt(
+  offsets: number[],
+  sizes: Size[],
+  scale: number,
+  contentTop: number,
+): ScrollAnchor {
+  const count = Math.min(offsets.length - 1, sizes.length);
+  if (count <= 0) return { page: 1, fraction: 0 };
+
+  const top = Math.max(0, contentTop);
+
+  // The last page that starts at or above the position is the one being read.
+  let page = 1;
+  for (let n = 1; n <= count; n += 1) {
+    if ((offsets[n - 1] ?? 0) <= top) page = n;
+  }
+
+  const height = (sizes[page - 1]?.height ?? 0) * scale;
+  if (height <= 0) return { page, fraction: 0 };
+
+  const fraction = (top - (offsets[page - 1] ?? 0)) / height;
+  // Past the bottom of a page means the pointer is in the gap below it, which
+  // reads as the start of the next page.
+  if (fraction >= 1 && page < count) return { page: page + 1, fraction: 0 };
+  return { page, fraction: Math.min(1, Math.max(0, fraction)) };
+}
+
+export function offsetForAnchor(
+  offsets: number[],
+  sizes: Size[],
+  scale: number,
+  anchor: ScrollAnchor,
+): number {
+  const count = Math.min(offsets.length - 1, sizes.length);
+  if (count <= 0) return 0;
+
+  // The anchored page may have been deleted by the edit being absorbed.
+  const page = Math.min(count, Math.max(1, anchor.page));
+  const height = (sizes[page - 1]?.height ?? 0) * scale;
+  return (offsets[page - 1] ?? 0) + anchor.fraction * height;
+}
+
 /** Where to scroll so page `n` starts at the top of the viewport. */
 export function scrollTopForPage(offsets: number[], page: number): number {
   const count = offsets.length - 1;
