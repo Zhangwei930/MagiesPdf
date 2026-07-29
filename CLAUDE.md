@@ -35,7 +35,35 @@ Three layers, enforced by ESLint and by the build:
   `mupdf` or `pdf-lib`. It gets the catalogue as data over `catalog:get`.
 
 If the renderer bundle jumps past ~300 KB or a `.wasm` appears in `dist/assets/`,
-that boundary has been broken.
+that boundary has been broken. (It is currently over that line at ~340 KB and has
+been for a while — treat the number as a tripwire for *new* growth, not a claim
+that the budget is being met.)
+
+## The renderer is document-centric
+
+The shell is built around open documents, not around tools:
+
+- `src/app/documents.ts` owns what a document is — bytes, an undo `past` and
+  `future`, whether it is on disk. Pure and tested; the store only decides which
+  document an action applies to. History is capped by **bytes as well as steps**,
+  because ten copies of a large scan across several tabs will exhaust memory.
+- Open documents live in the store as a list with an active id, rendered as tabs.
+  A document survives navigating away, so there is no "you will lose your edits"
+  guard — the only prompt left is closing a dirty tab.
+- **Editing belongs to the store, not the Viewer.** The Viewer renders and calls
+  `editDocument`; that is what lets a tool run land in the same undo history as a
+  page rotation.
+- Picking a tool with a document in view runs it against that document
+  (`applyToolToDocument`). Whether that is possible is decided in two halves, in
+  `src/app/toolApply.ts`: the input side from the descriptor (exactly one PDF),
+  the output side from the actual result (a lone PDF replaces the document,
+  anything else is offered for saving). **Do not add an output-type field to the
+  descriptors for this** — the shell is the only thing that cares, and it can
+  already tell by looking.
+
+Layout maths for the continuous-scroll viewer is in `src/app/pdf/layout.ts`, and
+keyboard shortcuts are a pure mapping in `src/app/shortcuts.ts`. Both are there so
+they can be tested without a DOM; keep new logic of that kind out of components.
 
 ## Adding a tool
 
