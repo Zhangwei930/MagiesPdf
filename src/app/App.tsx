@@ -7,8 +7,10 @@ import { t } from './i18n.ts';
 import { AlertCircle, Eye, Loader2, Settings } from './icons.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
 import { activeJobCount, useApp } from './store.ts';
+import { isDirty, type DocumentState } from './documents.ts';
 import { BatchPage } from './components/BatchPage.tsx';
 import { CommandPalette } from './components/CommandPalette.tsx';
+import { DocumentTabs } from './components/DocumentTabs.tsx';
 import { Home } from './components/Home.tsx';
 import { JobPanel } from './components/JobPanel.tsx';
 import { PipelinePage } from './components/PipelinePage.tsx';
@@ -28,7 +30,7 @@ const Viewer = lazy(() =>
 type MainView =
   | { name: 'welcome' }
   | { name: 'tool'; toolId: string; initialFile?: PickedFile }
-  | { name: 'viewer'; file: PickedFile }
+  | { name: 'document' }
   | { name: 'settings' };
 
 export function App() {
@@ -37,97 +39,96 @@ export function App() {
   const jobs = useApp((s) => s.jobs);
   const startupError = useApp((s) => s.startupError);
   const initialize = useApp((s) => s.initialize);
+  const documents = useApp((s) => s.documents);
+  const activeDocumentId = useApp((s) => s.activeDocumentId);
+  const openDocument = useApp((s) => s.openDocument);
+  const closeDocument = useApp((s) => s.closeDocument);
+  const setActiveDocument = useApp((s) => s.setActiveDocument);
+  const saveDocument = useApp((s) => s.saveDocument);
 
   const [main, setMain] = useState<MainView>({ name: 'welcome' });
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // Set while the palette was opened from the Viewer's "Choose a tool" button,
-  // so picking a tool there both scopes the results to PDF-accepting tools and
-  // carries the already-open file straight into the tool page.
-  const [viewerPaletteFile, setViewerPaletteFile] = useState<PickedFile | null>(null);
+  // Set while the palette was opened from the document toolbar, so the results
+  // are scoped to tools that accept a PDF.
+  const [paletteForDocument, setPaletteForDocument] = useState(false);
   const [jobsOpen, setJobsOpen] = useState(false);
-  // The Viewer's edits live in its own state, so leaving would drop them. It
-  // reports dirtiness up and the shell holds any navigation until confirmed.
-  const [viewerDirty, setViewerDirty] = useState(false);
-  const [pendingNav, setPendingNav] = useState<(() => void) | null>(null);
+  // A tab being closed with unsaved changes, held until the user decides.
+  const [closing, setClosing] = useState<DocumentState | null>(null);
   // Nested dragenter/dragleave pairs fire per child element; counting them is
   // the only reliable way to know the pointer has truly left the window.
   const dragDepth = useRef(0);
   const [dropping, setDropping] = useState(false);
   const [dropError, setDropError] = useState('');
 
+  const activeDocument = documents.find((d) => d.id === activeDocumentId) ?? null;
+
   useEffect(() => {
     void initialize();
   }, [initialize]);
 
-  /**
-   * Runs `action`, unless the Viewer has unsaved edits — then it is held until
-   * the user confirms. Every route out of the Viewer goes through this.
-   */
-  const guarded = useCallback(
-    (action: () => void) => {
-      if (viewerDirty) setPendingNav(() => action);
-      else action();
-    },
-    [viewerDirty],
-  );
-
-  const openTool = useCallback(
-    (toolId: string) => {
-      guarded(() => {
-        setPaletteOpen(false);
-        setMain({ name: 'tool', toolId });
-      });
-    },
-    [guarded],
-  );
-
-  const onPaletteSelect = useCallback(
-    (toolId: string) => {
-      setPaletteOpen(false);
-      const file = viewerPaletteFile;
-      setViewerPaletteFile(null);
-      // Coming from the Viewer the edits travel with the file, so nothing is
-      // lost and the unsaved-changes guard would only be noise.
-      if (file) {
-        setMain({ name: 'tool', toolId, initialFile: file });
-        return;
-      }
-      guarded(() => setMain({ name: 'tool', toolId }));
-    },
-    [guarded, viewerPaletteFile],
-  );
+  const openTool = useCallback((toolId: string) => {
+    setPaletteOpen(false);
+    setMain({ name: 'tool', toolId });
+  }, []);
 
   const closePalette = useCallback(() => {
     setPaletteOpen(false);
-    setViewerPaletteFile(null);
+    setPaletteForDocument(false);
   }, []);
 
-  const openWelcome = useCallback(() => {
-    guarded(() => setMain({ name: 'welcome' }));
-  }, [guarded]);
+  const openWelcome = useCallback(() => setMain({ name: 'welcome' }), []);
+  const openSettings = useCallback(() => setMain({ name: 'settings' }), []);
 
-  const openSettings = useCallback(() => {
-    guarded(() => setMain({ name: 'settings' }));
-  }, [guarded]);
-
-  const openViewer = useCallback((file: PickedFile) => {
-    setMain({ name: 'viewer', file });
-  }, []);
+  /** Opens a file as a document and shows it. */
+  const showDocument = useCallback(
+    (file: PickedFile) => {
+      openDocument(file);
+      setMain({ name: 'document' });
+    },
+    [openDocument],
+  );
 
   const openViewerPicker = useCallback(async () => {
     const [file] = await bridge().pickFiles(['.pdf'], false);
-    if (file) openViewer(file);
-  }, [openViewer]);
+    if (file) showDocument(file);
+  }, [showDocument]);
 
-  /** Reads paths and shows the first PDF among them. */
+  /** Reads paths and opens each as its own tab. */
   const openPaths = useCallback(
     async (paths: string[]) => {
       if (paths.length === 0) return;
-      const [file] = await bridge().readFiles(paths);
-      if (file) guarded(() => openViewer(file));
+      for (const file of await bridge().readFiles(paths)) showDocument(file);
     },
-    [guarded, openViewer],
+    [showDocument],
   );
+
+  const selectTab = useCallback(
+    (id: string) => {
+      setActiveDocument(id);
+      setMain({ name: 'document' });
+    },
+    [setActiveDocument],
+  );
+
+  /** Closing a tab with unsaved changes asks first; a clean one just goes. */
+  const requestCloseTab = useCallback(
+    (id: string) => {
+      const document = documents.find((d) => d.id === id);
+      if (document && isDirty(document)) {
+        setClosing(document);
+        return;
+      }
+      closeDocument(id);
+    },
+    [closeDocument, documents],
+  );
+
+  /**
+   * The view actually shown. Closing the last tab leaves `main` pointing at a
+   * document that is gone; deriving the fallback here means the pane can never
+   * render empty, where an effect would correct it a render too late.
+   */
+  const view: MainView = main.name === 'document' && !activeDocument ? { name: 'welcome' } : main;
 
   // Double-click in Finder / Explorer, Open With, a drop on the dock icon, or a
   // second launch: the main process forwards them all here.
@@ -140,10 +141,36 @@ export function App() {
     });
   }, [openPaths]);
 
-  const openToolPickerFor = useCallback((file: PickedFile) => {
-    setViewerPaletteFile(file);
+  const openToolPickerForDocument = useCallback(() => {
+    setPaletteForDocument(true);
     setPaletteOpen(true);
   }, []);
+
+  const onPaletteSelect = useCallback(
+    (toolId: string) => {
+      const forDocument = paletteForDocument;
+      closePalette();
+
+      // Chosen from the document toolbar: carry the document, as it stands now,
+      // into the tool rather than making the user find the file again.
+      if (forDocument && activeDocument) {
+        setMain({
+          name: 'tool',
+          toolId,
+          initialFile: {
+            name: activeDocument.name,
+            path: activeDocument.path,
+            size: activeDocument.bytes.length,
+            mime: 'application/pdf',
+            bytes: activeDocument.bytes,
+          },
+        });
+        return;
+      }
+      setMain({ name: 'tool', toolId });
+    },
+    [activeDocument, closePalette, paletteForDocument],
+  );
 
   /**
    * The shell's shortcuts. Document shortcuts (save, zoom, paging) belong to
@@ -161,21 +188,22 @@ export function App() {
           });
           break;
         case 'palette':
-          // ⌘K always means "search everything" — drop any Viewer scoping.
-          setViewerPaletteFile(null);
+          // ⌘K always means "search everything" — drop any document scoping.
+          setPaletteForDocument(false);
           setPaletteOpen((open) => !open);
           break;
         case 'dismiss':
-          setPaletteOpen(false);
-          setViewerPaletteFile(null);
+          closePalette();
           setJobsOpen(false);
           setDropError('');
           break;
         case 'close':
-          // ⌘W closes the document. With none open it means the window, which
-          // is Electron's to handle — so it is deliberately not prevented.
-          if (main.name === 'welcome') return;
-          openWelcome();
+          // ⌘W closes the open document, then falls back to leaving whatever
+          // page you are on. With nothing open it means the window, which is
+          // Electron's to handle — so it is deliberately not prevented.
+          if (view.name === 'document' && activeDocumentId) requestCloseTab(activeDocumentId);
+          else if (view.name !== 'welcome') openWelcome();
+          else return;
           break;
         default:
           return;
@@ -185,7 +213,7 @@ export function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [main.name, openViewerPicker, openWelcome]);
+  }, [activeDocumentId, closePalette, view.name, openViewerPicker, openWelcome, requestCloseTab]);
 
   if (!ready) {
     return (
@@ -213,8 +241,8 @@ export function App() {
   }
 
   const running = activeJobCount(jobs);
-  const tool = main.name === 'tool' ? uiRegistry.tryGet(main.toolId) : undefined;
-  const showSidebar = main.name !== 'settings';
+  const tool = view.name === 'tool' ? uiRegistry.tryGet(view.toolId) : undefined;
+  const showSidebar = view.name !== 'settings';
 
   return (
     <div
@@ -292,82 +320,95 @@ export function App() {
       <div className="flex min-h-0 flex-1">
         {showSidebar && (
           <Sidebar
-            activeToolId={main.name === 'tool' ? main.toolId : null}
+            activeToolId={view.name === 'tool' ? view.toolId : null}
             onSelectHome={openWelcome}
             onSelectTool={openTool}
           />
         )}
 
-        <main
-          className={clsx(
-            'min-h-0 flex-1 bg-[var(--surface-app)]',
-            main.name === 'settings' || main.name === 'viewer' ? 'overflow-hidden' : 'overflow-y-auto',
-          )}
-        >
-          {main.name === 'settings' && <SettingsPanel onBack={openWelcome} />}
+        <div className="flex min-h-0 w-0 min-w-0 flex-1 flex-col">
+          <DocumentTabs
+            documents={documents}
+            activeId={view.name === 'document' ? activeDocumentId : null}
+            onSelect={selectTab}
+            onClose={requestCloseTab}
+          />
 
-          {main.name === 'viewer' && (
-            <Suspense
-              fallback={
-                <div className="flex h-full items-center justify-center">
-                  <Loader2 size={22} className="animate-spin text-[var(--text-muted)]" />
-                </div>
-              }
-            >
-              <Viewer
-                key={`${main.file.path}|${main.file.name}|${main.file.size}`}
-                file={main.file}
-                onChooseTool={openToolPickerFor}
-                onDirtyChange={setViewerDirty}
-              />
-            </Suspense>
-          )}
+          <main
+            className={clsx(
+              'min-h-0 flex-1 bg-[var(--surface-app)]',
+              view.name === 'settings' || view.name === 'document'
+                ? 'overflow-hidden'
+                : 'overflow-y-auto',
+            )}
+          >
+            {view.name === 'settings' && <SettingsPanel onBack={openWelcome} />}
 
-          {main.name === 'tool' &&
-            (tool ? (
-              tool.id === 'advanced.pipeline' ? (
-                <PipelinePage key={tool.id} tool={tool} onBack={openWelcome} />
-              ) : tool.id === 'advanced.batch' ? (
-                <BatchPage key={tool.id} tool={tool} onBack={openWelcome} />
-              ) : tool.id === 'security.add-signature' ? (
-                <SignPage key={tool.id} tool={tool} onBack={openWelcome} />
-              ) : (
-                <ToolPage
-                  key={tool.id}
-                  tool={tool}
-                  onBack={openWelcome}
-                  initialFile={main.initialFile}
-                  onPreviewFile={openViewer}
+            {view.name === 'document' && activeDocument && (
+              <Suspense
+                fallback={
+                  <div className="flex h-full items-center justify-center">
+                    <Loader2 size={22} className="animate-spin text-[var(--text-muted)]" />
+                  </div>
+                }
+              >
+                {/* Keyed by document id so switching tabs remounts the viewer's
+                    own view state — scroll, zoom, mode — per document, while the
+                    bytes and history stay in the store. */}
+                <Viewer
+                  key={activeDocument.id}
+                  document={activeDocument}
+                  onChooseTool={openToolPickerForDocument}
                 />
-              )
-            ) : (
+              </Suspense>
+            )}
+
+            {view.name === 'tool' &&
+              (tool ? (
+                tool.id === 'advanced.pipeline' ? (
+                  <PipelinePage key={tool.id} tool={tool} onBack={openWelcome} />
+                ) : tool.id === 'advanced.batch' ? (
+                  <BatchPage key={tool.id} tool={tool} onBack={openWelcome} />
+                ) : tool.id === 'security.add-signature' ? (
+                  <SignPage key={tool.id} tool={tool} onBack={openWelcome} />
+                ) : (
+                  <ToolPage
+                    key={tool.id}
+                    tool={tool}
+                    onBack={openWelcome}
+                    initialFile={view.initialFile}
+                    onPreviewFile={showDocument}
+                  />
+                )
+              ) : (
+                <Home
+                  onOpenTool={openTool}
+                  onOpenSearch={() => setPaletteOpen(true)}
+                  onOpenCategory={(_categoryId: CategoryId) => openWelcome()}
+                  onOpenPreview={openViewerPicker}
+                />
+              ))}
+
+            {view.name === 'welcome' && (
               <Home
                 onOpenTool={openTool}
                 onOpenSearch={() => setPaletteOpen(true)}
-                onOpenCategory={(_categoryId: CategoryId) => openWelcome()}
+                onOpenCategory={(_categoryId: CategoryId) => {
+                  // Categories live in the drawer; keep welcome and let the user expand there.
+                  openWelcome();
+                }}
                 onOpenPreview={openViewerPicker}
               />
-            ))}
-
-          {main.name === 'welcome' && (
-            <Home
-              onOpenTool={openTool}
-              onOpenSearch={() => setPaletteOpen(true)}
-              onOpenCategory={(_categoryId: CategoryId) => {
-                // Categories live in the drawer; keep welcome and let the user expand there.
-                openWelcome();
-              }}
-              onOpenPreview={openViewerPicker}
-            />
-          )}
-        </main>
+            )}
+          </main>
+        </div>
       </div>
 
       {paletteOpen && (
         <CommandPalette
           onClose={closePalette}
           onSelect={onPaletteSelect}
-          filterAccept={viewerPaletteFile ? '.pdf' : undefined}
+          filterAccept={paletteForDocument ? '.pdf' : undefined}
         />
       )}
       <JobPanel open={jobsOpen} onClose={() => setJobsOpen(false)} />
@@ -400,7 +441,7 @@ export function App() {
         </div>
       )}
 
-      {pendingNav && (
+      {closing && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm"
           role="presentation"
@@ -409,29 +450,45 @@ export function App() {
             className="w-full max-w-sm space-y-4 rounded-xl border border-[var(--border-strong)] bg-[var(--surface-panel)] p-5 shadow-2xl"
             role="dialog"
             aria-modal="true"
-            aria-label={t('viewerDiscardTitle', locale)}
+            aria-label={t('closeDirtyTitle', locale)}
           >
             <div>
-              <h2 className="text-sm font-semibold">{t('viewerDiscardTitle', locale)}</h2>
+              <h2 className="text-sm font-semibold">{t('closeDirtyTitle', locale)}</h2>
               <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--text-secondary)]">
-                {t('viewerDiscardHint', locale)}
+                {t('closeDirtyHint', locale).replace('{name}', closing.name)}
               </p>
             </div>
+            {/* Save / Don't save / Cancel, in that order — the same three
+                choices, and the same wording, an office suite offers. */}
             <div className="flex justify-end gap-2">
-              <Button size="sm" variant="ghost" onClick={() => setPendingNav(null)}>
-                {t('viewerDiscardStay', locale)}
+              <Button size="sm" variant="ghost" onClick={() => setClosing(null)}>
+                {t('cancel', locale)}
               </Button>
               <Button
                 size="sm"
                 variant="danger"
                 onClick={() => {
-                  const go = pendingNav;
-                  setPendingNav(null);
-                  setViewerDirty(false);
-                  go();
+                  closeDocument(closing.id);
+                  setClosing(null);
                 }}
               >
-                {t('viewerDiscardLeave', locale)}
+                {t('closeDirtyDiscard', locale)}
+              </Button>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  const target = closing.id;
+                  setClosing(null);
+                  void saveDocument(target)
+                    .then(() => closeDocument(target))
+                    .catch((cause) => {
+                      // A failed save must not take the document with it.
+                      setDropError(cause instanceof Error ? cause.message : String(cause));
+                    });
+                }}
+              >
+                {t('closeDirtySave', locale)}
               </Button>
             </div>
           </div>

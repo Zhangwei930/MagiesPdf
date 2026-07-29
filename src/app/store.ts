@@ -11,6 +11,8 @@ import {
   type PickedFile,
 } from './bridge.ts';
 import { loadCatalog } from './catalog.ts';
+import * as docs from './documents.ts';
+import type { DocumentState } from './documents.ts';
 import type { Locale } from './i18n.ts';
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled';
@@ -42,6 +44,26 @@ interface AppState {
   jobs: JobEntry[];
   /** Tool ids most recently run, newest first. */
   recentToolIds: string[];
+
+  /**
+   * Open documents, in tab order. Editing lives here rather than in the Viewer
+   * so that a tool run and a rotate land in the same history, and so a
+   * document survives being switched away from.
+   */
+  documents: DocumentState[];
+  activeDocumentId: string | null;
+
+  /** Opens a file, or focuses the tab already holding it. Returns its id. */
+  openDocument(file: PickedFile): string;
+  closeDocument(id: string): void;
+  setActiveDocument(id: string): void;
+  editDocument(id: string, bytes: Uint8Array): void;
+  undoDocument(id: string): void;
+  redoDocument(id: string): void;
+  setDocumentPassword(id: string, password: string): void;
+  /** ⌘S. Writes over the file the document came from, or asks where to put it. */
+  saveDocument(id: string): Promise<void>;
+  saveDocumentAs(id: string): Promise<void>;
 
   initialize(): Promise<void>;
   setLocale(locale: Locale): Promise<void>;
@@ -88,6 +110,15 @@ function applyTheme(dark: boolean): void {
   document.documentElement.classList.toggle('dark', dark);
 }
 
+/** Replaces one document in the list, leaving the others' identities alone. */
+function mapDocument(
+  documents: readonly DocumentState[],
+  id: string,
+  change: (document: DocumentState) => DocumentState,
+): DocumentState[] {
+  return documents.map((document) => (document.id === id ? change(document) : document));
+}
+
 export const useApp = create<AppState>((set, get) => ({
   ready: false,
   startupError: '',
@@ -96,6 +127,77 @@ export const useApp = create<AppState>((set, get) => ({
   darkMode: false,
   jobs: [],
   recentToolIds: [],
+  documents: [],
+  activeDocumentId: null,
+
+  openDocument(file) {
+    const incoming = docs.createDocument(file);
+    const { documents, activeId } = docs.openDocument(get().documents, incoming);
+    set({ documents, activeDocumentId: activeId });
+    return activeId;
+  },
+
+  closeDocument(id) {
+    set((state) => ({
+      documents: docs.closeDocument(state.documents, id),
+      activeDocumentId: docs.nextActiveId(state.documents, id, state.activeDocumentId),
+    }));
+  },
+
+  setActiveDocument(id) {
+    set({ activeDocumentId: id });
+  },
+
+  editDocument(id, bytes) {
+    set((state) => ({ documents: mapDocument(state.documents, id, (d) => docs.applyEdit(d, bytes)) }));
+  },
+
+  undoDocument(id) {
+    set((state) => ({ documents: mapDocument(state.documents, id, docs.undo) }));
+  },
+
+  redoDocument(id) {
+    set((state) => ({ documents: mapDocument(state.documents, id, docs.redo) }));
+  },
+
+  setDocumentPassword(id, password) {
+    set((state) => ({
+      documents: mapDocument(state.documents, id, (d) => docs.setPassword(d, password)),
+    }));
+  },
+
+  async saveDocument(id) {
+    const document = get().documents.find((d) => d.id === id);
+    if (!document) return;
+
+    // Nothing on disk to write over — a tool result held in memory — so this
+    // can only mean Save As.
+    if (document.path === '') {
+      await get().saveDocumentAs(id);
+      return;
+    }
+
+    await bridge().writeToPath(document.path, document.bytes);
+    set((state) => ({ documents: mapDocument(state.documents, id, (d) => docs.markSaved(d, '')) }));
+  },
+
+  async saveDocumentAs(id) {
+    const document = get().documents.find((d) => d.id === id);
+    if (!document) return;
+
+    const result = await bridge().saveOutputAs({
+      name: document.name,
+      bytes: document.bytes,
+      mime: 'application/pdf',
+    });
+    if (!result) return;
+
+    // The chosen destination becomes where ⌘S writes from now on.
+    const written = result.written[0] ?? '';
+    set((state) => ({
+      documents: mapDocument(state.documents, id, (d) => docs.markSaved(d, written)),
+    }));
+  },
 
   async initialize() {
     if (!hasBridge()) {
