@@ -49,6 +49,29 @@ module.exports = {
    * `import.meta.url`. Inside an asar archive that path is not a real file, so
    * the module must stay unpacked or every tool fails on first use.
    */
+  /**
+   * PDFs open in MagiesPdf when the user *asks* for that — Open With, a drop on
+   * the dock icon, or after they set it as the default themselves.
+   *
+   * The app deliberately does not claim the default handler on install. macOS
+   * gets `role: Viewer` + `rank: Alternate`, which puts MagiesPdf in Open With
+   * and leaves Preview (or whatever the user chose) as the default. On Windows
+   * this registers a ProgID under OpenWithProgids, which likewise only adds an
+   * entry to "Open with" — the default lives in UserChoice, which no installer
+   * can set on Windows 10/11 anyway.
+   */
+  fileAssociations: [
+    {
+      ext: 'pdf',
+      name: 'PDF Document',
+      description: 'Portable Document Format',
+      mimeType: 'application/pdf',
+      role: 'Viewer',
+      rank: 'Alternate',
+      isPackage: false,
+    },
+  ],
+
   asar: true,
   asarUnpack: [
     'node_modules/mupdf/**',
@@ -67,8 +90,9 @@ module.exports = {
       { target: 'dmg', arch: ['arm64', 'x64'] },
       { target: 'zip', arch: ['arm64', 'x64'] },
     ],
-    // No document handlers are claimed: MagiesPdf should not silently become the
-    // default PDF application just because it was installed.
+    // The PDF handler declared in `fileAssociations` is registered as an
+    // alternate, so MagiesPdf appears in Open With without displacing whatever
+    // the user already uses.
     extendInfo: {
       NSHumanReadableCopyright: `Copyright © ${new Date().getFullYear()} JasonZhangDad`,
     },

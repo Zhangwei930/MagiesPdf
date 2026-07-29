@@ -2,6 +2,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { BrowserWindow, app, nativeTheme, shell } = require('electron');
 const { JobPool } = require('./jobs/pool.cjs');
+const { documentPathsFromArgv, openableDocumentPath } = require('./files/openPaths.cjs');
 const { registerIpc } = require('./ipc.cjs');
 const settings = require('./settings.cjs');
 const { startUpdater } = require('./updater/index.cjs');
@@ -25,6 +26,36 @@ const RENDERER_URL = isDev ? new URL(DEV_SERVER_URL).href : pathToFileURL(PACKAG
 let mainWindow = null;
 /** @type {JobPool | null} */
 let pool = null;
+
+/**
+ * Documents asked for before the renderer could receive them.
+ *
+ * Double-clicking a PDF *starts* the app, so the request always arrives before
+ * there is a window — and on macOS `open-file` can even fire before `ready`.
+ * Queue until the renderer says it is listening, then hand the batch over.
+ *
+ * @type {string[]}
+ */
+let pendingOpenPaths = [];
+let rendererReady = false;
+
+/** Hands paths to the renderer, or holds them until there is one. */
+function requestOpen(paths) {
+  if (paths.length === 0) return;
+  if (!rendererReady || !mainWindow || mainWindow.isDestroyed()) {
+    for (const target of paths) {
+      if (!pendingOpenPaths.includes(target)) pendingOpenPaths.push(target);
+    }
+    return;
+  }
+  mainWindow.webContents.send('app:openFiles', { paths });
+}
+
+function flushPendingOpens() {
+  const paths = pendingOpenPaths;
+  pendingOpenPaths = [];
+  requestOpen(paths);
+}
 
 /** The window background shown before first paint. */
 function resolveBackgroundColor() {
@@ -89,8 +120,15 @@ function createWindow() {
     });
   }
 
+  // Anything queued while the app was starting can go over now.
+  window.webContents.on('did-finish-load', () => {
+    rendererReady = true;
+    flushPendingOpens();
+  });
+
   window.on('closed', () => {
     mainWindow = null;
+    rendererReady = false;
   });
 
   return window;
@@ -100,10 +138,21 @@ function createWindow() {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  // Double-clicking a document while the app is already running lands here
+  // rather than starting a second copy.
+  app.on('second-instance', (_event, argv, workingDirectory) => {
+    requestOpen(documentPathsFromArgv(argv, { isPackaged: app.isPackaged, cwd: workingDirectory }));
     if (!mainWindow) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
+  });
+
+  // macOS never puts documents in argv: Open With, a double-click and a drop on
+  // the dock icon all arrive here, and can fire before the app is ready.
+  app.on('open-file', (event, filePath) => {
+    event.preventDefault();
+    const target = openableDocumentPath(filePath);
+    if (target !== '') requestOpen([target]);
   });
 
   app.whenReady().then(() => {
@@ -119,6 +168,9 @@ if (!app.requestSingleInstanceLock()) {
       },
     });
     mainWindow = createWindow();
+
+    // Windows and Linux deliver a double-clicked document in argv.
+    requestOpen(documentPathsFromArgv(process.argv, { isPackaged: app.isPackaged }));
 
     // Honour a previously-enabled API setting from the last session.
     void syncApiServer({ pool }).catch((error) => {

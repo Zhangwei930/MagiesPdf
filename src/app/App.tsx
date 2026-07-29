@@ -1,10 +1,10 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import type { CategoryId } from '@core/types.ts';
 import { uiRegistry } from './catalog.ts';
 import { bridge, hasBridge, type PickedFile } from './bridge.ts';
 import { t } from './i18n.ts';
-import { AlertCircle, Loader2, Settings } from './icons.ts';
+import { AlertCircle, Eye, Loader2, Settings } from './icons.ts';
 import { activeJobCount, useApp } from './store.ts';
 import { BatchPage } from './components/BatchPage.tsx';
 import { CommandPalette } from './components/CommandPalette.tsx';
@@ -48,6 +48,11 @@ export function App() {
   // reports dirtiness up and the shell holds any navigation until confirmed.
   const [viewerDirty, setViewerDirty] = useState(false);
   const [pendingNav, setPendingNav] = useState<(() => void) | null>(null);
+  // Nested dragenter/dragleave pairs fire per child element; counting them is
+  // the only reliable way to know the pointer has truly left the window.
+  const dragDepth = useRef(0);
+  const [dropping, setDropping] = useState(false);
+  const [dropError, setDropError] = useState('');
 
   useEffect(() => {
     void initialize();
@@ -113,6 +118,27 @@ export function App() {
     if (file) openViewer(file);
   }, [openViewer]);
 
+  /** Reads paths and shows the first PDF among them. */
+  const openPaths = useCallback(
+    async (paths: string[]) => {
+      if (paths.length === 0) return;
+      const [file] = await bridge().readFiles(paths);
+      if (file) guarded(() => openViewer(file));
+    },
+    [guarded, openViewer],
+  );
+
+  // Double-click in Finder / Explorer, Open With, a drop on the dock icon, or a
+  // second launch: the main process forwards them all here.
+  useEffect(() => {
+    if (!hasBridge()) return;
+    return bridge().onOpenFiles((paths) => {
+      void openPaths(paths).catch((cause) => {
+        setDropError(cause instanceof Error ? cause.message : String(cause));
+      });
+    });
+  }, [openPaths]);
+
   const openToolPickerFor = useCallback((file: PickedFile) => {
     setViewerPaletteFile(file);
     setPaletteOpen(true);
@@ -165,7 +191,39 @@ export function App() {
   const showSidebar = main.name !== 'settings';
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="flex h-full flex-col"
+      // A file dropped anywhere in the window opens, the way it does in an
+      // office suite. Tool drop zones stop the event before it reaches here.
+      onDragEnter={(e) => {
+        e.preventDefault();
+        dragDepth.current += 1;
+        setDropping(true);
+      }}
+      onDragOver={(e) => e.preventDefault()}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        dragDepth.current -= 1;
+        if (dragDepth.current <= 0) setDropping(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        dragDepth.current = 0;
+        setDropping(false);
+        setDropError('');
+        // The renderer only ever sees paths; the main process does the reading.
+        const paths = Array.from(e.dataTransfer.files)
+          .map((dropped) => bridge().pathForFile(dropped))
+          .filter((path) => path.toLowerCase().endsWith('.pdf'));
+        if (paths.length === 0) {
+          setDropError(t('dropNotPdf', locale));
+          return;
+        }
+        void openPaths(paths).catch((cause) => {
+          setDropError(cause instanceof Error ? cause.message : String(cause));
+        });
+      }}
+    >
       <header className="drag-region flex h-11 shrink-0 items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-3">
         <div className="w-[68px] shrink-0" />
 
@@ -288,6 +346,33 @@ export function App() {
       )}
       <JobPanel open={jobsOpen} onClose={() => setJobsOpen(false)} />
       <UpdatePrompt />
+
+      {dropping && (
+        <div
+          className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-[var(--accent-soft)]/85 backdrop-blur-sm"
+          role="presentation"
+        >
+          <div className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-[var(--accent)] px-10 py-8">
+            <Eye size={26} className="text-[var(--accent)]" />
+            <p className="text-sm font-medium text-[var(--accent)]">{t('dropToOpen', locale)}</p>
+          </div>
+        </div>
+      )}
+
+      {dropError && (
+        <div className="fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-[var(--danger)] bg-[var(--danger-soft)] px-3 py-2 text-xs text-[var(--danger)] shadow-lg">
+          <AlertCircle size={13} className="shrink-0" />
+          <span className="max-w-md truncate">{dropError}</span>
+          <button
+            type="button"
+            aria-label={t('close', locale)}
+            onClick={() => setDropError('')}
+            className="shrink-0 opacity-70 hover:opacity-100"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {pendingNav && (
         <div
