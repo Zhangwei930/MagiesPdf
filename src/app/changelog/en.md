@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.0.4 — 2026-07-29
+
+### From a toolbox to a document editor
+
+- **Documents in tabs** — several PDFs open at once, each with its own edit history, zoom and reading position. Opening a file that is already open focuses its tab instead of opening it twice
+- **Tools run on the document you have open** — pick a tool while a document is on screen and it runs on that document, with the result landing back in the page and `⌘Z` to undo it. No more find the file, drop it in, run, save, reopen the result
+- **A ribbon across the top** — commands grouped by category replace the 268px tool tree down the left, which gives the document about 250px more width
+- Tools that need more than one file still open their own page, but with the document already in the file list
+- Closing a tab with unsaved changes asks: Save and close / Don't save / Cancel
+
+### Reading
+
+- **Continuous scrolling** — every page in one scrolling column, instead of clicking an arrow to see the next one
+- **Fit width and fit page**, `⌘`-scroll (or a trackpad pinch) to zoom around the cursor, and hold Space to drag the page
+- **Text can be selected and copied**, and `⌘F` searches the whole document with next / previous, a match count and wrap-around
+- Text is no longer soft on a high-resolution display, and pages no longer flash blank when they redraw
+
+### Opening and saving
+
+- **Double-clicking a PDF in Finder or Explorer can open it in MagiesPdf.** It registers as an alternate handler, so it appears under Open With without displacing the reader you already use
+- Dropping a file anywhere in the window opens it — no need to aim for the dashed box. On macOS, dropping onto the dock icon works too
+- **`⌘S` overwrites the file you opened** instead of reopening a Save As dialog every time; `⌘⇧S` is Save As
+- The keyboard is filled in: `⌘O` open, `⌘W` close, `⌘Z` / `⌘⇧Z` undo and redo, `⌘F` find, `⌘K` search tools, `⌘+` / `⌘-` zoom, `⌘0` actual size, `⌘1` fit width, `⌘2` fit page, plus the paging keys and Home / End
+- Undo gained a matching redo
+
+### Faster
+
+- After an edit only the pages it actually changed are redrawn; the rest keep what they already had
+- Faster to start: settings, the pipeline builder, batch processing and the signature pad now load when they are opened
+
+### Correctness
+
+- **An edit no longer moves the page out from under you** — rotate a page above where you are reading and your position stays put
+- The first edit no longer makes the whole document visibly re-zoom
+- Leaving a document no longer loses edits, so the "are you sure" prompt on navigation is gone; only closing a tab asks
+- `⌘S` can only overwrite files this app itself opened; any other path is refused
+
 ## 1.0.3 — 2026-07-28
 
 ### Open a PDF and edit it in place
