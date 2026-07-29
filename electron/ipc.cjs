@@ -6,6 +6,7 @@ const mainRunner = require('./jobs/mainRunner.cjs');
 const { createHostBridge } = require('./host.cjs');
 const { collectFilePaths } = require('./files/walk.cjs');
 const { InputBudget } = require('./files/inputBudget.cjs');
+const writableTargets = require('./files/writableTargets.cjs');
 const updater = require('./updater/index.cjs');
 const { isTrustedIpcSender, safeFileName } = require('./security.cjs');
 
@@ -49,6 +50,9 @@ async function readOne(absolutePath, budget) {
   budget.add(stat.size);
 
   const buffer = await fs.readFile(absolutePath);
+  // Handing the contents to the renderer is what earns this path the right to
+  // be overwritten later by an in-place save.
+  writableTargets.remember(absolutePath);
   return {
     name: path.basename(absolutePath),
     path: absolutePath,
@@ -185,6 +189,7 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
       written.push(target);
     }
 
+    writableTargets.rememberAll(written);
     return { directory, written };
   });
 
@@ -193,7 +198,28 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     if (result.canceled || !result.filePath) return null;
 
     await fs.writeFile(result.filePath, Buffer.from(file.bytes));
+    // The user picked this destination, so a later ⌘S may write over it.
+    writableTargets.remember(result.filePath);
     return { written: [result.filePath], directory: path.dirname(result.filePath) };
+  });
+
+  /**
+   * Overwrite a file the app already holds — what ⌘S means in every editor.
+   *
+   * The path is not merely validated but *authorised*: only files whose
+   * contents this process itself gave the renderer can be written back. A path
+   * the renderer invented, however well formed, is refused.
+   */
+  handle('files:writeTo', async (_event, { path: target, bytes }) => {
+    if (!writableTargets.isWritable(target)) {
+      throw new Error('Refused to overwrite a file this app did not open');
+    }
+    if (!(bytes instanceof Uint8Array)) {
+      throw new Error('Refused to write a non-binary payload');
+    }
+
+    await fs.writeFile(target, Buffer.from(bytes));
+    return { written: [target], directory: path.dirname(target) };
   });
 
   handle('shell:reveal', (_event, { path: target }) => {

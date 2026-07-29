@@ -49,6 +49,13 @@ const api = {
   /** Writes a single output through a "save as" dialog. */
   saveOutputAs: (file) => ipcRenderer.invoke('files:saveAs', { file }),
 
+  /**
+   * Overwrites a file already open in the app — ⌘S. Only paths this process
+   * handed over are accepted; see `files/writableTargets.cjs`.
+   */
+  writeToPath: (targetPath, bytes) =>
+    ipcRenderer.invoke('files:writeTo', { path: targetPath, bytes }),
+
   revealPath: (target) => ipcRenderer.invoke('shell:reveal', { path: target }),
 
   runJob: (request) => ipcRenderer.invoke('job:run', request),

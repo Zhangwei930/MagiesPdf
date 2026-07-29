@@ -5,6 +5,7 @@ import { uiRegistry } from './catalog.ts';
 import { bridge, hasBridge, type PickedFile } from './bridge.ts';
 import { t } from './i18n.ts';
 import { AlertCircle, Eye, Loader2, Settings } from './icons.ts';
+import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
 import { activeJobCount, useApp } from './store.ts';
 import { BatchPage } from './components/BatchPage.tsx';
 import { CommandPalette } from './components/CommandPalette.tsx';
@@ -144,22 +145,47 @@ export function App() {
     setPaletteOpen(true);
   }, []);
 
+  /**
+   * The shell's shortcuts. Document shortcuts (save, zoom, paging) belong to
+   * the Viewer and are handled there; the two sets are disjoint.
+   */
   useEffect(() => {
+    const platform = currentPlatform();
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        // ⌘K always means "search everything" — drop any Viewer scoping.
-        setViewerPaletteFile(null);
-        setPaletteOpen((open) => !open);
-      } else if (event.key === 'Escape') {
-        setPaletteOpen(false);
-        setViewerPaletteFile(null);
-        setJobsOpen(false);
+      const action = matchShortcut(event, platform, { typing: isTypingTarget(event.target) });
+
+      switch (action) {
+        case 'open':
+          void openViewerPicker().catch(() => {
+            // The picker only fails if the bridge is gone, which the banner says.
+          });
+          break;
+        case 'palette':
+          // ⌘K always means "search everything" — drop any Viewer scoping.
+          setViewerPaletteFile(null);
+          setPaletteOpen((open) => !open);
+          break;
+        case 'dismiss':
+          setPaletteOpen(false);
+          setViewerPaletteFile(null);
+          setJobsOpen(false);
+          setDropError('');
+          break;
+        case 'close':
+          // ⌘W closes the document. With none open it means the window, which
+          // is Electron's to handle — so it is deliberately not prevented.
+          if (main.name === 'welcome') return;
+          openWelcome();
+          break;
+        default:
+          return;
       }
+      event.preventDefault();
     };
+
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [main.name, openViewerPicker, openWelcome]);
 
   if (!ready) {
     return (

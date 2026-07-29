@@ -76,6 +76,8 @@ export interface MagiesPdfBridge {
     options?: { directory?: string },
   ): Promise<SaveResult | null>;
   saveOutputAs(file: ToolOutputFile): Promise<SaveResult | null>;
+  /** Overwrites a file the app already opened. Rejects any other path. */
+  writeToPath(targetPath: string, bytes: Uint8Array): Promise<SaveResult>;
   revealPath(path: string): Promise<boolean>;
   /** Documents the OS asked the app to open. Returns an unsubscribe function. */
   onOpenFiles(callback: (paths: string[]) => void): () => void;
