@@ -43,6 +43,7 @@ import {
   type ScrollAnchor,
 } from '../pdf/layout.ts';
 import { classifyLoadError, type PdfLoadFailure } from '../pdf/loadError.ts';
+import { bumpEpochs, pagesFrom, type Invalidation } from '../pdf/invalidation.ts';
 import { findInItems, nextMatchIndex, type ItemRange } from '../pdf/textSearch.ts';
 import { canRedo, canUndo, type DocumentState } from '../documents.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from '../shortcuts.ts';
@@ -151,6 +152,15 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [grabbing, setGrabbing] = useState(false);
 
+  /**
+   * Redraw generation per page. An edit rewrites the whole file, so every page
+   * would otherwise be drawn again; this is what lets the untouched ones keep
+   * the pixels they already have.
+   */
+  const [epochs, setEpochs] = useState<number[]>([]);
+  /** What the edit currently in flight will have changed, once it lands. */
+  const pendingInvalidation = useRef<Invalidation>('all');
+
   const [findOpen, setFindOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [matches, setMatches] = useState<DocumentMatch[]>([]);
@@ -180,6 +190,10 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
         }
         setFailure(null);
         setSizes(loadedSizes);
+        setEpochs((current) =>
+          bumpEpochs(current, loadedSizes.length, pendingInvalidation.current),
+        );
+        pendingInvalidation.current = 'all';
         setDoc(loaded);
       })
       .catch((cause) => {
@@ -423,7 +437,12 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
    * job list would add an entry per rotated page.
    */
   const runEdit = useCallback(
-    async (toolId: string, params: Record<string, unknown>, extra?: PickedFile) => {
+    async (
+      toolId: string,
+      params: Record<string, unknown>,
+      invalidates: Invalidation,
+      extra?: PickedFile,
+    ) => {
       const element = scrollRef.current;
       if (element) {
         restoreAnchor.current = anchorAt(offsets, sizes, scale, element.scrollTop - PAGE_PADDING);
@@ -442,6 +461,10 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
         });
         const output = result.files[0];
         if (!output) throw new Error('the tool produced no output');
+        // Set only once the edit is certain to land. An edit that failed would
+        // otherwise leave this pointing at its pages, and the next reload — an
+        // undo, say — would trust it and leave the rest of the document stale.
+        pendingInvalidation.current = invalidates;
         editDocument(documentId, output.bytes);
       } catch (cause) {
         setEditError(cause instanceof Error ? cause.message : String(cause));
@@ -453,22 +476,29 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
   );
 
   const rotatePage = (pageNumber: number) =>
-    void runEdit('organize.rotate', { degrees: '90', mode: 'add', pages: String(pageNumber) });
+    void runEdit('organize.rotate', { degrees: '90', mode: 'add', pages: String(pageNumber) }, [
+      pageNumber,
+    ]);
 
   const deletePage = (pageNumber: number) => {
     if (pageCount <= 1) {
       setEditError(t('viewerLastPage', locale));
       return;
     }
-    void runEdit('organize.remove-pages', { pages: String(pageNumber) });
+    void runEdit(
+      'organize.remove-pages',
+      { pages: String(pageNumber) },
+      pagesFrom(pageNumber, pageCount),
+    );
   };
 
   const movePage = (from: number, to: number) => {
     if (from === to) return;
-    void runEdit('organize.reorder', {
-      preset: 'custom',
-      order: reorderedPages(pageCount, from, to).join(','),
-    });
+    void runEdit(
+      'organize.reorder',
+      { preset: 'custom', order: reorderedPages(pageCount, from, to).join(',') },
+      'all',
+    );
   };
 
   /** Smaller than this and it was a stray click, not a selection. */
@@ -484,12 +514,16 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
       );
       if (region.width < MIN_REDACT_PT || region.height < MIN_REDACT_PT) return;
 
-      void runEdit('security.redact', {
-        keywords: '',
-        pages: 'all',
-        caseSensitive: false,
-        regions: JSON.stringify([{ page: pageNumber, ...region }]),
-      });
+      void runEdit(
+        'security.redact',
+        {
+          keywords: '',
+          pages: 'all',
+          caseSensitive: false,
+          regions: JSON.stringify([{ page: pageNumber, ...region }]),
+        },
+        [pageNumber],
+      );
     },
     [runEdit, sizes],
   );
@@ -511,6 +545,7 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
           position: 'bottom-right',
           pages: String(pageNumber),
         },
+        [pageNumber],
         stampImage,
       );
     },
@@ -555,12 +590,16 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
   const applyForm = () => {
     const changed = fillable.filter((field) => (drafts[field.name] ?? '') !== field.value);
     if (changed.length === 0) return;
-    void runEdit('edit.fill-form', {
-      mode: 'fill',
-      fields: changed
-        .map((field) => `${field.name}=${(drafts[field.name] ?? '').replace(/[\r\n]+/g, ' ')}`)
-        .join('\n'),
-    });
+    void runEdit(
+      'edit.fill-form',
+      {
+        mode: 'fill',
+        fields: changed
+          .map((field) => `${field.name}=${(drafts[field.name] ?? '').replace(/[\r\n]+/g, ' ')}`)
+          .join('\n'),
+      },
+      'all',
+    );
   };
 
   const enterStampMode = async () => {
@@ -739,6 +778,7 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
               doc={doc}
               pageNumber={index + 1}
               size={size}
+              epoch={epochs[index] ?? 0}
               active={index + 1 === page}
               disabled={busy}
               dragging={dragPage === index + 1}
@@ -1053,6 +1093,7 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
                     drafts={drafts}
                     fields={fieldsByPage.get(pageNumber)}
                     top={PAGE_PADDING + (offsets[index] ?? 0)}
+                    epoch={epochs[index] ?? 0}
                     hits={hitsByPage.get(pageNumber) ?? NO_HITS}
                     currentHits={currentHitsByPage.get(pageNumber) ?? NO_HITS}
                     onFields={onPageFields}
@@ -1167,6 +1208,7 @@ function PageView({
   drafts,
   fields,
   top,
+  epoch,
   hits,
   currentHits,
   onFields,
@@ -1184,6 +1226,8 @@ function PageView({
   drafts: Record<string, string>;
   fields: FormFieldBox[] | undefined;
   top: number;
+  /** Bumped when this page's content changed; unchanged means keep the pixels. */
+  epoch: number;
   /** Text-run indices on this page that a search matched. */
   hits: readonly number[];
   /** The subset of `hits` belonging to the match currently stepped to. */
@@ -1200,30 +1244,45 @@ function PageView({
   const [textVersion, setTextVersion] = useState(0);
   const [marquee, setMarquee] = useState<{ from: Point; to: Point } | null>(null);
 
+  /**
+   * What is currently on the canvas and in the text layer. An edit hands over a
+   * new document object, but a page it did not touch is the same picture — so
+   * this is what decides whether there is any work to do.
+   */
+  const drawn = useRef({ epoch: -1, scale: 0 });
+  const laidOut = useRef({ epoch: -1, scale: 0 });
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    if (drawn.current.epoch === epoch && drawn.current.scale === scale) return;
+
     let stale = false;
-    void renderPageToCanvas(doc, pageNumber, canvas, scale, devicePixels(), () => stale).catch(
-      () => {
+    void renderPageToCanvas(doc, pageNumber, canvas, scale, devicePixels(), () => stale)
+      .then(() => {
+        if (!stale) drawn.current = { epoch, scale };
+      })
+      .catch(() => {
         // A page that will not draw leaves the previous image up; the load
         // failure the document itself reports is the one worth surfacing.
-      },
-    );
+      });
     return () => {
       stale = true;
     };
-  }, [doc, pageNumber, scale]);
+  }, [doc, epoch, pageNumber, scale]);
 
   // The text layer has to be laid out again at every zoom, since pdf.js sizes
   // the container from the scale rather than letting CSS stretch it.
   useEffect(() => {
     const container = textLayerRef.current;
     if (!container) return;
+    if (laidOut.current.epoch === epoch && laidOut.current.scale === scale) return;
+
     let stale = false;
     void renderTextLayer(doc, pageNumber, container, scale)
       .then((divs) => {
         if (stale) return;
+        laidOut.current = { epoch, scale };
         textDivs.current = divs;
         // Highlights are applied to these spans, so re-applying them has to
         // wait for the spans to exist.
@@ -1236,7 +1295,7 @@ function PageView({
     return () => {
       stale = true;
     };
-  }, [doc, pageNumber, scale]);
+  }, [doc, epoch, pageNumber, scale]);
 
   useEffect(() => {
     const marked = new Set(hits);
@@ -1365,6 +1424,7 @@ function Thumbnail({
   doc,
   pageNumber,
   size,
+  epoch,
   active,
   disabled,
   dragging,
@@ -1379,6 +1439,7 @@ function Thumbnail({
   doc: PdfDocumentHandle;
   pageNumber: number;
   size: Size;
+  epoch: number;
   active: boolean;
   disabled: boolean;
   dragging: boolean;
@@ -1412,19 +1473,26 @@ function Thumbnail({
   // Every thumbnail is laid out to the same width, whatever the page's shape.
   const scale = size.width > 0 ? THUMB_WIDTH / size.width : 0.18;
 
+  const drawn = useRef({ epoch: -1, scale: 0 });
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!visible || !canvas) return;
+    // A strip of a hundred thumbnails would otherwise redraw on every rotate.
+    if (drawn.current.epoch === epoch && drawn.current.scale === scale) return;
+
     let stale = false;
-    void renderPageToCanvas(doc, pageNumber, canvas, scale, devicePixels(), () => stale).catch(
-      () => {
+    void renderPageToCanvas(doc, pageNumber, canvas, scale, devicePixels(), () => stale)
+      .then(() => {
+        if (!stale) drawn.current = { epoch, scale };
+      })
+      .catch(() => {
         // Same as the main page: keep whatever was already drawn.
-      },
-    );
+      });
     return () => {
       stale = true;
     };
-  }, [visible, doc, pageNumber, scale]);
+  }, [visible, doc, epoch, pageNumber, scale]);
 
   return (
     <div
