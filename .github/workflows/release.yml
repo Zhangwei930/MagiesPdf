@@ -78,23 +78,33 @@ jobs:
       - run: npm ci
       - run: npm run ${{ matrix.script }}
 
-      # electron-builder writes to release/<version>/. The globs stay one level
-      # deep so the unpacked .app and linux-unpacked directories are left behind,
-      # and they skip builder-debug.yml while keeping the latest*.yml feeds that
-      # electron-updater reads.
+      # electron-builder writes to release/<version>/. Copying the installers to
+      # a fixed directory first is what makes the artifact's layout flat and
+      # predictable: uploading `release/*/...` directly would root the artifact
+      # at the part before the first wildcard, and the release job would find
+      # everything one directory deeper than it looked.
+      #
+      # -mindepth/-maxdepth 2 keeps this to release/<version>/<file>, so the
+      # unpacked .app and linux-unpacked trees are left behind, and naming the
+      # extensions skips builder-debug.yml while keeping the latest*.yml feeds
+      # that electron-updater reads.
+      - name: Stage the installers
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p staging
+          find release -mindepth 2 -maxdepth 2 -type f \
+            \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.deb' \
+               -o -name '*.AppImage' -o -name '*.blockmap' -o -name 'latest*.yml' \) \
+            -exec cp {} staging/ \;
+          ls -l staging
+
       - uses: actions/upload-artifact@v4
         with:
           name: packages-${{ matrix.name }}
           if-no-files-found: error
           retention-days: 7
-          path: |
-            release/*/*.dmg
-            release/*/*.zip
-            release/*/*.exe
-            release/*/*.deb
-            release/*/*.AppImage
-            release/*/*.blockmap
-            release/*/latest*.yml
+          path: staging
 
   release:
     needs: build
