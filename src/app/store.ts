@@ -14,6 +14,7 @@ import { loadCatalog } from './catalog.ts';
 import * as docs from './documents.ts';
 import type { DocumentState } from './documents.ts';
 import type { Locale } from './i18n.ts';
+import { classifyOutput } from './toolApply.ts';
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled';
 
@@ -64,6 +65,16 @@ interface AppState {
   /** ⌘S. Writes over the file the document came from, or asks where to put it. */
   saveDocument(id: string): Promise<void>;
   saveDocumentAs(id: string): Promise<void>;
+  /**
+   * Runs a tool over an open document. A single PDF coming back replaces the
+   * document and joins its undo history; anything else is handed back for the
+   * caller to offer for saving, leaving the document untouched.
+   */
+  applyToolToDocument(
+    id: string,
+    tool: ToolMeta,
+    params: Record<string, unknown>,
+  ): Promise<JobResult>;
 
   initialize(): Promise<void>;
   setLocale(locale: Locale): Promise<void>;
@@ -197,6 +208,39 @@ export const useApp = create<AppState>((set, get) => ({
     set((state) => ({
       documents: mapDocument(state.documents, id, (d) => docs.markSaved(d, written)),
     }));
+  },
+
+  async applyToolToDocument(id, tool, params) {
+    const document = get().documents.find((d) => d.id === id);
+    if (!document) throw new Error('That document is no longer open');
+
+    // Deliberately not through `runTool`: applying a tool to what you are
+    // looking at is an edit, and it belongs in the document's history rather
+    // than as a row in the job list beside batch runs.
+    const result = await bridge().runJob({
+      jobId: crypto.randomUUID(),
+      toolId: tool.id,
+      files: [{ name: document.name, bytes: document.bytes, mime: 'application/pdf' }],
+      params: { ...params, password: document.password },
+    });
+
+    const outcome = classifyOutput(result.files);
+    if (outcome.kind === 'document') {
+      set((state) => ({
+        documents: mapDocument(state.documents, id, (d) => docs.applyEdit(d, outcome.bytes)),
+      }));
+    }
+
+    set((state) => {
+      const recentToolIds = [tool.id, ...state.recentToolIds.filter((t) => t !== tool.id)].slice(
+        0,
+        RECENT_LIMIT,
+      );
+      if (hasBridge()) void bridge().updateSettings({ recentToolIds });
+      return { recentToolIds };
+    });
+
+    return result;
   },
 
   async initialize() {

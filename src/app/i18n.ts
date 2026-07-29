@@ -170,6 +170,7 @@ const UI = {
     en: 'Stopped at 200 files — more may exist on disk.',
   },
   batchFolderLoaded: { zh: '已从文件夹加入', en: 'Added from folder' },
+  applyToDocument: { zh: '应用到本文档', en: 'Apply to document' },
   run: { zh: '开始处理', en: 'Run' },
   running: { zh: '处理中…', en: 'Working…' },
   cancel: { zh: '取消', en: 'Cancel' },
