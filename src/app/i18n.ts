@@ -38,6 +38,11 @@ const UI = {
   viewerFitPage: { zh: '适合整页', en: 'Fit page' },
   viewerActualSize: { zh: '实际大小', en: 'Actual size' },
   viewerGoToPage: { zh: '跳转到页码', en: 'Go to page' },
+  findPlaceholder: { zh: '在文档中查找…', en: 'Find in document…' },
+  findNext: { zh: '下一个', en: 'Next match' },
+  findPrevious: { zh: '上一个', en: 'Previous match' },
+  findNone: { zh: '无结果', en: 'No results' },
+  findSearching: { zh: '查找中…', en: 'Searching…' },
   viewerPanHint: {
     zh: '按住空格并拖动可平移页面；按住 ⌘ 滚动可缩放。',
     en: 'Hold Space and drag to pan; hold ⌘ and scroll to zoom.',

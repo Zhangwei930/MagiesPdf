@@ -155,6 +155,76 @@
     border-color: var(--accent);
   }
 
+  /**
+   * pdf.js text layer — the invisible, selectable text laid over each rendered
+   * page. Without it a page is a picture: nothing can be selected, copied or
+   * found.
+   *
+   * pdf.js writes span positions and `--font-height` in *unscaled* PDF units,
+   * so the zoom has to be applied here, through `--total-scale-factor` (which
+   * the viewer sets per page). Adapted from `pdfjs-dist/web/pdf_viewer.css`;
+   * keep it in step when pdfjs-dist is upgraded.
+   */
+  .text-layer {
+    position: absolute;
+    inset: 0;
+    overflow: clip;
+    opacity: 1;
+    line-height: 1;
+    text-align: initial;
+    letter-spacing: normal;
+    word-spacing: normal;
+    text-size-adjust: none;
+    forced-color-adjust: none;
+    transform-origin: 0 0;
+    caret-color: CanvasText;
+    z-index: 1;
+    --scale-round-x: 1px;
+    --scale-round-y: 1px;
+    --min-font-size: 1;
+    --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+    --min-font-size-inv: calc(1 / var(--min-font-size));
+  }
+
+  .text-layer :is(span, br) {
+    color: transparent;
+    position: absolute;
+    white-space: pre;
+    cursor: text;
+    transform-origin: 0% 0%;
+    user-select: text;
+  }
+
+  .text-layer > :not(.markedContent),
+  .text-layer .markedContent span:not(.markedContent) {
+    z-index: 1;
+    --font-height: 0;
+    font-size: calc(var(--text-scale-factor) * var(--font-height));
+    --scale-x: 1;
+    --rotate: 0deg;
+    transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+  }
+
+  .text-layer .markedContent {
+    display: contents;
+  }
+
+  .text-layer ::selection {
+    background: color-mix(in oklab, var(--accent) 45%, transparent);
+  }
+
+  /* A search hit. The text itself is transparent, so this reads as a
+     highlight painted over the glyphs drawn on the canvas underneath. */
+  .text-layer .find-hit {
+    background: color-mix(in oklab, var(--accent) 35%, transparent);
+    border-radius: 2px;
+  }
+
+  .text-layer .find-hit-current {
+    background: color-mix(in oklab, oklch(0.8 0.17 85) 70%, transparent);
+    border-radius: 2px;
+  }
+
   .field-input {
     width: 100%;
     background: var(--surface-sunken);

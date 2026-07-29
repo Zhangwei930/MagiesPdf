@@ -89,6 +89,15 @@ describe('matchShortcut — navigation', () => {
     assert.equal(matchShortcut(press({ key: 'End' }), 'mac'), 'lastPage');
   });
 
+  it('maps ⌘F to find, the way it does in every reader', () => {
+    assert.equal(matchShortcut(cmd({ key: 'f' }), 'mac'), 'find');
+    assert.equal(matchShortcut(ctrl({ key: 'f' }), 'other'), 'find');
+  });
+
+  it('still opens find from inside a text field, since no field claims ⌘F', () => {
+    assert.equal(matchShortcut(cmd({ key: 'f' }), 'mac', { typing: true }), 'find');
+  });
+
   it('maps ⌘K to the command palette and Escape on its own', () => {
     assert.equal(matchShortcut(cmd({ key: 'k' }), 'mac'), 'palette');
     assert.equal(matchShortcut(press({ key: 'Escape' }), 'mac'), 'dismiss');

@@ -14,6 +14,7 @@ export type ShortcutAction =
   | 'close'
   | 'undo'
   | 'redo'
+  | 'find'
   | 'zoomIn'
   | 'zoomOut'
   | 'zoomReset'
@@ -75,6 +76,9 @@ export function matchShortcut(
         return 'close';
       case 'k':
         return 'palette';
+      // No text field claims ⌘F, so find works from one too.
+      case 'f':
+        return 'find';
       // A text field owns its own undo stack while it has focus.
       case 'z':
         if (context.typing) return null;
