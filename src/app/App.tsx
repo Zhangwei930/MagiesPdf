@@ -17,7 +17,7 @@ import { Home } from './components/Home.tsx';
 import { JobPanel } from './components/JobPanel.tsx';
 import { PipelinePage } from './components/PipelinePage.tsx';
 import { SettingsPanel } from './components/SettingsPanel.tsx';
-import { Sidebar } from './components/Sidebar.tsx';
+import { Ribbon } from './components/Ribbon.tsx';
 import { SignPage } from './components/SignPage.tsx';
 import { ToolPage } from './components/ToolPage.tsx';
 import { UpdatePrompt } from './components/UpdatePrompt.tsx';
@@ -271,7 +271,7 @@ export function App() {
 
   const running = activeJobCount(jobs);
   const tool = view.name === 'tool' ? uiRegistry.tryGet(view.toolId) : undefined;
-  const showSidebar = view.name !== 'settings';
+  const showRibbon = view.name !== 'settings';
 
   return (
     <div
@@ -346,15 +346,15 @@ export function App() {
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
-        {showSidebar && (
-          <Sidebar
-            activeToolId={view.name === 'tool' ? view.toolId : null}
-            onSelectHome={openWelcome}
-            onSelectTool={openTool}
-          />
-        )}
+      {showRibbon && (
+        <Ribbon
+          onSelectTool={openTool}
+          onOpenSearch={() => setPaletteOpen(true)}
+          onDocument={view.name === 'document'}
+        />
+      )}
 
+      <div className="flex min-h-0 flex-1">
         <div className="flex min-h-0 w-0 min-w-0 flex-1 flex-col">
           <DocumentTabs
             documents={documents}
