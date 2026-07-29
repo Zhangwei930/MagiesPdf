@@ -3,8 +3,10 @@ import { describe, it } from 'node:test';
 import {
   MAX_SCALE,
   MIN_SCALE,
+  anchorAt,
   clampScale,
   fitScale,
+  offsetForAnchor,
   pageAtOffset,
   pageOffsets,
   scrollTopAfterZoom,
@@ -172,6 +174,66 @@ describe('zoomStep', () => {
   it('stops at the range ends instead of overshooting', () => {
     assert.equal(zoomStep(MAX_SCALE, 1), MAX_SCALE);
     assert.equal(zoomStep(MIN_SCALE, -1), MIN_SCALE);
+  });
+});
+
+describe('anchorAt / offsetForAnchor', () => {
+  const sizes = [A4, A4, A4];
+  const offsets = pageOffsets(sizes, 1, 10);
+
+  it('anchors the top of the document to the start of page 1', () => {
+    assert.deepEqual(anchorAt(offsets, sizes, 1, 0), { page: 1, fraction: 0 });
+  });
+
+  it('anchors part-way down a page to that fraction of it', () => {
+    // Page 2 spans 810..1610; 1210 is half way down.
+    assert.deepEqual(anchorAt(offsets, sizes, 1, 1210), { page: 2, fraction: 0.5 });
+  });
+
+  it('round-trips back to the same offset when nothing has changed', () => {
+    for (const top of [0, 400, 810, 1210, 2000]) {
+      assert.equal(offsetForAnchor(offsets, sizes, 1, anchorAt(offsets, sizes, 1, top)), top);
+    }
+  });
+
+  it('holds the reading position when a page above it changes height', () => {
+    // Half way down page 2, then page 1 is rotated to landscape (800 → 600 tall).
+    const anchor = anchorAt(offsets, sizes, 1, 1210);
+    const rotated = [{ width: 800, height: 600 }, A4, A4];
+    const after = pageOffsets(rotated, 1, 10);
+
+    // Page 2 now starts at 610, so half way down it is 1010 — not 1210.
+    assert.equal(offsetForAnchor(after, rotated, 1, anchor), 1010);
+  });
+
+  it('follows the scale, so an anchor survives a zoom', () => {
+    const anchor = anchorAt(offsets, sizes, 1, 1210);
+    const zoomed = pageOffsets(sizes, 2, 10);
+    // Page 2 top is 1610 at scale 2, and the page is 1600 tall: 1610 + 800.
+    assert.equal(offsetForAnchor(zoomed, sizes, 2, anchor), 2410);
+  });
+
+  it('clamps to the last page when the anchored page has been deleted', () => {
+    const anchor = { page: 3, fraction: 0.5 };
+    const shorter = [A4];
+    const after = pageOffsets(shorter, 1, 10);
+    assert.equal(offsetForAnchor(after, shorter, 1, anchor), 400);
+  });
+
+  it('treats the gap between two pages as the start of the next one', () => {
+    // Page 1 ends at 800 and page 2 starts at 810; 805 is in the gap.
+    assert.deepEqual(anchorAt(offsets, sizes, 1, 805), { page: 2, fraction: 0 });
+  });
+
+  it('gives a harmless answer for an empty document', () => {
+    const empty = pageOffsets([], 1, 10);
+    assert.deepEqual(anchorAt(empty, [], 1, 0), { page: 1, fraction: 0 });
+    assert.equal(offsetForAnchor(empty, [], 1, { page: 1, fraction: 0.5 }), 0);
+  });
+
+  it('clamps an overscrolled position rather than reporting past the end', () => {
+    const anchor = anchorAt(offsets, sizes, 1, -50);
+    assert.deepEqual(anchor, { page: 1, fraction: 0 });
   });
 });
 

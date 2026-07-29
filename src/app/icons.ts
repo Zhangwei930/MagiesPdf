@@ -167,6 +167,7 @@ export {
   ChevronRight,
   Eraser,
   Eye,
+  FileOutput,
   FilePenLine,
   FileText,
   FolderOpen,
