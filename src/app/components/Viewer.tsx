@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { bridge, type PickedFile } from '../bridge.ts';
 import { t, type Locale } from '../i18n.ts';
 import { useApp } from '../store.ts';
 import {
   AlertCircle,
-  ChevronLeft,
-  ChevronRight,
   Eraser,
   FilePenLine,
   Loader2,
   Lock,
+  Maximize,
+  MoveHorizontal,
   RotateCw,
   Save,
   Stamp,
@@ -21,10 +21,23 @@ import {
   ZoomOut,
 } from '../icons.ts';
 import { clampRect, rectFromDrag, toPdfPoint, type Point, type Size } from '../pdf/geometry.ts';
+import {
+  PAGE_GAP,
+  PAGE_PADDING,
+  clampScale,
+  fitScale,
+  pageAtOffset,
+  pageOffsets,
+  scrollTopAfterZoom,
+  scrollTopForPage,
+  visibleRange,
+  zoomStep,
+} from '../pdf/layout.ts';
 import { classifyLoadError, type PdfLoadFailure } from '../pdf/loadError.ts';
 import { reorderedPages } from '../pdf/pageOrder.ts';
 import {
   getFormFields,
+  getPageSizes,
   loadPdfDocument,
   renderPageToCanvas,
   type FormFieldBox,
@@ -39,15 +52,36 @@ interface ViewerProps {
   onDirtyChange(dirty: boolean): void;
 }
 
-const MIN_SCALE = 0.5;
-const MAX_SCALE = 3;
-const SCALE_STEP = 0.2;
-const THUMB_SCALE = 0.18;
+/** Pages kept rendered on each side of the viewport so scrolling never shows blanks. */
+const OVERSCAN = 1;
+/** Thumbnails are laid out to a fixed width, so their scale follows the page. */
+const THUMB_WIDTH = 88;
 /** Each undo step holds a full copy of the document, so the stack stays short. */
 const HISTORY_LIMIT = 10;
+/** Beyond 2× the extra pixels cost memory without being visible. */
+const MAX_DPR = 2;
+
+type ViewMode = 'view' | 'redact' | 'stamp' | 'form';
+type FitMode = 'width' | 'page' | null;
+
+/** Shared empty map, so a document with no widgets yet does not remount overlays. */
+const NO_FIELDS: ReadonlyMap<number, FormFieldBox[]> = new Map();
+
+function devicePixels(): number {
+  return Math.min(MAX_DPR, window.devicePixelRatio || 1);
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+}
 
 /**
  * PDF viewer with page-level editing.
+ *
+ * Pages are laid out in one continuous scroll column — the way every reader the
+ * user already knows behaves — and only the ones near the viewport are drawn.
+ * The layout maths lives in `../pdf/layout.ts`; this component is the wiring.
  *
  * Every edit is a run of an existing `organize.*` tool over the current bytes,
  * whose output becomes the new current bytes. That keeps the PDF engines where
@@ -60,9 +94,8 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
   const [bytes, setBytes] = useState<Uint8Array>(file.bytes);
   const [history, setHistory] = useState<Uint8Array[]>([]);
   const [doc, setDoc] = useState<PdfDocumentHandle | null>(null);
-  const [pageCount, setPageCount] = useState(0);
-  const [page, setPage] = useState(1);
-  const [scale, setScale] = useState(1.2);
+  /** Unscaled page sizes, in PDF points — the input to the whole layout. */
+  const [sizes, setSizes] = useState<Size[]>([]);
   const [failure, setFailure] = useState<PdfLoadFailure | null>(null);
   const [editError, setEditError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -70,31 +103,51 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
   /** The accepted password, replayed into every edit so encrypted files stay editable. */
   const [password, setPassword] = useState('');
   const [passwordDraft, setPasswordDraft] = useState('');
-  const [mode, setMode] = useState<'view' | 'redact' | 'stamp' | 'form'>('view');
-  const [fields, setFields] = useState<FormFieldBox[]>([]);
+  const [mode, setMode] = useState<ViewMode>('view');
+  /**
+   * Form widgets per page, filled in by the pages that have rendered. Tagged
+   * with the document they were read from: widget positions belong to one
+   * rendering, so an edit has to invalidate them — and comparing here beats an
+   * effect that would blank them a render too late.
+   */
+  const [fieldCache, setFieldCache] = useState<{
+    source: PdfDocumentHandle | null;
+    byPage: ReadonlyMap<number, FormFieldBox[]>;
+  }>({ source: null, byPage: NO_FIELDS });
   /** Values typed into the overlay, keyed by field name, before they are applied. */
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   /** The image being stamped; picked when stamp mode is entered. */
   const [stampImage, setStampImage] = useState<PickedFile | null>(null);
-  /** Drag corners in displayed-box pixels; only for drawing the marquee. */
-  const [marquee, setMarquee] = useState<{ from: Point; to: Point } | null>(null);
-  /** Current page size in PDF points, reported by the last render. */
-  const pageSize = useRef<Size>({ width: 0, height: 0 });
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  /** The scale in force when no fit mode is; a fit mode overrides it. */
+  const [manualScale, setManualScale] = useState(1);
+  const [fit, setFit] = useState<FitMode>('width');
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const [grabbing, setGrabbing] = useState(false);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  /** A scroll position to apply once the new scale has been laid out. */
+  const pendingScroll = useRef<number | null>(null);
+  const scaleRef = useRef(1);
+  const scrollFrame = useRef(0);
+  const panFrom = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+
+  const pageCount = sizes.length;
 
   useEffect(() => {
     let cancelled = false;
 
     loadPdfDocument(bytes, password)
-      .then((loaded) => {
+      .then(async (loaded) => {
+        const loadedSizes = await getPageSizes(loaded);
         if (cancelled) {
           loaded.destroy();
           return;
         }
         setFailure(null);
-        setPageCount(loaded.numPages);
-        // After a delete the current page number can be past the new end.
-        setPage((current) => Math.min(current, loaded.numPages));
+        setSizes(loadedSizes);
         setDoc(loaded);
       })
       .catch((cause) => {
@@ -108,12 +161,140 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
 
   useEffect(() => () => doc?.destroy(), [doc]);
 
+  const fieldsByPage = fieldCache.source === doc ? fieldCache.byPage : NO_FIELDS;
+
+  // ---- layout -------------------------------------------------------------
+
+  /**
+   * A fit mode is a standing instruction, not a one-off, so the scale it implies
+   * is derived on every render rather than stored — that way a window resize is
+   * simply a new answer, with no effect to keep in step. The smallest per-page
+   * fit is used so a document of mixed page sizes has *every* page fitting.
+   */
+  const fittedScale = useMemo(() => {
+    if (!fit || sizes.length === 0 || viewport.width === 0) return null;
+    return sizes.reduce(
+      (smallest, size) => Math.min(smallest, fitScale(size, viewport, fit, PAGE_PADDING)),
+      Number.POSITIVE_INFINITY,
+    );
+  }, [fit, sizes, viewport]);
+
+  const scale = fittedScale ?? manualScale;
+
+  // The wheel handler is a native listener registered once; it reads the scale
+  // from here rather than forcing a re-subscribe on every notch of a pinch.
   useEffect(() => {
-    if (!doc || !canvasRef.current) return;
-    void renderPageToCanvas(doc, page, canvasRef.current, scale).then((size) => {
-      pageSize.current = size;
+    scaleRef.current = scale;
+  }, [scale]);
+
+  const offsets = useMemo(() => pageOffsets(sizes, scale, PAGE_GAP), [sizes, scale]);
+  const contentTop = scrollTop - PAGE_PADDING;
+  const page = pageAtOffset(offsets, contentTop, viewport.height);
+  const range = visibleRange(offsets, contentTop, viewport.height, OVERSCAN);
+  const columnWidth = useMemo(
+    () => sizes.reduce((widest, size) => Math.max(widest, size.width), 0) * scale,
+    [sizes, scale],
+  );
+  const columnHeight = (offsets[offsets.length - 1] ?? 0) + PAGE_PADDING * 2;
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const measure = () =>
+      setViewport({ width: element.clientWidth, height: element.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  // Applied after layout so the scroll position lands on the new page heights
+  // rather than the ones being replaced.
+  useLayoutEffect(() => {
+    if (pendingScroll.current === null) return;
+    const element = scrollRef.current;
+    if (element) element.scrollTop = pendingScroll.current;
+    pendingScroll.current = null;
+  }, [scale]);
+
+  const onScroll = useCallback(() => {
+    if (scrollFrame.current) return;
+    scrollFrame.current = requestAnimationFrame(() => {
+      scrollFrame.current = 0;
+      setScrollTop(scrollRef.current?.scrollTop ?? 0);
     });
-  }, [doc, page, scale]);
+  }, []);
+
+  useEffect(() => () => cancelAnimationFrame(scrollFrame.current), []);
+
+  /** Rescales around a fixed point of the viewport, so zooming does not teleport. */
+  const zoomTo = useCallback((next: number, anchorY: number) => {
+    const element = scrollRef.current;
+    const current = scaleRef.current;
+    if (element) {
+      pendingScroll.current =
+        scrollTopAfterZoom(element.scrollTop - PAGE_PADDING, anchorY, current, next) + PAGE_PADDING;
+    }
+    setFit(null);
+    setManualScale(next);
+  }, []);
+
+  const zoomBy = useCallback(
+    (direction: 1 | -1) => zoomTo(zoomStep(scaleRef.current, direction), viewport.height / 2),
+    [viewport.height, zoomTo],
+  );
+
+  // ⌘/Ctrl + wheel is also what a trackpad pinch reports. It has to be a native
+  // non-passive listener: React's pooled wheel handler cannot preventDefault,
+  // and without that the browser zooms the whole window instead.
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      const anchorY = event.clientY - element.getBoundingClientRect().top;
+      zoomTo(clampScale(scaleRef.current * Math.exp(-event.deltaY / 300)), anchorY);
+    };
+    element.addEventListener('wheel', onWheel, { passive: false });
+    return () => element.removeEventListener('wheel', onWheel);
+  }, [zoomTo]);
+
+  // Space is the hand tool, the way every PDF reader does it. Held rather than
+  // toggled, so it never strands the user in a mode they did not ask for.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || isTypingTarget(event.target)) return;
+      event.preventDefault();
+      setSpaceHeld(true);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code === 'Space') setSpaceHeld(false);
+    };
+    // A window that loses focus mid-drag would otherwise keep the hand tool on.
+    const onBlur = () => setSpaceHeld(false);
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, []);
+
+  const goToPage = useCallback(
+    (target: number) => {
+      scrollRef.current?.scrollTo({
+        top: scrollTopForPage(offsets, target) + PAGE_PADDING,
+        behavior: 'smooth',
+      });
+    },
+    [offsets],
+  );
+
+  // ---- editing ------------------------------------------------------------
 
   /**
    * Runs a tool straight over the bridge rather than through the store's
@@ -169,45 +350,83 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
   /** Smaller than this and it was a stray click, not a selection. */
   const MIN_REDACT_PT = 4;
 
-  const redactBox = (from: Point, to: Point, box: Size) => {
-    const region = clampRect(
-      rectFromDrag(toPdfPoint(from, box, pageSize.current), toPdfPoint(to, box, pageSize.current)),
-      pageSize.current,
-    );
-    if (region.width < MIN_REDACT_PT || region.height < MIN_REDACT_PT) return;
+  const redactBox = useCallback(
+    (pageNumber: number, from: Point, to: Point, box: Size) => {
+      const pageSize = sizes[pageNumber - 1];
+      if (!pageSize) return;
+      const region = clampRect(
+        rectFromDrag(toPdfPoint(from, box, pageSize), toPdfPoint(to, box, pageSize)),
+        pageSize,
+      );
+      if (region.width < MIN_REDACT_PT || region.height < MIN_REDACT_PT) return;
 
-    void runEdit('security.redact', {
-      keywords: '',
-      pages: 'all',
-      caseSensitive: false,
-      regions: JSON.stringify([{ page, ...region }]),
-    });
-  };
+      void runEdit('security.redact', {
+        keywords: '',
+        pages: 'all',
+        caseSensitive: false,
+        regions: JSON.stringify([{ page: pageNumber, ...region }]),
+      });
+    },
+    [runEdit, sizes],
+  );
 
-  // Field boxes belong to one rendering of one page, so they are reloaded
-  // whenever the document or the page changes underneath them.
-  useEffect(() => {
-    if (!doc || mode !== 'form') return;
-    let cancelled = false;
-    void getFormFields(doc, page).then((found) => {
-      if (cancelled) return;
-      setFields(found);
-      setDrafts(Object.fromEntries(found.map((field) => [field.name, field.value])));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [doc, page, mode]);
+  const stampAt = useCallback(
+    (pageNumber: number, at: Point, box: Size) => {
+      const pageSize = sizes[pageNumber - 1];
+      if (!stampImage || !pageSize) return;
+      const point = toPdfPoint(at, box, pageSize);
+      void runEdit(
+        'edit.add-stamp',
+        {
+          placement: 'point',
+          centerX: point.x,
+          centerY: point.y,
+          widthPercent: 25,
+          opacity: 1,
+          margin: 36,
+          position: 'bottom-right',
+          pages: String(pageNumber),
+        },
+        stampImage,
+      );
+    },
+    [runEdit, sizes, stampImage],
+  );
+
+  const onPageFields = useCallback(
+    (source: PdfDocumentHandle, pageNumber: number, found: FormFieldBox[]) => {
+      setFieldCache((current) => {
+        // A page that finished reading after an edit landed belongs to the old
+        // document; start a fresh map rather than mixing the two.
+        const byPage =
+          current.source === source ? new Map(current.byPage) : new Map<number, FormFieldBox[]>();
+        byPage.set(pageNumber, found);
+        return { source, byPage };
+      });
+      setDrafts((current) => {
+        const next = { ...current };
+        // Only seed names not already being edited, so scrolling a page back
+        // into view cannot wipe out what the user just typed into it.
+        for (const field of found) {
+          if (!(field.name in next)) next[field.name] = field.value;
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  const allFields = useMemo(() => [...fieldsByPage.values()].flat(), [fieldsByPage]);
 
   /**
    * `edit.fill-form` takes one `name=value` per line, so a name carrying an
    * `=` or a newline cannot be addressed unambiguously. Those are skipped
    * rather than silently written to the wrong field.
    */
-  const fillable = fields.filter(
+  const fillable = allFields.filter(
     (field) => !field.readOnly && !field.name.includes('=') && !/[\r\n]/.test(field.name),
   );
-  const unsafeCount = fields.length - fillable.length;
+  const unsafeCount = allFields.length - fillable.length;
 
   const applyForm = () => {
     const changed = fillable.filter((field) => (drafts[field.name] ?? '') !== field.value);
@@ -218,25 +437,6 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
         .map((field) => `${field.name}=${(drafts[field.name] ?? '').replace(/[\r\n]+/g, ' ')}`)
         .join('\n'),
     });
-  };
-
-  const stampAt = (at: Point, box: Size) => {
-    if (!stampImage) return;
-    const point = toPdfPoint(at, box, pageSize.current);
-    void runEdit(
-      'edit.add-stamp',
-      {
-        placement: 'point',
-        centerX: point.x,
-        centerY: point.y,
-        widthPercent: 25,
-        opacity: 1,
-        margin: 36,
-        position: 'bottom-right',
-        pages: String(page),
-      },
-      stampImage,
-    );
   };
 
   const enterStampMode = async () => {
@@ -263,6 +463,11 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
     onDirtyChange(edited);
     return () => onDirtyChange(false);
   }, [edited, onDirtyChange]);
+
+  const switchMode = (next: ViewMode) => {
+    setMode((current) => (current === next ? 'view' : next));
+    if (next !== 'stamp') setStampImage(null);
+  };
 
   if (failure === 'needs-password' || failure === 'wrong-password') {
     return (
@@ -308,22 +513,23 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
         title={t('viewerDragHint', locale)}
       >
         {doc &&
-          Array.from({ length: pageCount }, (_, i) => i + 1).map((num) => (
+          sizes.map((size, index) => (
             <Thumbnail
-              key={`${pageCount}/${num}`}
+              key={index + 1}
               doc={doc}
-              pageNumber={num}
-              active={num === page}
+              pageNumber={index + 1}
+              size={size}
+              active={index + 1 === page}
               disabled={busy}
-              dragging={dragPage === num}
+              dragging={dragPage === index + 1}
               locale={locale}
-              onClick={() => setPage(num)}
-              onRotate={() => rotatePage(num)}
-              onDelete={() => deletePage(num)}
-              onDragStart={() => setDragPage(num)}
+              onClick={() => goToPage(index + 1)}
+              onRotate={() => rotatePage(index + 1)}
+              onDelete={() => deletePage(index + 1)}
+              onDragStart={() => setDragPage(index + 1)}
               onDragEnd={() => setDragPage(0)}
               onDropOn={() => {
-                if (dragPage) movePage(dragPage, num);
+                if (dragPage) movePage(dragPage, index + 1);
                 setDragPage(0);
               }}
             />
@@ -344,54 +550,60 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
 
           {busy && <Loader2 size={14} className="shrink-0 animate-spin text-[var(--text-muted)]" />}
 
-          {pageCount > 0 && (
-            <span className="shrink-0 font-mono text-[11px] text-[var(--text-muted)]">
-              {t('viewerPageOf', locale)
-                .replace('{page}', String(page))
-                .replace('{count}', String(pageCount))}
-            </span>
-          )}
-
           <div className="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              aria-label={t('viewerZoomOut', locale)}
+            <ToolbarButton
+              label={t('viewerZoomOut', locale)}
               disabled={!doc}
-              onClick={() => setScale((s) => Math.max(MIN_SCALE, s - SCALE_STEP))}
-              className="rounded-md p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-30"
+              onClick={() => zoomBy(-1)}
             >
               <ZoomOut size={15} />
-            </button>
+            </ToolbarButton>
             <button
               type="button"
-              aria-label={t('viewerZoomIn', locale)}
+              title={t('viewerActualSize', locale)}
               disabled={!doc}
-              onClick={() => setScale((s) => Math.min(MAX_SCALE, s + SCALE_STEP))}
-              className="rounded-md p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-30"
+              onClick={() => zoomTo(1, viewport.height / 2)}
+              className="min-w-[52px] rounded-md px-1 py-1 font-mono text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-30"
+            >
+              {Math.round(scale * 100)}%
+            </button>
+            <ToolbarButton
+              label={t('viewerZoomIn', locale)}
+              disabled={!doc}
+              onClick={() => zoomBy(1)}
             >
               <ZoomIn size={15} />
-            </button>
-            <button
-              type="button"
-              aria-label={t('viewerUndo', locale)}
-              title={t('viewerUndo', locale)}
+            </ToolbarButton>
+            <ToolbarButton
+              label={t('viewerFitWidth', locale)}
+              active={fit === 'width'}
+              disabled={!doc}
+              onClick={() => setFit('width')}
+            >
+              <MoveHorizontal size={15} />
+            </ToolbarButton>
+            <ToolbarButton
+              label={t('viewerFitPage', locale)}
+              active={fit === 'page'}
+              disabled={!doc}
+              onClick={() => setFit('page')}
+            >
+              <Maximize size={15} />
+            </ToolbarButton>
+            <ToolbarButton
+              label={t('viewerUndo', locale)}
               disabled={!edited || busy}
               onClick={undo}
-              className="rounded-md p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-30"
             >
               <Undo2 size={15} />
-            </button>
+            </ToolbarButton>
           </div>
 
           <Button
             size="sm"
             variant={mode === 'form' ? 'primary' : 'secondary'}
             disabled={!doc || busy}
-            onClick={() => {
-              setMarquee(null);
-              setStampImage(null);
-              setMode((current) => (current === 'form' ? 'view' : 'form'));
-            }}
+            onClick={() => switchMode('form')}
           >
             <FilePenLine size={13} />
             {t(mode === 'form' ? 'viewerFormExit' : 'viewerFormMode', locale)}
@@ -402,13 +614,8 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
             variant={mode === 'stamp' ? 'primary' : 'secondary'}
             disabled={!doc || busy}
             onClick={() => {
-              setMarquee(null);
-              if (mode === 'stamp') {
-                setMode('view');
-                setStampImage(null);
-              } else {
-                void enterStampMode();
-              }
+              if (mode === 'stamp') switchMode('stamp');
+              else void enterStampMode();
             }}
           >
             <Stamp size={13} />
@@ -419,11 +626,7 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
             size="sm"
             variant={mode === 'redact' ? 'danger' : 'secondary'}
             disabled={!doc || busy}
-            onClick={() => {
-              setMarquee(null);
-              setStampImage(null);
-              setMode((current) => (current === 'redact' ? 'view' : 'redact'));
-            }}
+            onClick={() => switchMode('redact')}
           >
             <Eraser size={13} />
             {t(mode === 'redact' ? 'viewerRedactExit' : 'viewerRedactMode', locale)}
@@ -445,19 +648,15 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
         </header>
 
         {mode === 'redact' && (
-          <div className="flex items-center gap-2 border-b border-[var(--danger)] bg-[var(--danger-soft)] px-4 py-2 text-xs text-[var(--danger)]">
-            <Eraser size={13} className="shrink-0" />
+          <Banner tone="danger" icon={<Eraser size={13} className="shrink-0" />}>
             <span className="min-w-0 flex-1">{t('viewerRedactHint', locale)}</span>
-          </div>
+          </Banner>
         )}
 
         {mode === 'form' && (
-          <div className="flex items-center gap-2 border-b border-[var(--accent)] bg-[var(--accent-soft)] px-4 py-2 text-xs text-[var(--accent)]">
-            <FilePenLine size={13} className="shrink-0" />
+          <Banner tone="accent" icon={<FilePenLine size={13} className="shrink-0" />}>
             <span className="min-w-0 flex-1">
-              {fillable.length === 0
-                ? t('viewerFormNone', locale)
-                : t('viewerFormHint', locale)}
+              {fillable.length === 0 ? t('viewerFormNone', locale) : t('viewerFormHint', locale)}
               {unsafeCount > 0 &&
                 ` ${t('viewerFormSkipped', locale).replace('{count}', String(unsafeCount))}`}
             </span>
@@ -466,160 +665,342 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
                 {t('viewerFormApply', locale)}
               </Button>
             )}
-          </div>
+          </Banner>
         )}
 
         {mode === 'stamp' && stampImage && (
-          <div className="flex items-center gap-2 border-b border-[var(--accent)] bg-[var(--accent-soft)] px-4 py-2 text-xs text-[var(--accent)]">
-            <Stamp size={13} className="shrink-0" />
+          <Banner tone="accent" icon={<Stamp size={13} className="shrink-0" />}>
             <span className="min-w-0 flex-1">
               {t('viewerStampHint', locale)}（{stampImage.name}）
             </span>
-          </div>
+          </Banner>
         )}
 
         {password !== '' && (
-          <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-4 py-2 text-xs text-[var(--text-secondary)]">
-            <Lock size={13} className="shrink-0" />
+          <Banner tone="muted" icon={<Lock size={13} className="shrink-0" />}>
             <span className="min-w-0 flex-1">{t('viewerDecryptNotice', locale)}</span>
-          </div>
+          </Banner>
         )}
 
         {editError && (
-          <div className="flex items-center gap-2 border-b border-[var(--danger)] bg-[var(--danger-soft)] px-4 py-2 text-xs text-[var(--danger)]">
-            <AlertCircle size={13} className="shrink-0" />
+          <Banner tone="danger" icon={<AlertCircle size={13} className="shrink-0" />}>
             <span className="min-w-0 flex-1 truncate">
               {t('viewerEditFailed', locale)} — {editError}
             </span>
-          </div>
+          </Banner>
         )}
 
-        <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-[var(--surface-sunken)] p-6">
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          title={mode === 'view' ? t('viewerPanHint', locale) : undefined}
+          onPointerDown={(e) => {
+            if (!spaceHeld || !scrollRef.current) return;
+            e.preventDefault();
+            e.currentTarget.setPointerCapture(e.pointerId);
+            panFrom.current = {
+              x: e.clientX,
+              y: e.clientY,
+              left: scrollRef.current.scrollLeft,
+              top: scrollRef.current.scrollTop,
+            };
+            setGrabbing(true);
+          }}
+          onPointerMove={(e) => {
+            const from = panFrom.current;
+            const element = scrollRef.current;
+            if (!from || !element) return;
+            element.scrollLeft = from.left - (e.clientX - from.x);
+            element.scrollTop = from.top - (e.clientY - from.y);
+          }}
+          onPointerUp={() => {
+            panFrom.current = null;
+            setGrabbing(false);
+          }}
+          className={clsx(
+            'min-h-0 flex-1 overflow-auto bg-[var(--surface-sunken)]',
+            spaceHeld && (grabbing ? 'cursor-grabbing' : 'cursor-grab'),
+          )}
+        >
           {failure ? (
-            <div className="flex items-center gap-2 text-[13px] text-[var(--danger)]">
+            <div className="flex h-full items-center justify-center gap-2 text-[13px] text-[var(--danger)]">
               <AlertCircle size={16} />
               {t('viewerLoadFailed', locale)}
             </div>
           ) : !doc ? (
-            <div className="flex items-center gap-2 text-[13px] text-[var(--text-muted)]">
+            <div className="flex h-full items-center justify-center gap-2 text-[13px] text-[var(--text-muted)]">
               <Loader2 size={18} className="animate-spin" />
               {t('viewerLoading', locale)}
             </div>
           ) : (
             <div
-              className={clsx('relative', mode !== 'view' && !busy && 'cursor-crosshair')}
-              onClick={(e) => {
-                if (mode !== 'stamp' || busy) return;
-                const box = e.currentTarget.getBoundingClientRect();
-                stampAt(
-                  { x: e.clientX - box.left, y: e.clientY - box.top },
-                  { width: box.width, height: box.height },
-                );
-              }}
-              onPointerDown={(e) => {
-                if (mode !== 'redact' || busy) return;
-                e.preventDefault();
-                e.currentTarget.setPointerCapture(e.pointerId);
-                const box = e.currentTarget.getBoundingClientRect();
-                const at = { x: e.clientX - box.left, y: e.clientY - box.top };
-                setMarquee({ from: at, to: at });
-              }}
-              onPointerMove={(e) => {
-                if (!marquee) return;
-                const box = e.currentTarget.getBoundingClientRect();
-                setMarquee((current) =>
-                  current
-                    ? { ...current, to: { x: e.clientX - box.left, y: e.clientY - box.top } }
-                    : null,
-                );
-              }}
-              onPointerUp={(e) => {
-                if (!marquee) return;
-                const box = e.currentTarget.getBoundingClientRect();
-                redactBox(marquee.from, marquee.to, { width: box.width, height: box.height });
-                setMarquee(null);
-              }}
+              className="relative mx-auto"
+              style={{ width: columnWidth, minWidth: '100%', height: columnHeight }}
             >
-              <canvas
-                ref={canvasRef}
-                className={clsx('block rounded shadow-lg', busy && 'opacity-50')}
-              />
-              {marquee && (
-                <div
-                  className="pointer-events-none absolute border-2 border-[var(--danger)] bg-[var(--danger)]/30"
-                  style={{
-                    left: Math.min(marquee.from.x, marquee.to.x),
-                    top: Math.min(marquee.from.y, marquee.to.y),
-                    width: Math.abs(marquee.from.x - marquee.to.x),
-                    height: Math.abs(marquee.from.y - marquee.to.y),
-                  }}
-                />
-              )}
-
-              {mode === 'form' &&
-                fillable.map((field) => (
-                  <div
-                    key={field.name}
-                    className="absolute"
-                    style={{
-                      left: `${field.box.x * 100}%`,
-                      top: `${field.box.y * 100}%`,
-                      width: `${field.box.width * 100}%`,
-                      height: `${field.box.height * 100}%`,
-                    }}
-                  >
-                    {field.checkbox ? (
-                      <input
-                        type="checkbox"
-                        title={field.name}
-                        checked={/^(1|true|yes|on|y)$/i.test(drafts[field.name] ?? '')}
-                        onChange={(e) =>
-                          setDrafts((d) => ({
-                            ...d,
-                            [field.name]: e.target.checked ? 'true' : 'false',
-                          }))
-                        }
-                        className="h-full w-full accent-[var(--accent)]"
-                      />
-                    ) : (
-                      <input
-                        type="text"
-                        title={field.name}
-                        value={drafts[field.name] ?? ''}
-                        onChange={(e) =>
-                          setDrafts((d) => ({ ...d, [field.name]: e.target.value }))
-                        }
-                        className="h-full w-full rounded-sm border border-[var(--accent)] bg-[var(--accent-soft)] px-1 text-[12px] text-[var(--text-primary)] outline-none focus:bg-[var(--surface-panel)]"
-                      />
-                    )}
-                  </div>
-                ))}
+              {sizes.map((size, index) => {
+                const pageNumber = index + 1;
+                if (pageNumber < range.first || pageNumber > range.last) return null;
+                return (
+                  <PageView
+                    key={pageNumber}
+                    doc={doc}
+                    pageNumber={pageNumber}
+                    size={size}
+                    scale={scale}
+                    mode={mode}
+                    busy={busy}
+                    panning={spaceHeld}
+                    drafts={drafts}
+                    fields={fieldsByPage.get(pageNumber)}
+                    top={PAGE_PADDING + (offsets[index] ?? 0)}
+                    onFields={onPageFields}
+                    onDraftChange={(name, value) =>
+                      setDrafts((current) => ({ ...current, [name]: value }))
+                    }
+                    onRedact={redactBox}
+                    onStamp={stampAt}
+                  />
+                );
+              })}
             </div>
           )}
         </div>
 
-        {pageCount > 1 && (
-          <footer className="flex items-center justify-center gap-3 border-t border-[var(--border-subtle)] py-2">
-            <button
-              type="button"
-              aria-label={t('viewerPrevPage', locale)}
-              disabled={page <= 1}
-              onClick={() => setPage((p) => p - 1)}
-              className="rounded-md p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-30"
-            >
-              <ChevronLeft size={16} />
-            </button>
-            <button
-              type="button"
-              aria-label={t('viewerNextPage', locale)}
-              disabled={page >= pageCount}
-              onClick={() => setPage((p) => p + 1)}
-              className="rounded-md p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-30"
-            >
-              <ChevronRight size={16} />
-            </button>
+        {pageCount > 0 && (
+          <footer className="flex shrink-0 items-center justify-center gap-2 border-t border-[var(--border-subtle)] py-1.5">
+            <input
+              type="number"
+              min={1}
+              max={pageCount}
+              value={page}
+              aria-label={t('viewerGoToPage', locale)}
+              onChange={(e) => {
+                const target = Number(e.target.value);
+                if (Number.isFinite(target)) goToPage(target);
+              }}
+              className="w-14 rounded-md border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-1.5 py-0.5 text-center font-mono text-[11px] outline-none focus:border-[var(--accent)]"
+            />
+            <span className="font-mono text-[11px] text-[var(--text-muted)]">/ {pageCount}</span>
           </footer>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ToolbarButton({
+  label,
+  active,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  active?: boolean;
+  disabled?: boolean;
+  onClick(): void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      aria-pressed={active}
+      disabled={disabled}
+      onClick={onClick}
+      className={clsx(
+        'rounded-md p-1.5 transition-colors disabled:opacity-30',
+        active
+          ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+          : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]',
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Banner({
+  tone,
+  icon,
+  children,
+}: {
+  tone: 'danger' | 'accent' | 'muted';
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={clsx(
+        'flex shrink-0 items-center gap-2 border-b px-4 py-2 text-xs',
+        tone === 'danger' && 'border-[var(--danger)] bg-[var(--danger-soft)] text-[var(--danger)]',
+        tone === 'accent' && 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]',
+        tone === 'muted' &&
+          'border-[var(--border-subtle)] bg-[var(--surface-sunken)] text-[var(--text-secondary)]',
+      )}
+    >
+      {icon}
+      {children}
+    </div>
+  );
+}
+
+/**
+ * One page in the scroll column: its canvas, and whatever the current mode
+ * overlays on it. Absolutely positioned at the offset the layout computed, so
+ * the column's height never depends on what has finished rendering.
+ */
+function PageView({
+  doc,
+  pageNumber,
+  size,
+  scale,
+  mode,
+  busy,
+  panning,
+  drafts,
+  fields,
+  top,
+  onFields,
+  onDraftChange,
+  onRedact,
+  onStamp,
+}: {
+  doc: PdfDocumentHandle;
+  pageNumber: number;
+  size: Size;
+  scale: number;
+  mode: ViewMode;
+  busy: boolean;
+  panning: boolean;
+  drafts: Record<string, string>;
+  fields: FormFieldBox[] | undefined;
+  top: number;
+  onFields(source: PdfDocumentHandle, pageNumber: number, fields: FormFieldBox[]): void;
+  onDraftChange(name: string, value: string): void;
+  onRedact(pageNumber: number, from: Point, to: Point, box: Size): void;
+  onStamp(pageNumber: number, at: Point, box: Size): void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [marquee, setMarquee] = useState<{ from: Point; to: Point } | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    let stale = false;
+    void renderPageToCanvas(doc, pageNumber, canvas, scale, devicePixels(), () => stale).catch(
+      () => {
+        // A page that will not draw leaves the previous image up; the load
+        // failure the document itself reports is the one worth surfacing.
+      },
+    );
+    return () => {
+      stale = true;
+    };
+  }, [doc, pageNumber, scale]);
+
+  useEffect(() => {
+    if (mode !== 'form' || fields) return;
+    let cancelled = false;
+    void getFormFields(doc, pageNumber).then((found) => {
+      if (!cancelled) onFields(doc, pageNumber, found);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [doc, pageNumber, mode, fields, onFields]);
+
+  const fillable = (fields ?? []).filter(
+    (field) => !field.readOnly && !field.name.includes('=') && !/[\r\n]/.test(field.name),
+  );
+  const interactive = mode !== 'view' && !busy && !panning;
+
+  return (
+    <div
+      className="absolute left-1/2 -translate-x-1/2"
+      style={{ top, width: size.width * scale, height: size.height * scale }}
+    >
+      <div
+        className={clsx('relative h-full w-full', interactive && 'cursor-crosshair')}
+        onClick={(e) => {
+          if (mode !== 'stamp' || !interactive) return;
+          const box = e.currentTarget.getBoundingClientRect();
+          onStamp(
+            pageNumber,
+            { x: e.clientX - box.left, y: e.clientY - box.top },
+            { width: box.width, height: box.height },
+          );
+        }}
+        onPointerDown={(e) => {
+          if (mode !== 'redact' || !interactive) return;
+          e.preventDefault();
+          e.currentTarget.setPointerCapture(e.pointerId);
+          const box = e.currentTarget.getBoundingClientRect();
+          const at = { x: e.clientX - box.left, y: e.clientY - box.top };
+          setMarquee({ from: at, to: at });
+        }}
+        onPointerMove={(e) => {
+          if (!marquee) return;
+          const box = e.currentTarget.getBoundingClientRect();
+          const to = { x: e.clientX - box.left, y: e.clientY - box.top };
+          setMarquee((current) => (current ? { ...current, to } : null));
+        }}
+        onPointerUp={(e) => {
+          if (!marquee) return;
+          const box = e.currentTarget.getBoundingClientRect();
+          onRedact(pageNumber, marquee.from, marquee.to, {
+            width: box.width,
+            height: box.height,
+          });
+          setMarquee(null);
+        }}
+      >
+        <canvas ref={canvasRef} className="block bg-white shadow-lg" />
+
+        {marquee && (
+          <div
+            className="pointer-events-none absolute border-2 border-[var(--danger)] bg-[var(--danger)]/30"
+            style={{
+              left: Math.min(marquee.from.x, marquee.to.x),
+              top: Math.min(marquee.from.y, marquee.to.y),
+              width: Math.abs(marquee.from.x - marquee.to.x),
+              height: Math.abs(marquee.from.y - marquee.to.y),
+            }}
+          />
+        )}
+
+        {mode === 'form' &&
+          fillable.map((field) => (
+            <div
+              key={field.name}
+              className="absolute"
+              style={{
+                left: `${field.box.x * 100}%`,
+                top: `${field.box.y * 100}%`,
+                width: `${field.box.width * 100}%`,
+                height: `${field.box.height * 100}%`,
+              }}
+            >
+              {field.checkbox ? (
+                <input
+                  type="checkbox"
+                  title={field.name}
+                  checked={/^(1|true|yes|on|y)$/i.test(drafts[field.name] ?? '')}
+                  onChange={(e) => onDraftChange(field.name, e.target.checked ? 'true' : 'false')}
+                  className="h-full w-full accent-[var(--accent)]"
+                />
+              ) : (
+                <input
+                  type="text"
+                  title={field.name}
+                  value={drafts[field.name] ?? ''}
+                  onChange={(e) => onDraftChange(field.name, e.target.value)}
+                  className="h-full w-full rounded-sm border border-[var(--accent)] bg-[var(--accent-soft)] px-1 text-[12px] text-[var(--text-primary)] outline-none focus:bg-[var(--surface-panel)]"
+                />
+              )}
+            </div>
+          ))}
       </div>
     </div>
   );
@@ -628,6 +1009,7 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
 function Thumbnail({
   doc,
   pageNumber,
+  size,
   active,
   disabled,
   dragging,
@@ -641,6 +1023,7 @@ function Thumbnail({
 }: {
   doc: PdfDocumentHandle;
   pageNumber: number;
+  size: Size;
   active: boolean;
   disabled: boolean;
   dragging: boolean;
@@ -671,10 +1054,22 @@ function Thumbnail({
     return () => observer.disconnect();
   }, []);
 
+  // Every thumbnail is laid out to the same width, whatever the page's shape.
+  const scale = size.width > 0 ? THUMB_WIDTH / size.width : 0.18;
+
   useEffect(() => {
-    if (!visible || !canvasRef.current) return;
-    void renderPageToCanvas(doc, pageNumber, canvasRef.current, THUMB_SCALE);
-  }, [visible, doc, pageNumber]);
+    const canvas = canvasRef.current;
+    if (!visible || !canvas) return;
+    let stale = false;
+    void renderPageToCanvas(doc, pageNumber, canvas, scale, devicePixels(), () => stale).catch(
+      () => {
+        // Same as the main page: keep whatever was already drawn.
+      },
+    );
+    return () => {
+      stale = true;
+    };
+  }, [visible, doc, pageNumber, scale]);
 
   return (
     <div
@@ -699,7 +1094,7 @@ function Thumbnail({
             : 'border-transparent hover:border-[var(--border-strong)]',
         )}
       >
-        <canvas ref={canvasRef} className="w-full bg-white" />
+        <canvas ref={canvasRef} className="mx-auto block bg-white" />
         <span className="block bg-[var(--surface-panel)] py-0.5 text-center font-mono text-[10px] text-[var(--text-muted)]">
           {pageNumber}
         </span>
