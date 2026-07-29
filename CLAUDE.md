@@ -34,10 +34,16 @@ Three layers, enforced by ESLint and by the build:
 - **`src/app/`** — the renderer. Metadata only. It must never import `src/core/tools/`,
   `mupdf` or `pdf-lib`. It gets the catalogue as data over `catalog:get`.
 
-If the renderer bundle jumps past ~300 KB or a `.wasm` appears in `dist/assets/`,
-that boundary has been broken. (It is currently over that line at ~340 KB and has
-been for a while — treat the number as a tripwire for *new* growth, not a claim
-that the budget is being met.)
+`npm run check:bundle` enforces this against the built output, and `npm run verify`
+runs it. It reads the entry chunk's sourcemap — the module graph, not a guess about
+minified text — and fails if any engine package contributed to it, if a `.wasm`
+appears in `dist/assets/`, or if the chunk outgrew its ceiling. The rules and the
+reasoning are in `scripts/bundleBoundary.mjs`; the ceiling is in
+`scripts/check-bundle.mjs` and raising it is a decision to record there.
+
+Screens that most sessions never open are lazily imported in `App.tsx` — the
+Viewer (pdfjs-dist is ~1 MB on its own), settings, the pipeline builder, the batch
+runner and the signature pad. Add new heavy screens the same way.
 
 ## The renderer is document-centric
 
