@@ -127,6 +127,32 @@ Selection is client-side on locale / time zone (`preferMirror` in
 `electron/updater/releaseChannel.cjs`). Both feeds are always tried with
 fallback. Windows arm64 uses channel `latest-arm64`.
 
+**The mirror is a proxy, not a copy.** `mirror-worker/` reads GitHub's *latest*
+release on each request and streams the assets through; it stores nothing. So
+there is no upload step, and nothing to keep in sync — the mirror serves a new
+version the moment the GitHub Release exists. Two consequences worth knowing:
+a prerelease tag deliberately never reaches mainland users, because GitHub's
+`releases/latest` skips prereleases; and un-publishing a GitHub Release takes
+the mirror down with it.
+
+### Releasing
+
+Bump the version and write the entry in `CHANGELOG.md` **and** the in-app copies
+in `src/app/changelog/{zh,en}.md` — the app's "What's New" reads the latter, and
+`CHANGELOG.md` keeps the sentence-final full stops that the in-app copy drops.
+Then push a `v<major>.<minor>.<patch>` tag.
+
+`.github/workflows/release.yml` takes it from there: it verifies, builds every
+platform on its own runner, and publishes the GitHub Release with notes lifted
+from `CHANGELOG.md` by `scripts/releaseNotes.mjs`. Each platform builds natively
+because it has to — a Windows NSIS installer needs Wine anywhere else, and a
+`.deb` needs fpm — so a release cannot be cut from one machine by hand. The job
+refuses to publish unless every platform produced something, so one platform's
+updater is never left looking for a feed that is not there.
+
+Loose tags (`v1.0`, `v-test`) do not match the trigger and cannot publish by
+accident.
+
 ## Conventions
 
 - RED → GREEN → REFACTOR. A failing test before the production change.
