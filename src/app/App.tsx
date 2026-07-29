@@ -9,25 +9,48 @@ import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
 import { activeJobCount, useApp } from './store.ts';
 import { isDirty, type DocumentState } from './documents.ts';
 import { canApplyToDocument } from './toolApply.ts';
-import { BatchPage } from './components/BatchPage.tsx';
 import { CommandPalette } from './components/CommandPalette.tsx';
 import { ApplyToolPanel } from './components/ApplyToolPanel.tsx';
 import { DocumentTabs } from './components/DocumentTabs.tsx';
 import { Home } from './components/Home.tsx';
 import { JobPanel } from './components/JobPanel.tsx';
-import { PipelinePage } from './components/PipelinePage.tsx';
-import { SettingsPanel } from './components/SettingsPanel.tsx';
 import { Ribbon } from './components/Ribbon.tsx';
-import { SignPage } from './components/SignPage.tsx';
 import { ToolPage } from './components/ToolPage.tsx';
 import { UpdatePrompt } from './components/UpdatePrompt.tsx';
 import { Badge, Button } from './components/ui.tsx';
 
-// pdfjs-dist is only needed once someone actually opens a preview, so the
-// Viewer (and its ~1MB dependency) load as a separate chunk, not the main bundle.
+/**
+ * Screens that most sessions never open, kept out of the entry chunk.
+ *
+ * The Viewer is here because pdfjs-dist is ~1 MB on its own. The rest are here
+ * because they are big and conditional: a pipeline builder, a batch runner, a
+ * signature pad and the settings panel are each a page someone visits
+ * occasionally, and none of them should be parsed before the window paints.
+ */
 const Viewer = lazy(() =>
   import('./components/Viewer.tsx').then((module) => ({ default: module.Viewer })),
 );
+const BatchPage = lazy(() =>
+  import('./components/BatchPage.tsx').then((module) => ({ default: module.BatchPage })),
+);
+const PipelinePage = lazy(() =>
+  import('./components/PipelinePage.tsx').then((module) => ({ default: module.PipelinePage })),
+);
+const SettingsPanel = lazy(() =>
+  import('./components/SettingsPanel.tsx').then((module) => ({ default: module.SettingsPanel })),
+);
+const SignPage = lazy(() =>
+  import('./components/SignPage.tsx').then((module) => ({ default: module.SignPage })),
+);
+
+/** Shown while one of the screens above is being fetched. */
+function ScreenFallback() {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <Loader2 size={22} className="animate-spin text-[var(--text-muted)]" />
+    </div>
+  );
+}
 
 type MainView =
   | { name: 'welcome' }
@@ -371,25 +394,19 @@ export function App() {
                 : 'overflow-y-auto',
             )}
           >
+            {/* One boundary for every lazily-loaded screen below. */}
+            <Suspense fallback={<ScreenFallback />}>
             {view.name === 'settings' && <SettingsPanel onBack={openWelcome} />}
 
             {view.name === 'document' && activeDocument && (
-              <Suspense
-                fallback={
-                  <div className="flex h-full items-center justify-center">
-                    <Loader2 size={22} className="animate-spin text-[var(--text-muted)]" />
-                  </div>
-                }
-              >
-                {/* Keyed by document id so switching tabs remounts the viewer's
-                    own view state — scroll, zoom, mode — per document, while the
-                    bytes and history stay in the store. */}
-                <Viewer
-                  key={activeDocument.id}
-                  document={activeDocument}
-                  onChooseTool={openToolPickerForDocument}
-                />
-              </Suspense>
+              /* Keyed by document id so switching tabs remounts the viewer's
+                 own view state — scroll, zoom, mode — per document, while the
+                 bytes and history stay in the store. */
+              <Viewer
+                key={activeDocument.id}
+                document={activeDocument}
+                onChooseTool={openToolPickerForDocument}
+              />
             )}
 
             {view.name === 'tool' &&
@@ -423,12 +440,13 @@ export function App() {
                 onOpenTool={openTool}
                 onOpenSearch={() => setPaletteOpen(true)}
                 onOpenCategory={(_categoryId: CategoryId) => {
-                  // Categories live in the drawer; keep welcome and let the user expand there.
+                  // Categories live in the ribbon; keep welcome and let the user pick there.
                   openWelcome();
                 }}
                 onOpenPreview={openViewerPicker}
               />
             )}
+            </Suspense>
           </main>
         </div>
       </div>
