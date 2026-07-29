@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import type { CategoryId } from '@core/types.ts';
+import type { CategoryId, ToolMeta } from '@core/types.ts';
 import { uiRegistry } from './catalog.ts';
 import { bridge, hasBridge, type PickedFile } from './bridge.ts';
 import { t } from './i18n.ts';
@@ -8,8 +8,10 @@ import { AlertCircle, Eye, Loader2, Settings } from './icons.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
 import { activeJobCount, useApp } from './store.ts';
 import { isDirty, type DocumentState } from './documents.ts';
+import { canApplyToDocument } from './toolApply.ts';
 import { BatchPage } from './components/BatchPage.tsx';
 import { CommandPalette } from './components/CommandPalette.tsx';
+import { ApplyToolPanel } from './components/ApplyToolPanel.tsx';
 import { DocumentTabs } from './components/DocumentTabs.tsx';
 import { Home } from './components/Home.tsx';
 import { JobPanel } from './components/JobPanel.tsx';
@@ -54,6 +56,8 @@ export function App() {
   const [jobsOpen, setJobsOpen] = useState(false);
   // A tab being closed with unsaved changes, held until the user decides.
   const [closing, setClosing] = useState<DocumentState | null>(null);
+  // The tool being run against the open document, if any.
+  const [applying, setApplying] = useState<ToolMeta | null>(null);
   // Nested dragenter/dragleave pairs fire per child element; counting them is
   // the only reliable way to know the pointer has truly left the window.
   const dragDepth = useRef(0);
@@ -66,10 +70,52 @@ export function App() {
     void initialize();
   }, [initialize]);
 
-  const openTool = useCallback((toolId: string) => {
-    setPaletteOpen(false);
-    setMain({ name: 'tool', toolId });
-  }, []);
+  /**
+   * Where picking a tool goes.
+   *
+   * With a document in hand there are two cases. A tool that wants one PDF runs
+   * against it right there, with the result landing back in the page — the
+   * document is never found, saved and re-opened just to be worked on. A tool
+   * that needs more than that still needs its full page, but opens with the
+   * document already loaded rather than an empty drop zone.
+   *
+   * `withActiveDocument` is what makes the sidebar behave like a ribbon while a
+   * document is on screen, and like plain navigation when one is not.
+   */
+  const routeToTool = useCallback(
+    (toolId: string, withActiveDocument: boolean) => {
+      const picked = uiRegistry.tryGet(toolId);
+
+      if (withActiveDocument && activeDocument && picked) {
+        if (canApplyToDocument(picked)) {
+          setApplying(picked);
+          return;
+        }
+        setMain({
+          name: 'tool',
+          toolId,
+          initialFile: {
+            name: activeDocument.name,
+            path: activeDocument.path,
+            size: activeDocument.bytes.length,
+            mime: 'application/pdf',
+            bytes: activeDocument.bytes,
+          },
+        });
+        return;
+      }
+      setMain({ name: 'tool', toolId });
+    },
+    [activeDocument],
+  );
+
+  const openTool = useCallback(
+    (toolId: string) => {
+      setPaletteOpen(false);
+      routeToTool(toolId, main.name === 'document');
+    },
+    [main.name, routeToTool],
+  );
 
   const closePalette = useCallback(() => {
     setPaletteOpen(false);
@@ -150,26 +196,9 @@ export function App() {
     (toolId: string) => {
       const forDocument = paletteForDocument;
       closePalette();
-
-      // Chosen from the document toolbar: carry the document, as it stands now,
-      // into the tool rather than making the user find the file again.
-      if (forDocument && activeDocument) {
-        setMain({
-          name: 'tool',
-          toolId,
-          initialFile: {
-            name: activeDocument.name,
-            path: activeDocument.path,
-            size: activeDocument.bytes.length,
-            mime: 'application/pdf',
-            bytes: activeDocument.bytes,
-          },
-        });
-        return;
-      }
-      setMain({ name: 'tool', toolId });
+      routeToTool(toolId, forDocument);
     },
-    [activeDocument, closePalette, paletteForDocument],
+    [closePalette, paletteForDocument, routeToTool],
   );
 
   /**
@@ -409,6 +438,14 @@ export function App() {
           onClose={closePalette}
           onSelect={onPaletteSelect}
           filterAccept={paletteForDocument ? '.pdf' : undefined}
+        />
+      )}
+      {applying && activeDocument && (
+        <ApplyToolPanel
+          key={`${applying.id}|${activeDocument.id}`}
+          tool={applying}
+          document={activeDocument}
+          onClose={() => setApplying(null)}
         />
       )}
       <JobPanel open={jobsOpen} onClose={() => setJobsOpen(false)} />
