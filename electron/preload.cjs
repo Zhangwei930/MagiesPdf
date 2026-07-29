@@ -54,6 +54,18 @@ const api = {
   runJob: (request) => ipcRenderer.invoke('job:run', request),
   cancelJob: (jobId) => ipcRenderer.invoke('job:cancel', { jobId }),
 
+  /**
+   * Subscribes to documents the OS asked the app to open — a double-click, an
+   * Open With, or a second launch. Only paths cross; the renderer reads them
+   * back through `readFiles`, which is where size and type are enforced.
+   * Returns an unsubscribe function.
+   */
+  onOpenFiles: (callback) => {
+    const listener = (_event, payload) => callback(payload?.paths ?? []);
+    ipcRenderer.on('app:openFiles', listener);
+    return () => ipcRenderer.removeListener('app:openFiles', listener);
+  },
+
   /** Subscribes to progress for all jobs. Returns an unsubscribe function. */
   onJobProgress: (callback) => {
     const listener = (_event, payload) => callback(payload);

@@ -105,6 +105,11 @@ const UI = {
   chooseFile: { zh: '选择文件', en: 'Choose a file' },
   dropHere: { zh: '把文件拖到这里，或点击选择', en: 'Drop files here, or click to choose' },
   dropHereNow: { zh: '松手即可添加', en: 'Release to add' },
+  dropToOpen: { zh: '松手即可打开这个 PDF', en: 'Release to open this PDF' },
+  dropNotPdf: {
+    zh: '只能直接打开 PDF。其他格式请先选择对应的工具。',
+    en: 'Only PDFs open directly. For other formats, pick the matching tool first.',
+  },
   accepts: { zh: '支持格式', en: 'Accepts' },
   fileCount: { zh: '个文件', en: 'files' },
   removeFile: { zh: '移除', en: 'Remove' },

@@ -77,6 +77,8 @@ export interface MagiesPdfBridge {
   ): Promise<SaveResult | null>;
   saveOutputAs(file: ToolOutputFile): Promise<SaveResult | null>;
   revealPath(path: string): Promise<boolean>;
+  /** Documents the OS asked the app to open. Returns an unsubscribe function. */
+  onOpenFiles(callback: (paths: string[]) => void): () => void;
   runJob(request: JobRequest): Promise<JobResult>;
   cancelJob(jobId: string): Promise<boolean>;
   onJobProgress(callback: (event: ProgressEvent) => void): () => void;

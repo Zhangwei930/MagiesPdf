@@ -56,6 +56,9 @@ export function FileDrop({ spec, files, locale, onChange, onPreview }: FileDropP
   const onDrop = useCallback(
     async (event: React.DragEvent) => {
       event.preventDefault();
+      // The shell also accepts drops, anywhere in the window. A drop that landed
+      // squarely on this zone was meant for this tool, not for the viewer.
+      event.stopPropagation();
       dragDepth.current = 0;
       setDragging(false);
 
@@ -89,10 +92,16 @@ export function FileDrop({ spec, files, locale, onChange, onPreview }: FileDropP
       <div
         onDragEnter={(e) => {
           e.preventDefault();
+          // Keeps the shell's whole-window drop overlay from covering this zone
+          // the moment the pointer reaches it.
+          e.stopPropagation();
           dragDepth.current += 1;
           setDragging(true);
         }}
-        onDragOver={(e) => e.preventDefault()}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
         onDragLeave={(e) => {
           e.preventDefault();
           dragDepth.current -= 1;
