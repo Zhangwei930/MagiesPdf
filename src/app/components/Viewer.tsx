@@ -5,6 +5,8 @@ import { t, type Locale } from '../i18n.ts';
 import { useApp } from '../store.ts';
 import {
   AlertCircle,
+  ChevronLeft,
+  ChevronRight,
   Eraser,
   FileOutput,
   FilePenLine,
@@ -14,11 +16,13 @@ import {
   MoveHorizontal,
   Redo2,
   RotateCw,
+  Search,
   Save,
   Stamp,
   Trash2,
   Undo2,
   Wrench,
+  X,
   ZoomIn,
   ZoomOut,
 } from '../icons.ts';
@@ -39,14 +43,17 @@ import {
   type ScrollAnchor,
 } from '../pdf/layout.ts';
 import { classifyLoadError, type PdfLoadFailure } from '../pdf/loadError.ts';
+import { findInItems, nextMatchIndex, type ItemRange } from '../pdf/textSearch.ts';
 import { canRedo, canUndo, type DocumentState } from '../documents.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from '../shortcuts.ts';
 import { reorderedPages } from '../pdf/pageOrder.ts';
 import {
   getFormFields,
   getPageSizes,
+  getPageTextItems,
   loadPdfDocument,
   renderPageToCanvas,
+  renderTextLayer,
   type FormFieldBox,
   type PdfDocumentHandle,
 } from '../pdf/renderer.ts';
@@ -71,6 +78,13 @@ type FitMode = 'width' | 'page' | null;
 
 /** Shared empty map, so a document with no widgets yet does not remount overlays. */
 const NO_FIELDS: ReadonlyMap<number, FormFieldBox[]> = new Map();
+/** Shared empty list, so a page with no hits does not get a new array each render. */
+const NO_HITS: readonly number[] = [];
+
+/** A search hit, located by page as well as by the runs it covers. */
+interface DocumentMatch extends ItemRange {
+  page: number;
+}
 
 function devicePixels(): number {
   return Math.min(MAX_DPR, window.devicePixelRatio || 1);
@@ -136,6 +150,12 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
   const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [grabbing, setGrabbing] = useState(false);
+
+  const [findOpen, setFindOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [matches, setMatches] = useState<DocumentMatch[]>([]);
+  const [matchIndex, setMatchIndex] = useState(0);
+  const [searching, setSearching] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   /** A scroll position to apply once the new scale has been laid out. */
@@ -324,6 +344,76 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
     },
     [offsets],
   );
+
+  // ---- find ---------------------------------------------------------------
+
+  /** Page text, cached per document; extracting it again per keystroke is slow. */
+  const textCache = useRef(new Map<number, string[]>());
+  useEffect(() => {
+    textCache.current = new Map();
+  }, [doc]);
+
+  const runSearch = useCallback(
+    async (needle: string) => {
+      if (!doc || needle.trim() === '') {
+        setMatches([]);
+        setMatchIndex(0);
+        return;
+      }
+      setSearching(true);
+      try {
+        const found: DocumentMatch[] = [];
+        for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
+          let items = textCache.current.get(pageNumber);
+          if (!items) {
+            items = await getPageTextItems(doc, pageNumber);
+            textCache.current.set(pageNumber, items);
+          }
+          for (const range of findInItems(items, needle)) found.push({ page: pageNumber, ...range });
+        }
+        setMatches(found);
+        setMatchIndex(0);
+      } finally {
+        setSearching(false);
+      }
+    },
+    [doc],
+  );
+
+  const currentMatch = matches[matchIndex];
+
+  // Stepping to a match is only useful if you can see it.
+  useEffect(() => {
+    if (currentMatch) goToPage(currentMatch.page);
+    // `goToPage` changes with every zoom; re-scrolling then would fight the
+    // zoom anchor, so only a change of match should move the view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMatch]);
+
+  /** Run indices to highlight, per page — computed once rather than per page. */
+  const hitsByPage = useMemo(() => {
+    const byPage = new Map<number, number[]>();
+    for (const match of matches) {
+      const runs = byPage.get(match.page) ?? [];
+      for (let item = match.firstItem; item <= match.lastItem; item += 1) runs.push(item);
+      byPage.set(match.page, runs);
+    }
+    return byPage;
+  }, [matches]);
+
+  const currentHitsByPage = useMemo(() => {
+    if (!currentMatch) return new Map<number, number[]>();
+    const runs: number[] = [];
+    for (let item = currentMatch.firstItem; item <= currentMatch.lastItem; item += 1) runs.push(item);
+    return new Map([[currentMatch.page, runs]]);
+  }, [currentMatch]);
+
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    setQuery('');
+    setMatches([]);
+    setMatchIndex(0);
+  }, []);
 
   // ---- editing ------------------------------------------------------------
 
@@ -521,6 +611,15 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
       const action = matchShortcut(event, platform, { typing: isTypingTarget(event.target) });
 
       switch (action) {
+        case 'find':
+          setFindOpen(true);
+          break;
+        case 'dismiss':
+          // Only ours to handle while the find bar is up; otherwise the shell
+          // uses Escape to close the palette and the job panel.
+          if (!findOpen) return;
+          closeFind();
+          break;
         case 'save':
           void save();
           break;
@@ -571,6 +670,8 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
     busy,
+    closeFind,
+    findOpen,
     goToPage,
     page,
     pageCount,
@@ -794,6 +895,58 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
           </Button>
         </header>
 
+        {findOpen && (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              // Enter re-runs a new query, or steps to the next hit of the one
+              // already run — the same key doing the obvious thing either way.
+              if (matches.length === 0) void runSearch(query);
+              else setMatchIndex((current) => nextMatchIndex(current, matches.length, 1));
+            }}
+            className="flex shrink-0 items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-2"
+          >
+            <Search size={14} className="shrink-0 text-[var(--text-muted)]" />
+            <input
+              autoFocus
+              value={query}
+              placeholder={t('findPlaceholder', locale)}
+              aria-label={t('findPlaceholder', locale)}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setMatches([]);
+              }}
+              className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-[var(--text-muted)]"
+            />
+            <span className="shrink-0 font-mono text-[11px] text-[var(--text-muted)]">
+              {searching
+                ? t('findSearching', locale)
+                : matches.length === 0
+                  ? query.trim() === ''
+                    ? ''
+                    : t('findNone', locale)
+                  : `${matchIndex + 1}/${matches.length}`}
+            </span>
+            <ToolbarButton
+              label={t('findPrevious', locale)}
+              disabled={matches.length === 0}
+              onClick={() => setMatchIndex((current) => nextMatchIndex(current, matches.length, -1))}
+            >
+              <ChevronLeft size={14} />
+            </ToolbarButton>
+            <ToolbarButton
+              label={t('findNext', locale)}
+              disabled={matches.length === 0}
+              onClick={() => setMatchIndex((current) => nextMatchIndex(current, matches.length, 1))}
+            >
+              <ChevronRight size={14} />
+            </ToolbarButton>
+            <ToolbarButton label={t('close', locale)} onClick={closeFind}>
+              <X size={14} />
+            </ToolbarButton>
+          </form>
+        )}
+
         {mode === 'redact' && (
           <Banner tone="danger" icon={<Eraser size={13} className="shrink-0" />}>
             <span className="min-w-0 flex-1">{t('viewerRedactHint', locale)}</span>
@@ -900,6 +1053,8 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
                     drafts={drafts}
                     fields={fieldsByPage.get(pageNumber)}
                     top={PAGE_PADDING + (offsets[index] ?? 0)}
+                    hits={hitsByPage.get(pageNumber) ?? NO_HITS}
+                    currentHits={currentHitsByPage.get(pageNumber) ?? NO_HITS}
                     onFields={onPageFields}
                     onDraftChange={(name, value) =>
                       setDrafts((current) => ({ ...current, [name]: value }))
@@ -1012,6 +1167,8 @@ function PageView({
   drafts,
   fields,
   top,
+  hits,
+  currentHits,
   onFields,
   onDraftChange,
   onRedact,
@@ -1027,12 +1184,20 @@ function PageView({
   drafts: Record<string, string>;
   fields: FormFieldBox[] | undefined;
   top: number;
+  /** Text-run indices on this page that a search matched. */
+  hits: readonly number[];
+  /** The subset of `hits` belonging to the match currently stepped to. */
+  currentHits: readonly number[];
   onFields(source: PdfDocumentHandle, pageNumber: number, fields: FormFieldBox[]): void;
   onDraftChange(name: string, value: string): void;
   onRedact(pageNumber: number, from: Point, to: Point, box: Size): void;
   onStamp(pageNumber: number, at: Point, box: Size): void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const textLayerRef = useRef<HTMLDivElement>(null);
+  /** The span per text run, as returned by the last text-layer render. */
+  const textDivs = useRef<HTMLElement[]>([]);
+  const [textVersion, setTextVersion] = useState(0);
   const [marquee, setMarquee] = useState<{ from: Point; to: Point } | null>(null);
 
   useEffect(() => {
@@ -1049,6 +1214,38 @@ function PageView({
       stale = true;
     };
   }, [doc, pageNumber, scale]);
+
+  // The text layer has to be laid out again at every zoom, since pdf.js sizes
+  // the container from the scale rather than letting CSS stretch it.
+  useEffect(() => {
+    const container = textLayerRef.current;
+    if (!container) return;
+    let stale = false;
+    void renderTextLayer(doc, pageNumber, container, scale)
+      .then((divs) => {
+        if (stale) return;
+        textDivs.current = divs;
+        // Highlights are applied to these spans, so re-applying them has to
+        // wait for the spans to exist.
+        setTextVersion((version) => version + 1);
+      })
+      .catch(() => {
+        // A page whose text will not extract is still readable and printable;
+        // it simply cannot be selected or found.
+      });
+    return () => {
+      stale = true;
+    };
+  }, [doc, pageNumber, scale]);
+
+  useEffect(() => {
+    const marked = new Set(hits);
+    const current = new Set(currentHits);
+    for (const [index, span] of textDivs.current.entries()) {
+      span.classList.toggle('find-hit', marked.has(index) && !current.has(index));
+      span.classList.toggle('find-hit-current', current.has(index));
+    }
+  }, [hits, currentHits, textVersion]);
 
   useEffect(() => {
     if (mode !== 'form' || fields) return;
@@ -1107,6 +1304,14 @@ function PageView({
         }}
       >
         <canvas ref={canvasRef} className="block bg-white shadow-lg" />
+
+        {/* Selection would fight the marquee and the stamp click, so the text
+            layer only takes the pointer while plain reading is going on. */}
+        <div
+          ref={textLayerRef}
+          className={clsx('text-layer', mode !== 'view' && 'pointer-events-none')}
+          style={{ '--total-scale-factor': scale } as React.CSSProperties}
+        />
 
         {marquee && (
           <div

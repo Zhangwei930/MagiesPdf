@@ -19,6 +19,48 @@ export interface PdfDocumentHandle {
   destroy(): void;
 }
 
+/**
+ * A page's text, as the runs the PDF actually stores. Both the selectable text
+ * layer and the search read this, and `textSearch.ts` explains why the runs
+ * matter rather than one joined string.
+ */
+export async function getPageTextItems(
+  doc: PdfDocumentHandle,
+  pageNumber: number,
+): Promise<string[]> {
+  const content = await (await doc.getPage(pageNumber)).getTextContent();
+  return content.items.map((item) => ('str' in item ? item.str : ''));
+}
+
+/**
+ * Draws the invisible, selectable text over a rendered page.
+ *
+ * A canvas is a picture: without this the text cannot be selected, copied or
+ * found, which is most of what a reader is for. pdf.js positions transparent
+ * spans to match the glyphs, and the browser's own selection does the rest.
+ *
+ * Returns the span per text run, in the same order as `getPageTextItems`, so a
+ * search hit can be highlighted by its run index.
+ */
+export async function renderTextLayer(
+  doc: PdfDocumentHandle,
+  pageNumber: number,
+  container: HTMLElement,
+  scale: number,
+): Promise<HTMLElement[]> {
+  const page = await doc.getPage(pageNumber);
+  const viewport = page.getViewport({ scale });
+
+  container.replaceChildren();
+  const layer = new pdfjsLib.TextLayer({
+    textContentSource: await page.getTextContent(),
+    container,
+    viewport,
+  });
+  await layer.render();
+  return layer.textDivs;
+}
+
 export async function loadPdfDocument(
   bytes: Uint8Array,
   password = '',
