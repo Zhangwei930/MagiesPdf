@@ -4,7 +4,7 @@
   "description": "MagiesPdf is a cross-platform desktop PDF toolbox: merge, split, convert, OCR, redact, sign, compress and automate — everything runs locally on your machine.",
   "homepage": "https://pdf.magies.top",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "main": "electron/main.cjs",
   "author": {
