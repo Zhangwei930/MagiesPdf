@@ -65,6 +65,17 @@ const UI = {
   viewerPasswordLabel: { zh: '文档密码', en: 'Document password' },
   viewerPasswordWrong: { zh: '密码不对，请重试', en: 'That password was rejected — try again' },
   viewerUnlock: { zh: '解锁', en: 'Unlock' },
+  tabsLabel: { zh: '打开的文档', en: 'Open documents' },
+  tabClose: { zh: '关闭', en: 'Close' },
+  tabUnsaved: { zh: '未保存', en: 'Unsaved' },
+  closeDirtyTitle: { zh: '关闭前保存修改吗？', en: 'Save changes before closing?' },
+  closeDirtyHint: {
+    zh: '「{name}」有还没保存的修改，关掉就没了。',
+    en: '“{name}” has changes that are not saved. Closing loses them.',
+  },
+  closeDirtySave: { zh: '保存并关闭', en: 'Save and close' },
+  closeDirtyDiscard: { zh: '不保存', en: "Don't save" },
+
   viewerDiscardTitle: { zh: '放弃未保存的修改？', en: 'Discard unsaved changes?' },
   viewerDiscardHint: {
     zh: '这个 PDF 有还没保存的修改，离开就会丢失。',

@@ -39,6 +39,7 @@ import {
   type ScrollAnchor,
 } from '../pdf/layout.ts';
 import { classifyLoadError, type PdfLoadFailure } from '../pdf/loadError.ts';
+import { canRedo, canUndo, type DocumentState } from '../documents.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from '../shortcuts.ts';
 import { reorderedPages } from '../pdf/pageOrder.ts';
 import {
@@ -52,18 +53,16 @@ import {
 import { Button } from './ui.tsx';
 
 interface ViewerProps {
-  file: PickedFile;
-  /** Receives the current — possibly edited — document, not the file as opened. */
-  onChooseTool(current: PickedFile): void;
-  onDirtyChange(dirty: boolean): void;
+  /** Which open document to show. Its state lives in the store, not here. */
+  document: DocumentState;
+  /** Opens the tool picker for the document as it stands. */
+  onChooseTool(): void;
 }
 
 /** Pages kept rendered on each side of the viewport so scrolling never shows blanks. */
 const OVERSCAN = 1;
 /** Thumbnails are laid out to a fixed width, so their scale follows the page. */
 const THUMB_WIDTH = 88;
-/** Each undo step holds a full copy of the document, so the stack stays short. */
-const HISTORY_LIMIT = 10;
 /** Beyond 2× the extra pixels cost memory without being visible. */
 const MAX_DPR = 2;
 
@@ -88,16 +87,24 @@ function devicePixels(): number {
  * whose output becomes the new current bytes. That keeps the PDF engines where
  * they belong (the worker) — the viewer only ever renders and passes bytes
  * around, and never learns how to write a PDF.
+ *
+ * The bytes, the undo history and the save state belong to the store, so that a
+ * tool applied from the toolbar lands in the same history as a rotate, and so
+ * switching tabs does not throw the document away.
  */
-export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
+export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
   const locale = useApp((s) => s.locale);
+  const editDocument = useApp((s) => s.editDocument);
+  const undoDocument = useApp((s) => s.undoDocument);
+  const redoDocument = useApp((s) => s.redoDocument);
+  const setDocumentPassword = useApp((s) => s.setDocumentPassword);
+  const saveDocument = useApp((s) => s.saveDocument);
+  const saveDocumentAs = useApp((s) => s.saveDocumentAs);
 
-  const [bytes, setBytes] = useState<Uint8Array>(file.bytes);
-  const [history, setHistory] = useState<Uint8Array[]>([]);
-  /** Undone states, newest first — what redo walks back into. */
-  const [future, setFuture] = useState<Uint8Array[]>([]);
-  /** When the current bytes last reached disk; 0 means they never have. */
-  const [savedAt, setSavedAt] = useState(0);
+  const { id: documentId, name, bytes, password } = openDocument;
+  const edited = canUndo(openDocument);
+  const saved = openDocument.saved;
+
   const [doc, setDoc] = useState<PdfDocumentHandle | null>(null);
   /** Unscaled page sizes, in PDF points — the input to the whole layout. */
   const [sizes, setSizes] = useState<Size[]>([]);
@@ -105,8 +112,6 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
   const [editError, setEditError] = useState('');
   const [busy, setBusy] = useState(false);
   const [dragPage, setDragPage] = useState(0);
-  /** The accepted password, replayed into every edit so encrypted files stay editable. */
-  const [password, setPassword] = useState('');
   const [passwordDraft, setPasswordDraft] = useState('');
   const [mode, setMode] = useState<ViewMode>('view');
   /**
@@ -340,25 +345,21 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
           jobId: crypto.randomUUID(),
           toolId,
           files: [
-            { name: file.name, bytes, mime: 'application/pdf' },
+            { name, bytes, mime: 'application/pdf' },
             ...(extra ? [{ name: extra.name, bytes: extra.bytes, mime: extra.mime }] : []),
           ],
           params: { ...params, password },
         });
         const output = result.files[0];
         if (!output) throw new Error('the tool produced no output');
-        setHistory((past) => [...past, bytes].slice(-HISTORY_LIMIT));
-        // A fresh edit is a new branch: whatever was undone is not coming back.
-        setFuture([]);
-        setSavedAt(0);
-        setBytes(output.bytes);
+        editDocument(documentId, output.bytes);
       } catch (cause) {
         setEditError(cause instanceof Error ? cause.message : String(cause));
       } finally {
         setBusy(false);
       }
     },
-    [bytes, file.name, offsets, password, scale, sizes],
+    [bytes, documentId, editDocument, name, offsets, password, scale, sizes],
   );
 
   const rotatePage = (pageNumber: number) =>
@@ -479,72 +480,35 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
     setMode('stamp');
   };
 
-  const undo = useCallback(() => {
-    setHistory((past) => {
-      const previous = past[past.length - 1];
-      if (!previous) return past;
-      setFuture((ahead) => [bytes, ...ahead].slice(0, HISTORY_LIMIT));
-      setBytes(previous);
-      return past.slice(0, -1);
-    });
-  }, [bytes]);
-
-  const redo = useCallback(() => {
-    setFuture((ahead) => {
-      const next = ahead[0];
-      if (!next) return ahead;
-      setHistory((past) => [...past, bytes].slice(-HISTORY_LIMIT));
-      setBytes(next);
-      return ahead.slice(1);
-    });
-  }, [bytes]);
+  const undo = useCallback(() => undoDocument(documentId), [documentId, undoDocument]);
+  const redo = useCallback(() => redoDocument(documentId), [documentId, redoDocument]);
 
   /**
    * ⌘S overwrites the file that was opened, the way it does everywhere else.
    * A document with no path behind it — the output of a tool run, handed over
-   * in memory — has nowhere to write back to, so it falls through to Save As.
+   * in memory — falls through to Save As inside the store.
    */
   const save = useCallback(async () => {
     setEditError('');
     try {
-      if (file.path === '') {
-        const result = await bridge().saveOutputAs({
-          name: file.name,
-          bytes,
-          mime: 'application/pdf',
-        });
-        if (result) setSavedAt(Date.now());
-        return;
-      }
-      await bridge().writeToPath(file.path, bytes);
-      setSavedAt(Date.now());
+      await saveDocument(documentId);
     } catch (cause) {
       setEditError(
         `${t('viewerSaveFailed', locale)} — ${cause instanceof Error ? cause.message : String(cause)}`,
       );
     }
-  }, [bytes, file.name, file.path, locale]);
+  }, [documentId, locale, saveDocument]);
 
   const saveAs = useCallback(async () => {
-    const result = await bridge().saveOutputAs({
-      name: file.name,
-      bytes,
-      mime: 'application/pdf',
-    });
-    if (result) setSavedAt(Date.now());
-  }, [bytes, file.name]);
-
-  const edited = history.length > 0;
-  /** Cleared by any further edit, so the badge only marks a saved state. */
-  const saved = savedAt > 0;
-
-  // Let the shell warn before it navigates away from unsaved edits. Edits that
-  // have reached disk are not worth warning about.
-  const dirty = edited && !saved;
-  useEffect(() => {
-    onDirtyChange(dirty);
-    return () => onDirtyChange(false);
-  }, [dirty, onDirtyChange]);
+    setEditError('');
+    try {
+      await saveDocumentAs(documentId);
+    } catch (cause) {
+      setEditError(
+        `${t('viewerSaveFailed', locale)} — ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
+  }, [documentId, locale, saveDocumentAs]);
 
   /**
    * The document's own shortcuts. The shell owns the ones that are not about a
@@ -630,7 +594,7 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            setPassword(passwordDraft);
+            setDocumentPassword(documentId, passwordDraft);
           }}
           className="surface-panel w-full max-w-sm space-y-3 p-5"
         >
@@ -698,8 +662,8 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
           document would visibly re-zoom on the first rotate. */}
       <div className="flex min-h-0 w-0 min-w-0 flex-1 flex-col">
         <header className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-4 py-2.5">
-          <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={file.name}>
-            {file.name}
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={name}>
+            {name}
           </span>
 
           {edited && (
@@ -766,7 +730,7 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
             </ToolbarButton>
             <ToolbarButton
               label={t('viewerRedo', locale)}
-              disabled={future.length === 0 || busy}
+              disabled={!canRedo(openDocument) || busy}
               onClick={redo}
             >
               <Redo2 size={15} />
@@ -823,7 +787,7 @@ export function Viewer({ file, onChooseTool, onDirtyChange }: ViewerProps) {
           <Button
             size="sm"
             variant="primary"
-            onClick={() => onChooseTool({ ...file, size: bytes.length, bytes })}
+            onClick={onChooseTool}
           >
             <Wrench size={13} />
             {t('viewerChooseTool', locale)}
