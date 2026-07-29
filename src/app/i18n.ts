@@ -17,12 +17,13 @@ const UI = {
   settings: { zh: '设置', en: 'Settings' },
   recent: { zh: '最近使用', en: 'Recently used' },
   allTools: { zh: '全部工具', en: 'All tools' },
-  filterTools: { zh: '筛选工具…', en: 'Filter tools…' },
-  expandFolder: { zh: '点击展开', en: 'Click to expand' },
-  collapseFolder: { zh: '点击收起', en: 'Click to collapse' },
+  ribbonAppliesToDocument: {
+    zh: '直接作用于当前打开的文档',
+    en: 'Runs on the document you have open',
+  },
   sidebarHint: {
-    zh: '左侧点分类即可展开工具列表；首页或 ⌘K 搜索工具。',
-    en: 'Click a category on the left to expand its tools — or search from Home / ⌘K.',
+    zh: '在上方功能区按分类选工具，或按 ⌘K 搜索。',
+    en: 'Pick a tool by category in the bar above, or press ⌘K to search.',
   },
 
   openPreview: { zh: '打开 PDF 预览', en: 'Open & Preview PDF' },
