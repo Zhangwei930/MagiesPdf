@@ -19,11 +19,12 @@ import {
 import { useApp } from '../store.ts';
 import { APP_VERSION } from '../version.ts';
 import { ChangelogDialog } from './ChangelogDialog.tsx';
+import { OfficeSettingsSection } from './OfficeSettingsSection.tsx';
 import { Button, Field } from './ui.tsx';
 
 const SUPPORT_EMAIL = 'hibake888@outlook.com';
 
-type SettingsSection = 'appearance' | 'files' | 'converter' | 'api' | 'app';
+type SettingsSection = 'appearance' | 'files' | 'office' | 'converter' | 'api' | 'app';
 
 function randomToken(): string {
   const bytes = new Uint8Array(24);
@@ -54,11 +55,12 @@ function updaterLabel(status: UpdaterStatus, locale: 'zh' | 'en'): string {
 
 const NAV: Array<{
   id: SettingsSection;
-  labelKey: 'settingsNavAppearance' | 'settingsNavFiles' | 'settingsNavConverter' | 'settingsNavApi' | 'settingsNavApp';
+  labelKey: 'settingsNavAppearance' | 'settingsNavFiles' | 'settingsNavOffice' | 'settingsNavConverter' | 'settingsNavApi' | 'settingsNavApp';
   Icon: typeof Palette;
 }> = [
   { id: 'appearance', labelKey: 'settingsNavAppearance', Icon: Palette },
   { id: 'files', labelKey: 'settingsNavFiles', Icon: FolderOpen },
+  { id: 'office', labelKey: 'settingsNavOffice', Icon: FileText },
   { id: 'converter', labelKey: 'settingsNavConverter', Icon: Plug },
   { id: 'api', labelKey: 'settingsNavApi', Icon: Settings },
   { id: 'app', labelKey: 'settingsNavApp', Icon: RefreshCw },
@@ -262,6 +264,8 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
               </Field>
             </section>
           )}
+
+          {section === 'office' && <OfficeSettingsSection />}
 
           {section === 'converter' && (
             <section className="surface-panel space-y-4 p-4">

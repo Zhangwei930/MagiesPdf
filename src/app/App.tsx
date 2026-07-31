@@ -2,18 +2,26 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { clsx } from 'clsx';
 import type { CategoryId, ToolMeta } from '@core/types.ts';
 import { uiRegistry } from './catalog.ts';
-import { bridge, hasBridge, type PickedFile } from './bridge.ts';
+import {
+  bridge,
+  hasBridge,
+  type OfficeCreateKind,
+  type OnlineOfficeSession,
+  type PickedFile,
+} from './bridge.ts';
 import { t } from './i18n.ts';
 import { AlertCircle, Eye, Loader2, Settings } from './icons.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
 import { activeJobCount, useApp } from './store.ts';
 import { isDirty, type DocumentState } from './documents.ts';
 import { canApplyToDocument } from './toolApply.ts';
+import { canUseOnlineOffice, partitionDocumentPaths } from './office.ts';
 import { CommandPalette } from './components/CommandPalette.tsx';
 import { ApplyToolPanel } from './components/ApplyToolPanel.tsx';
 import { DocumentTabs } from './components/DocumentTabs.tsx';
 import { Home } from './components/Home.tsx';
 import { JobPanel } from './components/JobPanel.tsx';
+import { OfficeEditor } from './components/OfficeEditor.tsx';
 import { Ribbon } from './components/Ribbon.tsx';
 import { ToolPage } from './components/ToolPage.tsx';
 import { UpdatePrompt } from './components/UpdatePrompt.tsx';
@@ -56,6 +64,7 @@ type MainView =
   | { name: 'welcome' }
   | { name: 'tool'; toolId: string; initialFile?: PickedFile }
   | { name: 'document' }
+  | { name: 'office'; path: string; session: OnlineOfficeSession }
   | { name: 'settings' };
 
 export function App() {
@@ -157,18 +166,46 @@ export function App() {
     [openDocument],
   );
 
-  const openViewerPicker = useCallback(async () => {
-    const [file] = await bridge().pickFiles(['.pdf'], false);
-    if (file) showDocument(file);
-  }, [showDocument]);
-
-  /** Reads paths and opens each as its own tab. */
+  /** Routes PDFs into Magies and Office documents into the local Office host. */
   const openPaths = useCallback(
     async (paths: string[]) => {
       if (paths.length === 0) return;
-      for (const file of await bridge().readFiles(paths)) showDocument(file);
+      const partitioned = partitionDocumentPaths(paths);
+      if (partitioned.office.length === 1) {
+        const status = await bridge().getOfficeStatus();
+        const officePath = partitioned.office[0];
+        if (officePath && partitioned.pdf.length === 0 && canUseOnlineOffice(status)) {
+          try {
+            const session = await bridge().prepareOnlineOffice(officePath);
+            setMain({ name: 'office', path: officePath, session });
+          } catch (cause) {
+            console.error('[magiesoffice] online editor unavailable:', cause);
+            setDropError(t('onlineEditorFallback', locale));
+            await bridge().openOfficePaths([officePath]);
+          }
+        } else if (officePath) {
+          await bridge().openOfficePaths([officePath]);
+        }
+      } else if (partitioned.office.length > 1) {
+        await bridge().openOfficePaths(partitioned.office);
+      }
+      for (const file of await bridge().readFiles(partitioned.pdf)) showDocument(file);
+      if (partitioned.unsupported.length > 0) throw new Error(t('dropNotDocument', locale));
     },
-    [showDocument],
+    [locale, showDocument],
+  );
+
+  const openDocumentPicker = useCallback(async () => {
+    const paths = await bridge().pickDocumentPaths(false);
+    await openPaths(paths);
+  }, [openPaths]);
+
+  const createOfficeDocument = useCallback(
+    async (kind: OfficeCreateKind) => {
+      const result = await bridge().createOffice(kind);
+      if (!result.canceled && result.created) await openPaths([result.created]);
+    },
+    [openPaths],
   );
 
   const selectTab = useCallback(
@@ -235,7 +272,7 @@ export function App() {
 
       switch (action) {
         case 'open':
-          void openViewerPicker().catch(() => {
+          void openDocumentPicker().catch(() => {
             // The picker only fails if the bridge is gone, which the banner says.
           });
           break;
@@ -265,7 +302,7 @@ export function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeDocumentId, closePalette, view.name, openViewerPicker, openWelcome, requestCloseTab]);
+  }, [activeDocumentId, closePalette, view.name, openDocumentPicker, openWelcome, requestCloseTab]);
 
   if (!ready) {
     return (
@@ -294,7 +331,7 @@ export function App() {
 
   const running = activeJobCount(jobs);
   const tool = view.name === 'tool' ? uiRegistry.tryGet(view.toolId) : undefined;
-  const showRibbon = view.name !== 'settings';
+  const showRibbon = view.name !== 'settings' && view.name !== 'welcome' && view.name !== 'office';
 
   return (
     <div
@@ -320,9 +357,9 @@ export function App() {
         // The renderer only ever sees paths; the main process does the reading.
         const paths = Array.from(e.dataTransfer.files)
           .map((dropped) => bridge().pathForFile(dropped))
-          .filter((path) => path.toLowerCase().endsWith('.pdf'));
+          .filter(Boolean);
         if (paths.length === 0) {
-          setDropError(t('dropNotPdf', locale));
+          setDropError(t('dropNotDocument', locale));
           return;
         }
         void openPaths(paths).catch((cause) => {
@@ -338,7 +375,7 @@ export function App() {
           onClick={openWelcome}
           className="no-drag rounded-md px-2 py-1 text-[13px] font-semibold tracking-tight transition-colors hover:bg-[var(--surface-hover)]"
         >
-          MagiesPdf
+          {t('appName', locale)}
         </button>
 
         <div className="flex-1" />
@@ -389,7 +426,7 @@ export function App() {
           <main
             className={clsx(
               'min-h-0 flex-1 bg-[var(--surface-app)]',
-              view.name === 'settings' || view.name === 'document'
+              view.name === 'settings' || view.name === 'document' || view.name === 'office'
                 ? 'overflow-hidden'
                 : 'overflow-y-auto',
             )}
@@ -406,6 +443,17 @@ export function App() {
                 key={activeDocument.id}
                 document={activeDocument}
                 onChooseTool={openToolPickerForDocument}
+              />
+            )}
+
+            {view.name === 'office' && (
+              <OfficeEditor
+                path={view.path}
+                session={view.session}
+                onClose={openWelcome}
+                onOpenLocal={async (path) => {
+                  await bridge().openOfficePaths([path]);
+                }}
               />
             )}
 
@@ -431,7 +479,8 @@ export function App() {
                   onOpenTool={openTool}
                   onOpenSearch={() => setPaletteOpen(true)}
                   onOpenCategory={(_categoryId: CategoryId) => openWelcome()}
-                  onOpenPreview={openViewerPicker}
+                  onOpenDocument={openDocumentPicker}
+                  onCreateOffice={createOfficeDocument}
                 />
               ))}
 
@@ -443,7 +492,8 @@ export function App() {
                   // Categories live in the ribbon; keep welcome and let the user pick there.
                   openWelcome();
                 }}
-                onOpenPreview={openViewerPicker}
+                onOpenDocument={openDocumentPicker}
+                onCreateOffice={createOfficeDocument}
               />
             )}
             </Suspense>

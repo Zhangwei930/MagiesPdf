@@ -7,6 +7,7 @@ const settings = require('../settings.cjs');
 const mainRunner = require('../jobs/mainRunner.cjs');
 const { constantTimeTokenEqual, safeFileName } = require('../security.cjs');
 const { InputBudget } = require('../files/inputBudget.cjs');
+const { createWopiHandler } = require('../office/wopi.cjs');
 
 /** Tool catalogue on disk — same file the IPC layer serves. Avoid importing ipc (Electron). */
 let catalogCache = null;
@@ -43,8 +44,11 @@ let server = null;
 let listenInfo = '';
 
 function isEnabled() {
-  const { api } = settings.read();
-  return Boolean(api?.enabled && api?.token);
+  const { api, office } = settings.read();
+  return Boolean(
+    (api?.enabled && api?.token) ||
+    (office?.collaboraUrl && office?.wopiPublicUrl),
+  );
 }
 
 function resolveServerMode(api) {
@@ -148,7 +152,11 @@ function serializeToolError(cause) {
  *   maxActiveJobs?: number
  * }} deps
  */
-function createHandler({ pool, maxActiveJobs = MAX_ACTIVE_JOBS }) {
+function createHandler({
+  pool,
+  maxActiveJobs = MAX_ACTIVE_JOBS,
+  wopiHandler = createWopiHandler(),
+}) {
   // Lazily constructed: host.cjs loads Electron, which node:test does not have.
   let hostBridge = null;
   const host = () => {
@@ -208,6 +216,8 @@ function createHandler({ pool, maxActiveJobs = MAX_ACTIVE_JOBS }) {
 
       const url = new URL(req.url || '/', 'http://127.0.0.1');
       pruneJobs();
+
+      if (await wopiHandler(req, res)) return;
 
       if (url.pathname === '/v1/health' && req.method === 'GET') {
         sendJson(res, 200, { ok: true, service: 'MagiesPdf', version: require('../../package.json').version });

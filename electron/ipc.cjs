@@ -9,6 +9,9 @@ const { InputBudget } = require('./files/inputBudget.cjs');
 const writableTargets = require('./files/writableTargets.cjs');
 const updater = require('./updater/index.cjs');
 const { isTrustedIpcSender, safeFileName } = require('./security.cjs');
+const { createOfficeService } = require('./office/service.cjs');
+const { normalizeCollaboraUrl } = require('./office/collabora.cjs');
+const { DOCUMENT_EXTENSIONS } = require('./office/formats.cjs');
 
 /**
  * IPC handlers. Every one of these is a boundary between untrusted renderer
@@ -104,6 +107,7 @@ function readCatalog() {
 }
 
 function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl }) {
+  const office = createOfficeService();
   const handle = (channel, handler) => {
     ipcMain.handle(channel, (event, ...args) => {
       if (!isTrustedIpcSender(event, getWindow(), trustedRendererUrl)) {
@@ -114,6 +118,22 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   };
 
   handle('catalog:get', () => readCatalog().tools);
+
+  handle('office:status', () => office.status());
+  handle('office:pickAndOpen', (_event, { multiple }) =>
+    office.pickAndOpen(getWindow(), multiple === true),
+  );
+  handle('office:createAndOpen', (_event, { kind }) =>
+    office.createAndOpen(getWindow(), kind),
+  );
+  handle('office:create', (_event, { kind }) => office.create(getWindow(), kind));
+  handle('office:openPaths', (_event, { paths }) =>
+    office.openPaths(Array.isArray(paths) ? paths : []),
+  );
+  handle('office:prepareOnline', (_event, { path: target }) =>
+    office.prepareOnline(target),
+  );
+  handle('office:checkCollabora', () => office.checkCollabora());
 
   handle('files:pick', async (_event, { accept, multiple }) => {
     const extensions = (accept ?? ['.pdf']).map((e) => e.replace(/^\./, ''));
@@ -127,6 +147,15 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
 
     if (result.canceled) return [];
     return readMany(result.filePaths);
+  });
+
+  handle('files:pickDocumentPaths', async (_event, { multiple }) => {
+    const extensions = [...DOCUMENT_EXTENSIONS].map((extension) => extension.slice(1));
+    const result = await dialog.showOpenDialog(getWindow(), {
+      properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'],
+      filters: [{ name: 'Documents', extensions }],
+    });
+    return result.canceled ? [] : result.filePaths;
   });
 
   handle('files:read', async (_event, { paths }) => {
@@ -248,9 +277,27 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
 
   handle('settings:get', () => settings.read());
   handle('settings:update', (_event, patch) => {
+    if (patch?.office) {
+      patch = {
+        ...patch,
+        office: {
+          ...patch.office,
+          ...(Object.prototype.hasOwnProperty.call(patch.office, 'collaboraUrl')
+            ? { collaboraUrl: normalizeCollaboraUrl(patch.office.collaboraUrl) }
+            : {}),
+          ...(Object.prototype.hasOwnProperty.call(patch.office, 'wopiPublicUrl')
+            ? { wopiPublicUrl: normalizeCollaboraUrl(patch.office.wopiPublicUrl) }
+            : {}),
+        },
+      };
+    }
     const next = settings.write(patch);
     // API bind address / token changes need a live server restart.
-    if (patch && Object.prototype.hasOwnProperty.call(patch, 'api')) {
+    if (
+      patch &&
+      (Object.prototype.hasOwnProperty.call(patch, 'api') ||
+        Object.prototype.hasOwnProperty.call(patch, 'office'))
+    ) {
       try {
         onSettingsChanged?.();
       } catch (error) {

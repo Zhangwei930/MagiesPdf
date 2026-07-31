@@ -71,7 +71,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     show: false,
-    title: 'MagiesPdf',
+    title: 'Magies Office',
     // Dock / taskbar icon (Windows & Linux; macOS uses the .icns in the bundle).
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     // Painted before the renderer has any CSS, so it must match the theme the

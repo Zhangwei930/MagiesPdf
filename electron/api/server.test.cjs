@@ -10,7 +10,7 @@ const { pathToFileURL } = require('node:url');
  */
 
 const settings = require('../settings.cjs');
-const { createHandler, resolveServerMode } = require('./server.cjs');
+const { createHandler, isEnabled, resolveServerMode } = require('./server.cjs');
 const { JobPool } = require('../jobs/pool.cjs');
 
 // settings.cjs needs Electron's app path; in node:test we stub userData.
@@ -125,6 +125,25 @@ describe('REST API handler', () => {
     assert.equal(body.ok, true);
   });
 
+  it('delegates WOPI requests before REST bearer authentication', async () => {
+    const wopiHandler = createHandler({
+      pool,
+      wopiHandler: async (request, response) => {
+        assert.equal(request.url, '/wopi/files/id?access_token=office-token');
+        response.writeHead(204);
+        response.end();
+        return true;
+      },
+    });
+    const rr = mockReqRes({
+      method: 'GET',
+      url: '/wopi/files/id?access_token=office-token',
+    });
+
+    await wopiHandler(rr.req, rr.res);
+    assert.deepEqual(await rr.result(), { statusCode: 204, body: null });
+  });
+
   it('rejects tools list without a token', async () => {
     const { req, res, result } = mockReqRes({ method: 'GET', url: '/v1/tools' });
     await handler(req, res);
@@ -214,6 +233,24 @@ describe('REST API handler', () => {
       assert.ok(json.files[0].name.endsWith('.pdf'));
     } finally {
       await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+describe('WOPI server activation', () => {
+  it('runs for a configured online editor even when the automation API is disabled', () => {
+    const previous = testSettings;
+    withSettings({
+      api: { enabled: false, token: '' },
+      office: {
+        collaboraUrl: 'https://office.example.com',
+        wopiPublicUrl: 'https://files.example.com',
+      },
+    });
+    try {
+      assert.equal(isEnabled(), true);
+    } finally {
+      testSettings = previous;
     }
   });
 });

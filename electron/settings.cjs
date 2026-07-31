@@ -52,6 +52,15 @@ const DEFAULTS = {
     argumentTemplate: '',
     timeoutMs: 120000,
   },
+  /** Office-suite engines. Local editing and collaboration can be configured independently. */
+  office: {
+    /** Empty means auto-detect the platform's standard LibreOffice installation. */
+    libreOfficeExecutable: '',
+    /** Collabora Online origin, for example https://office.example.com. */
+    collaboraUrl: '',
+    /** Public HTTPS origin Collabora uses to call this app's WOPI endpoints. */
+    wopiPublicUrl: '',
+  },
   /**
    * User-saved pipeline definitions for the visual builder.
    * Each entry: { id, name, steps: [{ toolId, params }], updatedAt }.

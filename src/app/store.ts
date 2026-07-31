@@ -104,6 +104,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     tlsKeyPath: '',
   },
   externalConverter: { executable: '', argumentTemplate: '', timeoutMs: 120000 },
+  office: { libreOfficeExecutable: '', collaboraUrl: '', wopiPublicUrl: '' },
   pipelinePresets: [],
 };
 

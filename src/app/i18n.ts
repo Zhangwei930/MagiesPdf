@@ -4,7 +4,15 @@ export type Locale = 'zh' | 'en';
 
 /** UI chrome strings. Tool names and params carry their own bilingual text. */
 const UI = {
-  appName: { zh: 'MagiesPdf', en: 'MagiesPdf' },
+  appName: { zh: 'Magies Office', en: 'Magies Office' },
+  officeOnline: { zh: '在线协作', en: 'Online collaboration' },
+  openLocalEditor: { zh: '用本地编辑器打开', en: 'Open in local editor' },
+  closeOfficeEditor: { zh: '关闭 Office 编辑器', en: 'Close Office editor' },
+  loadingOfficeEditor: { zh: '正在连接在线编辑器…', en: 'Connecting to the online editor…' },
+  onlineEditorFallback: {
+    zh: '在线编辑器暂时不可用，已改用本地 LibreOffice 打开。',
+    en: 'The online editor is unavailable. Opened in local LibreOffice instead.',
+  },
   tagline: {
     zh: '全部处理都在这台电脑上完成，文件不会离开本机。',
     en: 'Everything runs on this machine. Your files never leave it.',
@@ -25,6 +33,37 @@ const UI = {
     zh: '在上方功能区按分类选工具，或按 ⌘K 搜索。',
     en: 'Pick a tool by category in the bar above, or press ⌘K to search.',
   },
+  officeTagline: {
+    zh: '文档、表格、演示和 PDF，在一个工作台完成',
+    en: 'Documents, spreadsheets, slides and PDFs in one workspace',
+  },
+  newDocument: { zh: '新建', en: 'Create new' },
+  newDocumentHint: { zh: '选择类型，立即开始工作', en: 'Choose a format and start working' },
+  newWord: { zh: '文字文档', en: 'Document' },
+  newWordHint: { zh: '新建 DOCX 文档', en: 'Create a DOCX document' },
+  newSheet: { zh: '电子表格', en: 'Spreadsheet' },
+  newSheetHint: { zh: '新建 XLSX 工作簿', en: 'Create an XLSX workbook' },
+  newSlides: { zh: '演示文稿', en: 'Presentation' },
+  newSlidesHint: { zh: '新建 PPTX 演示', en: 'Create a PPTX presentation' },
+  newPdf: { zh: 'PDF 文档', en: 'PDF document' },
+  newPdfHint: { zh: '新建空白 PDF', en: 'Create a blank PDF' },
+  openDocument: { zh: '打开文件', en: 'Open a file' },
+  openDocumentHint: {
+    zh: '支持 DOC、DOCX、ODT、XLS、XLSX、ODS、PPT、PPTX、ODP 和 PDF',
+    en: 'DOC, DOCX, ODT, XLS, XLSX, ODS, PPT, PPTX, ODP and PDF',
+  },
+  officeEngines: { zh: '办公引擎', en: 'Office engines' },
+  libreOfficeReady: { zh: '本地编辑已就绪', en: 'Local editing is ready' },
+  libreOfficeMissing: { zh: '未检测到本地编辑器', en: 'Local editor not detected' },
+  collaboraConfigured: { zh: '协作服务已配置', en: 'Collaboration configured' },
+  collaboraNotConfigured: { zh: '尚未配置协作服务', en: 'Collaboration not configured' },
+  officeEngineHint: {
+    zh: '未配置协作时使用本地编辑；启用协作后，Office 文档会通过受保护的 WOPI 会话交给 Collabora 编辑。',
+    en: 'Without collaboration, editing stays local. Once enabled, Office files are edited by Collabora through protected WOPI sessions.',
+  },
+  recentTools: { zh: '常用 PDF 工具', en: 'Recent PDF tools' },
+  pdfToolbox: { zh: 'PDF 工具箱', en: 'PDF toolbox' },
+  pdfToolboxHint: { zh: '本地处理，不上传文件', en: 'Processed locally, never uploaded' },
 
   openPreview: { zh: '打开 PDF 预览', en: 'Open & Preview PDF' },
   openPreviewHint: { zh: '像阅读器一样先看内容，再决定用什么工具', en: 'View the pages first, then decide what to do with them' },
@@ -131,6 +170,10 @@ const UI = {
     zh: '只能直接打开 PDF。其他格式请先选择对应的工具。',
     en: 'Only PDFs open directly. For other formats, pick the matching tool first.',
   },
+  dropNotDocument: {
+    zh: '请选择 Word、Excel、PowerPoint、LibreOffice 或 PDF 文档。',
+    en: 'Choose a Word, Excel, PowerPoint, LibreOffice or PDF document.',
+  },
   accepts: { zh: '支持格式', en: 'Accepts' },
   fileCount: { zh: '个文件', en: 'files' },
   removeFile: { zh: '移除', en: 'Remove' },
@@ -232,6 +275,31 @@ const UI = {
     zh: '已配置',
     en: 'Configured',
   },
+  officeIntegration: { zh: 'Office 深度集成', en: 'Office integration' },
+  officeIntegrationHelp: {
+    zh: 'LibreOffice 负责本地创建与编辑；Collabora Online 负责浏览器内实时协作。两种模式共享同一文件中心。',
+    en: 'LibreOffice handles local creation and editing; Collabora Online handles real-time browser collaboration. Both share one file centre.',
+  },
+  libreOfficeExecutable: { zh: 'LibreOffice 可执行文件', en: 'LibreOffice executable' },
+  libreOfficeExecutableHelp: {
+    zh: '留空会自动检测标准安装位置；自定义安装时填写 soffice 的绝对路径。',
+    en: 'Leave empty to detect a standard installation, or enter the absolute path to soffice.',
+  },
+  libreOfficeAutoDetect: { zh: '自动检测', en: 'Auto-detect' },
+  collaboraUrl: { zh: 'Collabora Online 地址', en: 'Collabora Online URL' },
+  collaboraUrlHelp: {
+    zh: '生产环境必须使用 HTTPS；本机调试允许 localhost HTTP。',
+    en: 'Production requires HTTPS; localhost HTTP is allowed for development.',
+  },
+  wopiPublicUrl: { zh: 'WOPI 公网地址', en: 'Public WOPI URL' },
+  wopiPublicUrlHelp: {
+    zh: 'Collabora 用这个地址读取和保存文档；需将它反向代理到本机 API 端口，并确保 Collabora 所在网络可访问。',
+    en: 'Collabora uses this origin to read and save files. Reverse-proxy it to the local API port and make it reachable from Collabora.',
+  },
+  collaboraReachable: { zh: '协作服务连接正常', en: 'Collaboration server is reachable' },
+  collaboraUnreachable: { zh: '无法连接协作服务', en: 'Could not reach collaboration server' },
+  testConnection: { zh: '测试连接', en: 'Test connection' },
+  saveSettings: { zh: '保存设置', en: 'Save settings' },
 
   apiSection: { zh: '本地 REST API', en: 'Local REST API' },
   apiSectionHelp: {
@@ -259,6 +327,7 @@ const UI = {
 
   settingsNavAppearance: { zh: '外观', en: 'Appearance' },
   settingsNavFiles: { zh: '文件', en: 'Files' },
+  settingsNavOffice: { zh: 'Office', en: 'Office' },
   settingsNavConverter: { zh: '转换器', en: 'Converter' },
   settingsNavApi: { zh: 'API', en: 'API' },
   settingsNavApp: { zh: '应用', en: 'Application' },
@@ -330,8 +399,8 @@ const UI = {
   },
 
   bridgeMissing: {
-    zh: '未检测到桌面运行环境。请通过 MagiesPdf 应用打开，而不是浏览器。',
-    en: 'Desktop runtime not detected. Open this through the MagiesPdf app, not a browser.',
+    zh: '未检测到桌面运行环境。请通过 Magies Office 客户端打开，而不是浏览器。',
+    en: 'Desktop runtime not detected. Open this through the Magies Office client, not a browser.',
   },
 } as const;
 

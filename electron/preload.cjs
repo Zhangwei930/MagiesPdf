@@ -24,8 +24,17 @@ const api = {
   /** Tool metadata for the UI. Implementations stay in the worker pool. */
   getCatalog: () => ipcRenderer.invoke('catalog:get'),
 
+  getOfficeStatus: () => ipcRenderer.invoke('office:status'),
+  pickAndOpenOffice: (multiple) => ipcRenderer.invoke('office:pickAndOpen', { multiple }),
+  createAndOpenOffice: (kind) => ipcRenderer.invoke('office:createAndOpen', { kind }),
+  createOffice: (kind) => ipcRenderer.invoke('office:create', { kind }),
+  openOfficePaths: (paths) => ipcRenderer.invoke('office:openPaths', { paths }),
+  prepareOnlineOffice: (target) => ipcRenderer.invoke('office:prepareOnline', { path: target }),
+  checkCollabora: () => ipcRenderer.invoke('office:checkCollabora'),
+
   /** Opens the system file picker. Returns [] when the user cancels. */
   pickFiles: (accept, multiple) => ipcRenderer.invoke('files:pick', { accept, multiple }),
+  pickDocumentPaths: (multiple) => ipcRenderer.invoke('files:pickDocumentPaths', { multiple }),
 
   /** Reads files the user dropped onto the window, by absolute path. */
   readFiles: (paths) => ipcRenderer.invoke('files:read', { paths }),

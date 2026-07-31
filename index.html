@@ -6,11 +6,11 @@
     <!-- Renderer is fully offline: no remote code, no remote assets. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-src https: http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action https: http://localhost:* http://127.0.0.1:*"
     />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/logo-192.png" />
-    <title>MagiesPdf</title>
+    <title>Magies Office</title>
   </head>
   <body>
     <div id="root"></div>

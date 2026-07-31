@@ -41,6 +41,11 @@ export interface AppSettings {
     tlsKeyPath: string;
   };
   externalConverter: { executable: string; argumentTemplate: string; timeoutMs: number };
+  office: {
+    libreOfficeExecutable: string;
+    collaboraUrl: string;
+    wopiPublicUrl: string;
+  };
   pipelinePresets: PipelinePreset[];
 }
 
@@ -62,13 +67,54 @@ export interface UpdaterStatus {
   version?: string;
 }
 
+export type OfficeCreateKind = 'word' | 'sheet' | 'slide';
+
+export interface OfficeStatus {
+  libreOffice: { available: boolean; executable: string };
+  collabora: { configured: boolean; serverUrl: string };
+  wopiPublicUrl: string;
+}
+
+export interface OfficeOpenResult {
+  opened: string[];
+  canceled: boolean;
+}
+
+export interface OfficeCreateResult {
+  created: string;
+  canceled: boolean;
+}
+
+export interface OnlineOfficeSession {
+  name: string;
+  editorUrl: string;
+  accessToken: string;
+  accessTokenTtl: number;
+}
+
+export interface CollaboraStatus {
+  configured: boolean;
+  reachable: boolean;
+  serverUrl: string;
+  error?: string;
+}
+
 export interface MagiesPdfBridge {
   platform: string;
   version: string;
   getVersion(): Promise<string>;
   isPackaged(): Promise<boolean>;
   getCatalog(): Promise<ToolMeta[]>;
+  getOfficeStatus(): Promise<OfficeStatus>;
+  pickAndOpenOffice(multiple: boolean): Promise<OfficeOpenResult>;
+  createAndOpenOffice(kind: OfficeCreateKind): Promise<OfficeOpenResult>;
+  createOffice(kind: OfficeCreateKind): Promise<OfficeCreateResult>;
+  openOfficePaths(paths: string[]): Promise<OfficeOpenResult>;
+  prepareOnlineOffice(path: string): Promise<OnlineOfficeSession>;
+  checkCollabora(): Promise<CollaboraStatus>;
   pickFiles(accept: string[], multiple: boolean): Promise<PickedFile[]>;
+  /** Picks supported documents without copying their contents through IPC. */
+  pickDocumentPaths(multiple: boolean): Promise<string[]>;
   readFiles(paths: string[]): Promise<PickedFile[]>;
   pathForFile(file: File): string;
   saveOutputs(
