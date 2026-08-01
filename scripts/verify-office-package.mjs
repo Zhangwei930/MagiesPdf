@@ -73,7 +73,8 @@ function argument(name, fallback) {
 
 export function officeExecutableNames(platform) {
   if (platform === 'linux') return { architecture: 'soffice.bin', launcher: 'soffice' };
-  const executable = platform === 'win32' ? 'soffice.exe' : 'soffice';
+  if (platform === 'win32') return { architecture: 'soffice.exe', launcher: 'soffice.com' };
+  const executable = 'soffice';
   return { architecture: executable, launcher: executable };
 }
 

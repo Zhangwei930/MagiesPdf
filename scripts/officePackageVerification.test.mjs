@@ -63,7 +63,7 @@ describe('packaged Office executable verification', () => {
     });
     assert.deepEqual(officeExecutableNames('win32'), {
       architecture: 'soffice.exe',
-      launcher: 'soffice.exe',
+      launcher: 'soffice.com',
     });
   });
 });
