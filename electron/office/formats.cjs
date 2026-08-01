@@ -14,9 +14,10 @@ const OFFICE_EXTENSIONS = new Set([
 ]);
 
 const DOCUMENT_EXTENSIONS = new Set(['.pdf', ...OFFICE_EXTENSIONS]);
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.bmp']);
 
 function isOfficeDocumentPath(candidate) {
   return typeof candidate === 'string' && OFFICE_EXTENSIONS.has(path.extname(candidate).toLowerCase());
 }
 
-module.exports = { DOCUMENT_EXTENSIONS, OFFICE_EXTENSIONS, isOfficeDocumentPath };
+module.exports = { DOCUMENT_EXTENSIONS, IMAGE_EXTENSIONS, OFFICE_EXTENSIONS, isOfficeDocumentPath };

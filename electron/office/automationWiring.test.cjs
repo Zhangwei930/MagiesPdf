@@ -40,6 +40,35 @@ describe('Office Agent wiring', () => {
     assert.match(workerSource, /'presentation_delete_slide':/);
   });
 
+  it('allow-lists the V3 media, notes, header-footer, and template operations', () => {
+    assert.match(workerSource, /'word_insert_image':/);
+    assert.match(workerSource, /'word_set_header_footer':/);
+    assert.match(workerSource, /'presentation_insert_image':/);
+    assert.match(workerSource, /'presentation_set_notes':/);
+    assert.match(workerSource, /'template_fill':/);
+  });
+
+  it('embeds only workspace-resolved images and returns presentation notes', () => {
+    assert.match(workerSource, /uno\.systemPathToFileUrl\(request\['imagePath'\]\)/);
+    assert.match(
+      workerSource,
+      /uno\.Enum\(\s*'com\.sun\.star\.text\.TextContentAnchorType', 'AS_CHARACTER'\s*\)/,
+    );
+    assert.match(workerSource, /slide\.getNotesPage\(\)/);
+    assert.match(workerSource, /'notes': notes/);
+  });
+
+  it('reads the non-empty notes shape and clears duplicate note placeholders', () => {
+    assert.match(workerSource, /shape\.getShapeType\(\) == 'com\.sun\.star\.presentation\.NotesShape'/);
+    assert.match(workerSource, /for shape in note_shapes\(notes_page\):[\s\S]+?if notes:\n\s+return notes/);
+    assert.match(workerSource, /for candidate in existing_shapes:\n\s+candidate\.String = ''/);
+  });
+
+  it('clears stored Word header and footer text before disabling them', () => {
+    assert.match(workerSource, /else:\n\s+if page_style\.HeaderIsOn:\n\s+page_style\.HeaderText\.String = ''/);
+    assert.match(workerSource, /else:\n\s+if page_style\.FooterIsOn:\n\s+page_style\.FooterText\.String = ''/);
+  });
+
   it('includes Word table cells in content returned to the Agent', () => {
     assert.match(workerSource, /document\.TextTables/);
     assert.match(workerSource, /'tables': tables/);

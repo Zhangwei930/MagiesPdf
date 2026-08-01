@@ -25,6 +25,7 @@ describe('createOfficeWorkspace', () => {
     const root = await temporaryDirectory();
     await fs.mkdir(path.join(root, 'nested'));
     await fs.writeFile(path.join(root, 'Report.docx'), 'word');
+    await fs.writeFile(path.join(root, 'Logo.png'), 'image');
     await fs.writeFile(path.join(root, 'nested', 'Budget.xlsx'), 'sheet');
     await fs.writeFile(path.join(root, 'notes.txt'), 'ignored');
 
@@ -37,9 +38,17 @@ describe('createOfficeWorkspace', () => {
       await workspace.listDocuments({ recursive: true }),
       {
         documents: [
+          { path: 'Logo.png', extension: '.png', size: 5 },
           { path: 'nested/Budget.xlsx', extension: '.xlsx', size: 5 },
           { path: 'Report.docx', extension: '.docx', size: 4 },
         ],
+        truncated: false,
+      },
+    );
+    assert.deepEqual(
+      await workspace.listDocuments({ recursive: false, query: 'logo', extensions: ['PNG'] }),
+      {
+        documents: [{ path: 'Logo.png', extension: '.png', size: 5 }],
         truncated: false,
       },
     );
@@ -58,7 +67,7 @@ describe('createOfficeWorkspace', () => {
 
     await assert.rejects(() => workspace.resolveInput(path.join(root, 'Document.docx')), /relative path/);
     await assert.rejects(() => workspace.resolveInput('../Secret.docx'), /outside/i);
-    await assert.rejects(() => workspace.resolveInput('notes.txt'), /supported Office or PDF document/);
+    await assert.rejects(() => workspace.resolveInput('notes.txt'), /supported Office, PDF, or image file/);
     await assert.rejects(() => workspace.resolveInput('linked.docx'), /symbolic link/);
     assert.equal(
       await workspace.resolveInput('Document.docx'),

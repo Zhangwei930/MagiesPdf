@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const { constants } = require('node:fs');
 const path = require('node:path');
 const { createOfficeWorkspace } = require('./workspace.cjs');
+const { IMAGE_EXTENSIONS } = require('./formats.cjs');
 
 const WORD_EXTENSIONS = new Set(['.doc', '.docx', '.odt', '.rtf']);
 const EXCEL_EXTENSIONS = new Set(['.xls', '.xlsx', '.ods']);
@@ -44,7 +45,7 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
   tool(
     'office_workspace_list',
     { zh: '扫描办公目录', en: 'Scan office workspace' },
-    'List supported Office and PDF documents inside the user-granted workspace. Returns relative paths and metadata only.',
+    'List supported Office, PDF, and image files inside the user-granted workspace. Returns relative paths and metadata only.',
     schema({
       query: { type: 'string', description: 'Optional case-insensitive text contained in the relative path.' },
       recursive: { type: 'boolean', description: 'Scan nested folders. Defaults to true.' },
@@ -52,7 +53,7 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
         type: 'array',
         items: { type: 'string' },
         maxItems: 20,
-        description: 'Optional extensions such as .docx, .xlsx, .pptx, or .pdf.',
+        description: 'Optional extensions such as .docx, .xlsx, .pptx, .pdf, or .png.',
       },
     }),
   ),
@@ -94,6 +95,29 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
       has_header: { type: 'boolean', description: 'Bold and shade the first row. Defaults to false.' },
       output_directory: OUTPUT_DIRECTORY_PROPERTY,
     }, ['path', 'values']),
+  ),
+  tool(
+    'office_word_insert_image',
+    { zh: '插入 Word 图片', en: 'Insert Word image' },
+    'Append an image from the granted workspace to a Word document and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      image_path: { ...PATH_PROPERTY, description: 'Image path relative to the user-granted workspace.' },
+      width_mm: { type: 'number', minimum: 1, maximum: 300 },
+      height_mm: { type: 'number', minimum: 1, maximum: 300 },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'image_path']),
+  ),
+  tool(
+    'office_word_set_header_footer',
+    { zh: '设置 Word 页眉页脚', en: 'Set Word header and footer' },
+    'Set or clear the active Word page style header and footer, then save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      header: { type: 'string', maxLength: 20000, description: 'Header text. Use an empty string to disable it.' },
+      footer: { type: 'string', maxLength: 20000, description: 'Footer text. Use an empty string to disable it.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path']),
   ),
   tool(
     'office_excel_read',
@@ -193,6 +217,47 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
       slide_number: { type: 'integer', minimum: 1 },
       output_directory: OUTPUT_DIRECTORY_PROPERTY,
     }, ['path', 'slide_number']),
+  ),
+  tool(
+    'office_presentation_insert_image',
+    { zh: '插入 PPT 图片', en: 'Insert presentation image' },
+    'Insert an image from the granted workspace on a PowerPoint slide and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      image_path: { ...PATH_PROPERTY, description: 'Image path relative to the user-granted workspace.' },
+      slide_number: { type: 'integer', minimum: 1 },
+      x_mm: { type: 'number', minimum: 0, maximum: 1000, description: 'Left position. Defaults to 20 mm.' },
+      y_mm: { type: 'number', minimum: 0, maximum: 1000, description: 'Top position. Defaults to 30 mm.' },
+      width_mm: { type: 'number', minimum: 1, maximum: 1000, description: 'Width. Defaults to 120 mm.' },
+      height_mm: { type: 'number', minimum: 1, maximum: 1000, description: 'Height. Defaults to 70 mm.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'image_path', 'slide_number']),
+  ),
+  tool(
+    'office_presentation_set_notes',
+    { zh: '设置 PPT 演讲者备注', en: 'Set presentation speaker notes' },
+    'Set or clear speaker notes on one PowerPoint slide and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      slide_number: { type: 'integer', minimum: 1 },
+      notes: { type: 'string', maxLength: 20000 },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'slide_number', 'notes']),
+  ),
+  tool(
+    'office_template_fill',
+    { zh: '填充 Office 模板', en: 'Fill Office template' },
+    'Replace template variables throughout a Word, Excel, or PowerPoint file and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      replacements: {
+        type: 'object',
+        minProperties: 1,
+        maxProperties: 100,
+        additionalProperties: { type: ['string', 'number', 'boolean', 'null'] },
+      },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'replacements']),
   ),
   tool(
     'office_batch_convert_pdf',
@@ -308,6 +373,37 @@ function integerValue(value, label, minimum, { optional = false } = {}) {
   return value;
 }
 
+function numberValue(value, label, minimum, maximum, defaultValue) {
+  if (value === undefined) return defaultValue;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(`${label} must be a number between ${minimum} and ${maximum}`);
+  }
+  return value;
+}
+
+function replacementMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('replacements must be an object with between 1 and 100 entries');
+  }
+  const entries = Object.entries(value);
+  if (entries.length === 0 || entries.length > 100) {
+    throw new Error('replacements must be an object with between 1 and 100 entries');
+  }
+  let characters = 0;
+  const normalized = [];
+  for (const [find, replacement] of entries) {
+    if (!find || find.length > 200) throw new Error('replacement keys must contain between 1 and 200 characters');
+    if (replacement !== null && !['string', 'number', 'boolean'].includes(typeof replacement)) {
+      throw new Error('replacement values may only be strings, numbers, booleans, or null');
+    }
+    const text = replacement === null ? '' : String(replacement);
+    characters += find.length + text.length;
+    normalized.push([find, text]);
+  }
+  if (characters > 50000) throw new Error('replacements may contain at most 50000 characters');
+  return Object.fromEntries(normalized);
+}
+
 function boundedExcelRange(value, label) {
   if (!RANGE_REFERENCE.test(value)) throw new Error(`${label} must use A1 notation such as A1:F40`);
   const [startReference, endReference = startReference] = value.split(':');
@@ -417,6 +513,61 @@ function createOfficeAutomationProvider({
         written: output.relativePath,
         rows: Number(result.rows) || values.length,
         columns: Number(result.columns) || values[0].length,
+      };
+    }
+
+    if (functionName === 'office_word_insert_image') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const relativeImagePath = stringValue(args.image_path, 'image_path', { required: true, maxLength: 1000 });
+      const inputPath = await workspace.resolveInput(relativePath);
+      const imagePath = await workspace.resolveInput(relativeImagePath);
+      requireExtension(inputPath, WORD_EXTENSIONS, 'Word');
+      requireExtension(imagePath, IMAGE_EXTENSIONS, 'image');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'word_insert_image',
+        inputPath,
+        outputPath: output.absolutePath,
+        imagePath,
+        widthMm: numberValue(args.width_mm, 'width_mm', 1, 300),
+        heightMm: numberValue(args.height_mm, 'height_mm', 1, 300),
+      }, options);
+      return {
+        source: relativePath,
+        image: relativeImagePath,
+        written: output.relativePath,
+        imageInserted: result.imageInserted === true,
+      };
+    }
+
+    if (functionName === 'office_word_set_header_footer') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const hasHeader = args.header !== undefined;
+      const hasFooter = args.footer !== undefined;
+      if (!hasHeader && !hasFooter) throw new Error('Word formatting requires a header or footer value');
+      const header = hasHeader ? stringValue(args.header, 'header', { maxLength: 20000 }) : undefined;
+      const footer = hasFooter ? stringValue(args.footer, 'footer', { maxLength: 20000 }) : undefined;
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, WORD_EXTENSIONS, 'Word');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'word_set_header_footer',
+        inputPath,
+        outputPath: output.absolutePath,
+        header,
+        footer,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        headerEnabled: result.headerEnabled === true,
+        footerEnabled: result.footerEnabled === true,
       };
     }
 
@@ -619,6 +770,87 @@ function createOfficeAutomationProvider({
         written: output.relativePath,
         deletedSlideNumber: Number(result.deletedSlideNumber) || slideNumber,
         slidesRemaining: Number(result.slidesRemaining) || 0,
+      };
+    }
+
+    if (functionName === 'office_presentation_insert_image') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const relativeImagePath = stringValue(args.image_path, 'image_path', { required: true, maxLength: 1000 });
+      const slideNumber = integerValue(args.slide_number, 'slide_number', 1);
+      const inputPath = await workspace.resolveInput(relativePath);
+      const imagePath = await workspace.resolveInput(relativeImagePath);
+      requireExtension(inputPath, PRESENTATION_EXTENSIONS, 'PowerPoint');
+      requireExtension(imagePath, IMAGE_EXTENSIONS, 'image');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'presentation_insert_image',
+        inputPath,
+        outputPath: output.absolutePath,
+        imagePath,
+        slideNumber,
+        xMm: numberValue(args.x_mm, 'x_mm', 0, 1000, 20),
+        yMm: numberValue(args.y_mm, 'y_mm', 0, 1000, 30),
+        widthMm: numberValue(args.width_mm, 'width_mm', 1, 1000, 120),
+        heightMm: numberValue(args.height_mm, 'height_mm', 1, 1000, 70),
+      }, options);
+      return {
+        source: relativePath,
+        image: relativeImagePath,
+        written: output.relativePath,
+        slideNumber,
+        imageInserted: result.imageInserted === true,
+      };
+    }
+
+    if (functionName === 'office_presentation_set_notes') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const slideNumber = integerValue(args.slide_number, 'slide_number', 1);
+      if (args.notes === undefined) throw new Error('notes must be a string no longer than 20000 characters');
+      const notes = stringValue(args.notes, 'notes', { maxLength: 20000 });
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, PRESENTATION_EXTENSIONS, 'PowerPoint');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'presentation_set_notes',
+        inputPath,
+        outputPath: output.absolutePath,
+        slideNumber,
+        notes,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        slideNumber,
+        noteCharacters: Number(result.noteCharacters) || 0,
+      };
+    }
+
+    if (functionName === 'office_template_fill') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const replacements = replacementMap(args.replacements);
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, CONVERTIBLE_EXTENSIONS, 'Office');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'template_fill',
+        inputPath,
+        outputPath: output.absolutePath,
+        replacements,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        documentType: String(result.documentType || ''),
+        replacementCount: Number(result.replacementCount) || 0,
       };
     }
 

@@ -2,11 +2,12 @@
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { DOCUMENT_EXTENSIONS } = require('./formats.cjs');
+const { DOCUMENT_EXTENSIONS, IMAGE_EXTENSIONS } = require('./formats.cjs');
 
 const MAX_DOCUMENTS = 200;
 const MAX_DEPTH = 20;
 const MAX_FILE_BYTES = 512 * 1024 * 1024;
+const WORKSPACE_EXTENSIONS = new Set([...DOCUMENT_EXTENSIONS, ...IMAGE_EXTENSIONS]);
 
 function slashPath(candidate) {
   return candidate.split(path.sep).join('/');
@@ -84,8 +85,8 @@ function createOfficeWorkspace({ fileSystem = fs } = {}) {
     const stat = await fileSystem.stat(resolved);
     if (!stat.isFile()) throw new Error(`Document path is not a file: ${relativePath}`);
     if (stat.size > MAX_FILE_BYTES) throw new Error(`Document is larger than ${MAX_FILE_BYTES} bytes`);
-    if (!DOCUMENT_EXTENSIONS.has(path.extname(resolved).toLowerCase())) {
-      throw new Error('Document path is not a supported Office or PDF document');
+    if (!WORKSPACE_EXTENSIONS.has(path.extname(resolved).toLowerCase())) {
+      throw new Error('Document path is not a supported Office, PDF, or image file');
     }
     return resolved;
   };
@@ -145,8 +146,8 @@ function createOfficeWorkspace({ fileSystem = fs } = {}) {
       ? new Set(extensions.map((extension) => {
           const normalized = String(extension).toLowerCase();
           return normalized.startsWith('.') ? normalized : `.${normalized}`;
-        }).filter((extension) => DOCUMENT_EXTENSIONS.has(extension)))
-      : DOCUMENT_EXTENSIONS;
+        }).filter((extension) => WORKSPACE_EXTENSIONS.has(extension)))
+      : WORKSPACE_EXTENSIONS;
     const needle = String(query || '').trim().toLowerCase();
     const documents = [];
     const pending = [{ directory: workspaceRoot, depth: 0 }];

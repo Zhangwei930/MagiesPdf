@@ -100,6 +100,18 @@ def store_copy(document, output_path):
     )
 
 
+def active_word_page_style(document):
+    page_styles = document.StyleFamilies.getByName('PageStyles')
+    cursor = document.Text.createTextCursor()
+    style_name = str(cursor.PageStyleName)
+    if style_name and page_styles.hasByName(style_name):
+        return page_styles.getByName(style_name)
+    names = list(page_styles.getElementNames())
+    if not names:
+        raise ValueError('The Word document contains no page styles')
+    return page_styles.getByName(names[0])
+
+
 def word_read(document, _request):
     if not document.supportsService('com.sun.star.text.TextDocument'):
         raise ValueError('The selected file is not a Word document')
@@ -151,7 +163,21 @@ def word_read(document, _request):
     if len(text) > MAX_TEXT_CHARS:
         text = text[:MAX_TEXT_CHARS]
         truncated = True
-    return {'text': text, 'tables': tables, 'truncated': truncated}
+    try:
+        image_count = int(document.GraphicObjects.getCount())
+    except Exception:
+        image_count = 0
+    page_style = active_word_page_style(document)
+    header = str(page_style.HeaderText.String) if page_style.HeaderIsOn else ''
+    footer = str(page_style.FooterText.String) if page_style.FooterIsOn else ''
+    return {
+        'text': text,
+        'tables': tables,
+        'imageCount': image_count,
+        'header': header,
+        'footer': footer,
+        'truncated': truncated,
+    }
 
 
 def word_replace(document, request):
@@ -196,6 +222,62 @@ def word_insert_table(document, request):
                 cell_cursor.CharWeight = 150.0
     store_copy(document, request['outputPath'])
     return {'rows': row_count, 'columns': column_count}
+
+
+def word_insert_image(document, request):
+    if not document.supportsService('com.sun.star.text.TextDocument'):
+        raise ValueError('The selected file is not a Word document')
+    graphic = document.createInstance('com.sun.star.text.TextGraphicObject')
+    graphic.GraphicURL = uno.systemPathToFileUrl(request['imagePath'])
+    graphic.AnchorType = uno.Enum(
+        'com.sun.star.text.TextContentAnchorType', 'AS_CHARACTER'
+    )
+    width = request.get('widthMm')
+    height = request.get('heightMm')
+    if width is not None:
+        graphic.Width = int(round(float(width) * 100))
+    if height is not None:
+        graphic.Height = int(round(float(height) * 100))
+    text = document.Text
+    cursor = text.createTextCursor()
+    cursor.gotoEnd(False)
+    if text.String:
+        paragraph_break = uno.getConstantByName(
+            'com.sun.star.text.ControlCharacter.PARAGRAPH_BREAK'
+        )
+        text.insertControlCharacter(cursor, paragraph_break, False)
+    text.insertTextContent(cursor, graphic, False)
+    store_copy(document, request['outputPath'])
+    return {'imageInserted': True}
+
+
+def word_set_header_footer(document, request):
+    if not document.supportsService('com.sun.star.text.TextDocument'):
+        raise ValueError('The selected file is not a Word document')
+    page_style = active_word_page_style(document)
+    if 'header' in request:
+        header = request['header']
+        if header:
+            page_style.HeaderIsOn = True
+            page_style.HeaderText.String = header
+        else:
+            if page_style.HeaderIsOn:
+                page_style.HeaderText.String = ''
+            page_style.HeaderIsOn = False
+    if 'footer' in request:
+        footer = request['footer']
+        if footer:
+            page_style.FooterIsOn = True
+            page_style.FooterText.String = footer
+        else:
+            if page_style.FooterIsOn:
+                page_style.FooterText.String = ''
+            page_style.FooterIsOn = False
+    store_copy(document, request['outputPath'])
+    return {
+        'headerEnabled': bool(page_style.HeaderIsOn),
+        'footerEnabled': bool(page_style.FooterIsOn),
+    }
 
 
 def spreadsheet(document, requested_name):
@@ -425,22 +507,63 @@ def slide_texts(slide):
     return texts
 
 
+def note_shapes(notes_page):
+    shapes = []
+    for index in range(notes_page.getCount()):
+        shape = notes_page.getByIndex(index)
+        if shape.getShapeType() == 'com.sun.star.presentation.NotesShape':
+            shapes.append(shape)
+    return shapes
+
+
+def slide_notes(slide):
+    notes_page = slide.getNotesPage()
+    for shape in note_shapes(notes_page):
+        try:
+            notes = str(shape.String)
+        except Exception:
+            continue
+        if notes:
+            return notes
+    return ''
+
+
+def slide_image_count(slide):
+    count = 0
+    for index in range(slide.getCount()):
+        shape = slide.getByIndex(index)
+        if shape.supportsService('com.sun.star.drawing.GraphicObjectShape'):
+            count += 1
+    return count
+
+
 def presentation_read(document, _request):
     pages = presentation(document)
     slides = []
     total_characters = 0
     truncated = pages.getCount() > MAX_SLIDES
     for index in range(min(pages.getCount(), MAX_SLIDES)):
-        text = '\n'.join(slide_texts(pages.getByIndex(index)))
+        slide = pages.getByIndex(index)
+        text = '\n'.join(slide_texts(slide))
+        notes = slide_notes(slide)
         remaining = MAX_TEXT_CHARS - total_characters
         if remaining <= 0:
             truncated = True
             break
         if len(text) > remaining:
             text = text[:remaining]
+            notes = ''
             truncated = True
-        slides.append({'number': index + 1, 'text': text})
-        total_characters += len(text)
+        elif len(notes) > remaining - len(text):
+            notes = notes[:remaining - len(text)]
+            truncated = True
+        slides.append({
+            'number': index + 1,
+            'text': text,
+            'notes': notes,
+            'imageCount': slide_image_count(slide),
+        })
+        total_characters += len(text) + len(notes)
     return {'slides': slides, 'truncated': truncated}
 
 
@@ -529,6 +652,156 @@ def presentation_delete_slide(document, request):
     }
 
 
+def presentation_slide_by_number(pages, slide_number):
+    if slide_number < 1 or slide_number > pages.getCount():
+        raise ValueError(f'slide_number must be between 1 and {pages.getCount()}')
+    return pages.getByIndex(slide_number - 1)
+
+
+def presentation_insert_image(document, request):
+    pages = presentation(document)
+    slide_number = int(request['slideNumber'])
+    slide = presentation_slide_by_number(pages, slide_number)
+    shape = document.createInstance('com.sun.star.drawing.GraphicObjectShape')
+    position = uno.createUnoStruct('com.sun.star.awt.Point')
+    position.X = int(round(float(request['xMm']) * 100))
+    position.Y = int(round(float(request['yMm']) * 100))
+    dimensions = uno.createUnoStruct('com.sun.star.awt.Size')
+    dimensions.Width = int(round(float(request['widthMm']) * 100))
+    dimensions.Height = int(round(float(request['heightMm']) * 100))
+    shape.Position = position
+    shape.Size = dimensions
+    shape.GraphicURL = uno.systemPathToFileUrl(request['imagePath'])
+    slide.add(shape)
+    store_copy(document, request['outputPath'])
+    return {'imageInserted': True, 'slideNumber': slide_number}
+
+
+def presentation_set_notes(document, request):
+    pages = presentation(document)
+    slide_number = int(request['slideNumber'])
+    slide = presentation_slide_by_number(pages, slide_number)
+    notes_page = slide.getNotesPage()
+    existing_shapes = note_shapes(notes_page)
+    notes_shape = None
+    for candidate in existing_shapes:
+        try:
+            if str(candidate.String):
+                notes_shape = candidate
+                break
+        except Exception:
+            continue
+    if notes_shape is None and existing_shapes:
+        notes_shape = existing_shapes[0]
+    notes = request.get('notes', '')
+    if notes_shape is None and notes:
+        notes_shape = document.createInstance('com.sun.star.presentation.NotesShape')
+        position = uno.createUnoStruct('com.sun.star.awt.Point')
+        position.X = 2000
+        position.Y = 7000
+        dimensions = uno.createUnoStruct('com.sun.star.awt.Size')
+        dimensions.Width = max(1000, int(notes_page.Width) - 4000)
+        dimensions.Height = max(1000, int(notes_page.Height) - 9000)
+        notes_shape.Position = position
+        notes_shape.Size = dimensions
+        notes_page.add(notes_shape)
+    for candidate in existing_shapes:
+        candidate.String = ''
+    if notes_shape is not None:
+        notes_shape.String = notes
+    store_copy(document, request['outputPath'])
+    return {'noteCharacters': len(notes), 'slideNumber': slide_number}
+
+
+def replace_text(original, replacements):
+    changed = original
+    replacement_count = 0
+    for find, replacement in replacements.items():
+        count = changed.count(find)
+        if count:
+            changed = changed.replace(find, replacement)
+            replacement_count += count
+    return changed, replacement_count
+
+
+def template_fill_word(document, replacements):
+    replacement_count = 0
+    for find, replacement in replacements.items():
+        descriptor = document.createReplaceDescriptor()
+        descriptor.SearchString = find
+        descriptor.ReplaceString = replacement
+        descriptor.SearchCaseSensitive = True
+        replacement_count += int(document.replaceAll(descriptor))
+    return replacement_count
+
+
+def template_fill_excel(document, replacements):
+    replacement_count = 0
+    visited_cells = 0
+    for sheet_name in document.Sheets.getElementNames():
+        sheet = document.Sheets.getByName(sheet_name)
+        cursor = sheet.createCursor()
+        cursor.gotoEndOfUsedArea(True)
+        address = cursor.getRangeAddress()
+        cell_count = (
+            (address.EndRow - address.StartRow + 1)
+            * (address.EndColumn - address.StartColumn + 1)
+        )
+        visited_cells += cell_count
+        if visited_cells > 5000:
+            raise ValueError('Template filling supports at most 5000 used spreadsheet cells')
+        for row in range(address.StartRow, address.EndRow + 1):
+            for column in range(address.StartColumn, address.EndColumn + 1):
+                cell = sheet.getCellByPosition(column, row)
+                if str(cell.Formula).startswith('='):
+                    continue
+                changed, count = replace_text(str(cell.String), replacements)
+                if count:
+                    cell.String = changed
+                    replacement_count += count
+    document.calculateAll()
+    return replacement_count
+
+
+def template_fill_presentation(document, replacements):
+    replacement_count = 0
+    pages = presentation(document)
+    for page_index in range(pages.getCount()):
+        slide = pages.getByIndex(page_index)
+        for page in (slide, slide.getNotesPage()):
+            for shape_index in range(page.getCount()):
+                shape = page.getByIndex(shape_index)
+                try:
+                    original = str(shape.String)
+                except Exception:
+                    continue
+                changed, count = replace_text(original, replacements)
+                if count:
+                    shape.String = changed
+                    replacement_count += count
+    return replacement_count
+
+
+def template_fill(document, request):
+    replacements = request['replacements']
+    if document.supportsService('com.sun.star.text.TextDocument'):
+        document_type = 'word'
+        replacement_count = template_fill_word(document, replacements)
+    elif document.supportsService('com.sun.star.sheet.SpreadsheetDocument'):
+        document_type = 'excel'
+        replacement_count = template_fill_excel(document, replacements)
+    elif document.supportsService('com.sun.star.presentation.PresentationDocument'):
+        document_type = 'presentation'
+        replacement_count = template_fill_presentation(document, replacements)
+    else:
+        raise ValueError('The selected file is not a supported Office template')
+    store_copy(document, request['outputPath'])
+    return {
+        'documentType': document_type,
+        'replacementCount': replacement_count,
+    }
+
+
 def convert_pdf(document, request):
     if document.supportsService('com.sun.star.text.TextDocument'):
         filter_name = 'writer_pdf_Export'
@@ -556,6 +829,8 @@ OPERATIONS = {
     'word_read': (True, word_read),
     'word_replace': (False, word_replace),
     'word_insert_table': (False, word_insert_table),
+    'word_insert_image': (False, word_insert_image),
+    'word_set_header_footer': (False, word_set_header_footer),
     'excel_read': (True, excel_read),
     'excel_write': (False, excel_write),
     'excel_format_range': (False, excel_format_range),
@@ -564,6 +839,9 @@ OPERATIONS = {
     'presentation_replace': (False, presentation_replace),
     'presentation_add_slide': (False, presentation_add_slide),
     'presentation_delete_slide': (False, presentation_delete_slide),
+    'presentation_insert_image': (False, presentation_insert_image),
+    'presentation_set_notes': (False, presentation_set_notes),
+    'template_fill': (False, template_fill),
     'convert_pdf': (True, convert_pdf),
 }
 

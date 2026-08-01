@@ -49,6 +49,8 @@ describe('createOfficeAutomationProvider', () => {
         'office_word_read',
         'office_word_replace',
         'office_word_insert_table',
+        'office_word_insert_image',
+        'office_word_set_header_footer',
         'office_excel_read',
         'office_excel_write',
         'office_excel_format_range',
@@ -57,11 +59,15 @@ describe('createOfficeAutomationProvider', () => {
         'office_presentation_replace',
         'office_presentation_add_slide',
         'office_presentation_delete_slide',
+        'office_presentation_insert_image',
+        'office_presentation_set_notes',
+        'office_template_fill',
         'office_batch_convert_pdf',
         'office_workspace_archive',
       ],
     );
     assert.ok(tools.every((tool) => tool.requiresApproval === true));
+    assert.match(tools[0].providerTool.function.description, /Office, PDF, and image files/);
   });
 
   it('reads and replaces PowerPoint text through LibreOffice', async () => {
@@ -161,6 +167,64 @@ describe('createOfficeAutomationProvider', () => {
     await assert.rejects(() => provider.callTool('office_word_insert_table', {
       path: 'Report.docx', values: [['A', 'B'], ['C']],
     }), /rectangular/);
+  });
+
+  it('inserts workspace images and configures Word headers and footers', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Report.docx'), 'source');
+    await fs.writeFile(path.join(root, 'Logo.png'), 'image');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return request.operation === 'word_insert_image'
+          ? { imageInserted: true }
+          : { headerEnabled: true, footerEnabled: true };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    assert.deepEqual(await provider.callTool('office_word_insert_image', {
+      path: 'Report.docx',
+      image_path: 'Logo.png',
+      width_mm: 40,
+      height_mm: 20,
+      output_directory: 'Edited',
+    }), {
+      source: 'Report.docx',
+      image: 'Logo.png',
+      written: 'Edited/Report.docx',
+      imageInserted: true,
+    });
+    assert.equal(calls[0].operation, 'word_insert_image');
+    assert.equal(calls[0].imagePath, path.join(await fs.realpath(root), 'Logo.png'));
+    assert.equal(calls[0].widthMm, 40);
+
+    assert.deepEqual(await provider.callTool('office_word_set_header_footer', {
+      path: 'Report.docx',
+      header: 'Confidential',
+      footer: 'Page footer',
+      output_directory: 'Edited',
+    }), {
+      source: 'Report.docx',
+      written: 'Edited/Report (2).docx',
+      headerEnabled: true,
+      footerEnabled: true,
+    });
+    assert.equal(calls[1].operation, 'word_set_header_footer');
+
+    await assert.rejects(() => provider.callTool('office_word_insert_image', {
+      path: 'Report.docx', image_path: 'Report.docx',
+    }), /supported image/);
+    await assert.rejects(() => provider.callTool('office_word_insert_image', {
+      path: 'Report.docx', image_path: 'Logo.png', width_mm: 0,
+    }), /width_mm/);
+    await assert.rejects(() => provider.callTool('office_word_set_header_footer', {
+      path: 'Report.docx',
+    }), /header or footer/);
   });
 
   it('validates and delegates Excel range reads and writes', async () => {
@@ -308,6 +372,102 @@ describe('createOfficeAutomationProvider', () => {
     await assert.rejects(() => provider.callTool('office_presentation_delete_slide', {
       path: 'Quarterly.pptx', slide_number: 0,
     }), /slide_number/);
+  });
+
+  it('inserts PowerPoint images and updates speaker notes', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Quarterly.pptx'), 'source');
+    await fs.writeFile(path.join(root, 'Chart.jpg'), 'image');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return request.operation === 'presentation_insert_image'
+          ? { imageInserted: true }
+          : { noteCharacters: 18 };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    assert.deepEqual(await provider.callTool('office_presentation_insert_image', {
+      path: 'Quarterly.pptx',
+      image_path: 'Chart.jpg',
+      slide_number: 1,
+      x_mm: 20,
+      y_mm: 30,
+      width_mm: 120,
+      height_mm: 70,
+      output_directory: 'Edited',
+    }), {
+      source: 'Quarterly.pptx',
+      image: 'Chart.jpg',
+      written: 'Edited/Quarterly.pptx',
+      slideNumber: 1,
+      imageInserted: true,
+    });
+    assert.equal(calls[0].operation, 'presentation_insert_image');
+    assert.equal(calls[0].xMm, 20);
+
+    assert.deepEqual(await provider.callTool('office_presentation_set_notes', {
+      path: 'Quarterly.pptx',
+      slide_number: 1,
+      notes: 'Discuss the forecast',
+      output_directory: 'Edited',
+    }), {
+      source: 'Quarterly.pptx',
+      written: 'Edited/Quarterly (2).pptx',
+      slideNumber: 1,
+      noteCharacters: 18,
+    });
+    assert.equal(calls[1].operation, 'presentation_set_notes');
+
+    await assert.rejects(() => provider.callTool('office_presentation_insert_image', {
+      path: 'Quarterly.pptx', image_path: 'Chart.jpg', slide_number: 0,
+    }), /slide_number/);
+    await assert.rejects(() => provider.callTool('office_presentation_set_notes', {
+      path: 'Quarterly.pptx', slide_number: 1, notes: 'x'.repeat(20001),
+    }), /notes/);
+  });
+
+  it('fills template variables in Word, Excel, or PowerPoint copies', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Template.docx'), 'source');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { documentType: 'word', replacementCount: 2 };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    assert.deepEqual(await provider.callTool('office_template_fill', {
+      path: 'Template.docx',
+      replacements: { '{{name}}': 'Ada', '{{total}}': 42, '{{optional}}': null },
+      output_directory: 'Generated',
+    }), {
+      source: 'Template.docx',
+      written: 'Generated/Template.docx',
+      documentType: 'word',
+      replacementCount: 2,
+    });
+    assert.equal(calls[0].operation, 'template_fill');
+    assert.deepEqual(calls[0].replacements, {
+      '{{name}}': 'Ada', '{{total}}': '42', '{{optional}}': '',
+    });
+
+    await assert.rejects(() => provider.callTool('office_template_fill', {
+      path: 'Template.docx', replacements: {},
+    }), /replacements/);
+    await assert.rejects(() => provider.callTool('office_template_fill', {
+      path: 'Template.docx', replacements: { '{{name}}': { unsafe: true } },
+    }), /replacement values/);
   });
 
   it('rejects invalid structural-editing arguments and supports safe defaults', async () => {
