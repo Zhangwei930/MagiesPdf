@@ -71,11 +71,18 @@ function argument(name, fallback) {
   return index >= 0 ? process.argv[index + 1] : fallback;
 }
 
+export function officeExecutableNames(platform) {
+  if (platform === 'linux') return { architecture: 'soffice.bin', launcher: 'soffice' };
+  const executable = platform === 'win32' ? 'soffice.exe' : 'soffice';
+  return { architecture: executable, launcher: executable };
+}
+
 function isOfficeExecutable(candidate, platform) {
   const normalized = candidate.split(path.sep).join('/').toLowerCase();
+  const { architecture } = officeExecutableNames(platform);
   const suffix = platform === 'darwin'
     ? '/office-runtime/libreoffice.app/contents/macos/soffice'
-    : `/office-runtime/program/${platform === 'win32' ? 'soffice.exe' : 'soffice'}`;
+    : `/office-runtime/program/${architecture}`;
   return normalized.endsWith(suffix);
 }
 
@@ -128,7 +135,8 @@ async function verifyPackage(root, platform, arch) {
   for (const executable of matching) await verifyMetadata(executable);
   const executable = matching[0];
   if (hostCanRunTarget(platform, arch)) {
-    const result = await execFileAsync(executable, ['--headless', '--version'], {
+    const launcher = path.join(path.dirname(executable), officeExecutableNames(platform).launcher);
+    const result = await execFileAsync(launcher, ['--headless', '--version'], {
       timeout: 30000,
       windowsHide: true,
     });

@@ -5,6 +5,7 @@ import {
   executableMachine,
   expectedMachine,
   hostCanRunTarget,
+  officeExecutableNames,
 } from './verify-office-package.mjs';
 
 function machO(machine) {
@@ -53,5 +54,16 @@ describe('packaged Office executable verification', () => {
     assert.equal(expectedMachine('linux', 'x64'), 62);
     assert.equal(hostCanRunTarget('darwin', 'x64', 'darwin', 'x64'), true);
     assert.equal(hostCanRunTarget('darwin', 'arm64', 'darwin', 'x64'), false);
+  });
+
+  it('checks the Linux binary while launching through its wrapper script', () => {
+    assert.deepEqual(officeExecutableNames('linux'), {
+      architecture: 'soffice.bin',
+      launcher: 'soffice',
+    });
+    assert.deepEqual(officeExecutableNames('win32'), {
+      architecture: 'soffice.exe',
+      launcher: 'soffice.exe',
+    });
   });
 });
