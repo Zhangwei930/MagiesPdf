@@ -29,6 +29,7 @@ interface HomeProps {
   onOpenSearch(): void;
   onOpenDocument(): Promise<void>;
   onCreateOffice(kind: OfficeCreateKind): Promise<void>;
+  onCreatePdf(): Promise<void>;
   onOpenRecent(path: string): Promise<void>;
 }
 
@@ -66,6 +67,7 @@ export function Home({
   onOpenSearch,
   onOpenDocument,
   onCreateOffice,
+  onCreatePdf,
   onOpenRecent,
 }: HomeProps) {
   const locale = useApp((state) => state.locale);
@@ -78,8 +80,6 @@ export function Home({
   const [renaming, setRenaming] = useState<RecentDocument | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [deleting, setDeleting] = useState<RecentDocument | null>(null);
-  const [setupOpen, setSetupOpen] = useState(false);
-  const [setupBusy, setSetupBusy] = useState('');
 
   const loadWorkspace = useCallback(async () => {
     if (!hasBridge()) return;
@@ -169,51 +169,7 @@ export function Home({
   };
 
   const createOffice = async (kind: OfficeCreateKind) => {
-    if (office && !office.libreOffice.available) {
-      setSetupOpen(true);
-      return;
-    }
     await run(kind, () => onCreateOffice(kind), true);
-  };
-
-  const locateLibreOffice = async () => {
-    setSetupBusy('locate');
-    setError('');
-    try {
-      const result = await bridge().pickLibreOfficeExecutable();
-      setOffice(result.status);
-      if (result.status.libreOffice.available) setSetupOpen(false);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSetupBusy('');
-    }
-  };
-
-  const detectLibreOffice = async () => {
-    setSetupBusy('detect');
-    setError('');
-    try {
-      const status = await bridge().getOfficeStatus();
-      setOffice(status);
-      if (status.libreOffice.available) setSetupOpen(false);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSetupBusy('');
-    }
-  };
-
-  const downloadLibreOffice = async () => {
-    setSetupBusy('download');
-    setError('');
-    try {
-      await bridge().openLibreOfficeDownload();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSetupBusy('');
-    }
   };
 
   return (
@@ -282,10 +238,12 @@ export function Home({
             <button
               type="button"
               disabled={busy !== ''}
-              onClick={() => onOpenTool('edit.create-blank')}
+              onClick={() => void run('pdf', onCreatePdf)}
               className="surface-panel min-h-[112px] p-3.5 text-left transition-[border-color,transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-[var(--shadow-card)] active:translate-y-0 disabled:pointer-events-none disabled:opacity-60"
             >
-              <span className="office-pdf flex h-9 w-9 items-center justify-center rounded-lg"><ToolIcon name="FilePenLine" size={18} /></span>
+              <span className="office-pdf flex h-9 w-9 items-center justify-center rounded-lg">
+                {busy === 'pdf' ? <Loader2 size={18} className="animate-spin" /> : <ToolIcon name="FilePenLine" size={18} />}
+              </span>
               <span className="mt-3 block text-[13px] font-medium">{t('newPdf', locale)}</span>
               <span className="mt-1 block text-[10.5px] leading-snug text-[var(--text-muted)]">{t('newPdfHint', locale)}</span>
             </button>
@@ -381,12 +339,6 @@ export function Home({
                   <p className="mt-1 text-[10.5px] leading-relaxed text-[var(--text-muted)]">
                     {office?.libreOffice.available ? t('localOfficeReadyHint', locale) : t('localOfficeMissingHint', locale)}
                   </p>
-                  {!office?.libreOffice.available && (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Button size="sm" variant="primary" onClick={() => setSetupOpen(true)}>{t('installLibreOffice', locale)}</Button>
-                      <Button size="sm" onClick={() => void locateLibreOffice()} loading={setupBusy === 'locate'}>{t('locateInstalled', locale)}</Button>
-                    </div>
-                  )}
                 </div>
               </div>
             </section>
@@ -485,22 +437,6 @@ export function Home({
         </ConfirmDialog>
       )}
 
-      {setupOpen && (
-        <ConfirmDialog title={t('officeSetupTitle', locale)} onClose={() => setSetupOpen(false)}>
-          <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">{t('officeSetupHelp', locale)}</p>
-          <ol className="mt-3 space-y-2 rounded-xl bg-[var(--surface-sunken)] p-3 text-[11px] text-[var(--text-secondary)]">
-            <li><strong className="mr-1 text-[var(--accent)]">1.</strong>{t('officeSetupStepDownload', locale)}</li>
-            <li><strong className="mr-1 text-[var(--accent)]">2.</strong>{t('officeSetupStepInstall', locale)}</li>
-            <li><strong className="mr-1 text-[var(--accent)]">3.</strong>{t('officeSetupStepDetect', locale)}</li>
-          </ol>
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            <Button variant="primary" onClick={() => void downloadLibreOffice()} loading={setupBusy === 'download'}>{t('downloadLibreOffice', locale)}</Button>
-            <Button onClick={() => void locateLibreOffice()} loading={setupBusy === 'locate'}>{t('locateInstalled', locale)}</Button>
-            <Button onClick={() => void detectLibreOffice()} loading={setupBusy === 'detect'}>{t('afterInstallDetect', locale)}</Button>
-            <Button variant="ghost" onClick={() => setSetupOpen(false)}>{t('continuePdfOnly', locale)}</Button>
-          </div>
-        </ConfirmDialog>
-      )}
     </div>
   );
 }

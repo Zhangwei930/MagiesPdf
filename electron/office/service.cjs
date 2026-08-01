@@ -1,11 +1,12 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { dialog, shell } = require('electron');
+const { app, dialog, shell } = require('electron');
 const settings = require('../settings.cjs');
 const mainRunner = require('../jobs/mainRunner.cjs');
 const { DOCUMENT_EXTENSIONS, isOfficeDocumentPath } = require('./formats.cjs');
 const {
   launchLibreOffice,
+  officeRuntimeRoot,
   resolveLibreOfficeExecutable,
 } = require('./libreOffice.cjs');
 
@@ -66,12 +67,24 @@ function createOfficeService(deps = {}) {
     launch: deps.launch ?? launchLibreOffice,
     openExternal: deps.openExternal ?? ((url) => shell.openExternal(url)),
     trash: deps.trash ?? ((target) => shell.trashItem(target)),
+    packaged: deps.packaged ?? app?.isPackaged ?? false,
+    resourcesPath: deps.resourcesPath ?? process.resourcesPath ?? '',
+    projectRoot: deps.projectRoot ?? path.join(__dirname, '..', '..'),
+    platform: deps.platform ?? process.platform,
+    arch: deps.arch ?? process.arch,
   };
 
   const officeSettings = () => runtime.settings.read().office ?? {};
   const recentSettings = () => runtime.settings.read().recentDocuments ?? [];
-  const executable = () =>
-    runtime.resolveExecutable({ configured: officeSettings().libreOfficeExecutable ?? '' });
+  const executable = () => runtime.resolveExecutable({
+    bundledRoot: officeRuntimeRoot(runtime),
+    configured: officeSettings().libreOfficeExecutable ?? '',
+    packaged: runtime.packaged,
+    platform: runtime.platform,
+  });
+  const unavailableMessage = () => runtime.packaged
+    ? 'Bundled Office editor is missing; reinstall Magies Office'
+    : 'LibreOffice is not installed or configured';
   const status = () => {
     const resolved = executable();
     return { libreOffice: { available: resolved !== '', executable: resolved } };
@@ -112,7 +125,7 @@ function createOfficeService(deps = {}) {
     }
 
     const resolved = executable();
-    if (!resolved) throw new Error('LibreOffice is not installed or configured');
+    if (!resolved) throw new Error(unavailableMessage());
     runtime.launch(resolved, paths);
     rememberRecent(paths);
     return { opened: [...paths], canceled: false };
@@ -240,7 +253,7 @@ function createOfficeService(deps = {}) {
     },
 
     async createAndOpen(window, kind) {
-      if (!executable()) throw new Error('LibreOffice is not installed or configured');
+      if (!executable()) throw new Error(unavailableMessage());
       const result = await create(window, kind);
       if (result.canceled) return { opened: [], canceled: true };
       return openPaths([result.created]);

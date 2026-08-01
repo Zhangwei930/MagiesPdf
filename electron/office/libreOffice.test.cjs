@@ -1,10 +1,47 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const {
+  bundledLibreOfficeExecutable,
   libreOfficeCandidates,
   libreOfficeLaunchArgs,
+  officeRuntimeRoot,
   resolveLibreOfficeExecutable,
 } = require('./libreOffice.cjs');
+
+describe('bundledLibreOfficeExecutable', () => {
+  it('uses the runtime copied into app resources on every supported platform', () => {
+    assert.equal(
+      bundledLibreOfficeExecutable('/app/resources/office-runtime', 'darwin'),
+      '/app/resources/office-runtime/LibreOffice.app/Contents/MacOS/soffice',
+    );
+    assert.equal(
+      bundledLibreOfficeExecutable('C:\\app\\resources\\office-runtime', 'win32'),
+      'C:\\app\\resources\\office-runtime/program/soffice.exe',
+    );
+    assert.equal(
+      bundledLibreOfficeExecutable('/app/resources/office-runtime', 'linux'),
+      '/app/resources/office-runtime/program/soffice',
+    );
+  });
+});
+
+describe('officeRuntimeRoot', () => {
+  it('uses app resources after packaging and the target-specific vendor folder in development', () => {
+    assert.equal(
+      officeRuntimeRoot({ packaged: true, resourcesPath: '/app/resources' }),
+      '/app/resources/office-runtime',
+    );
+    assert.equal(
+      officeRuntimeRoot({
+        packaged: false,
+        projectRoot: '/repo',
+        platform: 'darwin',
+        arch: 'arm64',
+      }),
+      '/repo/vendor/office-runtime/mac-arm64',
+    );
+  });
+});
 
 describe('libreOfficeCandidates', () => {
   it('uses the native application path on macOS', () => {
@@ -44,6 +81,32 @@ describe('libreOfficeCandidates', () => {
 });
 
 describe('resolveLibreOfficeExecutable', () => {
+  it('uses only the bundled runtime in a packaged app', () => {
+    const executable = resolveLibreOfficeExecutable({
+      bundledRoot: '/app/resources/office-runtime',
+      configured: '/custom/soffice',
+      packaged: true,
+      platform: 'linux',
+      env: {},
+      isExecutable: (candidate) => candidate === '/custom/soffice',
+    });
+
+    assert.equal(executable, '');
+  });
+
+  it('prefers the bundled runtime during development when it is present', () => {
+    const executable = resolveLibreOfficeExecutable({
+      bundledRoot: '/repo/vendor/office-runtime/linux-x64',
+      configured: '/custom/soffice',
+      packaged: false,
+      platform: 'linux',
+      env: {},
+      isExecutable: (candidate) => candidate === '/repo/vendor/office-runtime/linux-x64/program/soffice',
+    });
+
+    assert.equal(executable, '/repo/vendor/office-runtime/linux-x64/program/soffice');
+  });
+
   it('prefers a configured executable and falls back to detected candidates', () => {
     const executable = resolveLibreOfficeExecutable({
       configured: '/custom/soffice',

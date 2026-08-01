@@ -55,6 +55,32 @@ describe('host boundary helpers', () => {
     assert.equal(converterSupports(config, 'docx'), false);
   });
 
+  it('resolves Office conversion from packaged app resources', () => {
+    let resolution;
+    const config = converterConfigFrom(
+      { externalConverter: { executable: '' }, office: { libreOfficeExecutable: '/custom/soffice' } },
+      {
+        isExecutable: () => false,
+        packaged: true,
+        resourcesPath: '/app/resources',
+        platform: 'linux',
+        arch: 'x64',
+        resolveLibreOffice: (options) => {
+          resolution = options;
+          return '/app/resources/office-runtime/program/soffice';
+        },
+      },
+    );
+
+    assert.equal(config.executable, '/app/resources/office-runtime/program/soffice');
+    assert.deepEqual(resolution, {
+      bundledRoot: '/app/resources/office-runtime',
+      configured: '/custom/soffice',
+      packaged: true,
+      platform: 'linux',
+    });
+  });
+
   it('accepts a plain file name for the external converter', () => {
     assert.equal(safeTemporaryName('report.docx'), 'report.docx');
   });

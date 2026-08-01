@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { isOfficeDocumentPath } = require('./formats.cjs');
 
@@ -18,6 +19,30 @@ function libreOfficeCandidates(platform = process.platform, env = process.env) {
   }
 }
 
+function bundledLibreOfficeExecutable(root, platform = process.platform) {
+  const normalizedRoot = root.replace(/[\\/]$/, '');
+  switch (platform) {
+    case 'darwin':
+      return `${normalizedRoot}/LibreOffice.app/Contents/MacOS/soffice`;
+    case 'win32':
+      return `${normalizedRoot}/program/soffice.exe`;
+    default:
+      return `${normalizedRoot}/program/soffice`;
+  }
+}
+
+function officeRuntimeRoot({
+  packaged = false,
+  resourcesPath = process.resourcesPath ?? '',
+  projectRoot = path.join(__dirname, '..', '..'),
+  platform = process.platform,
+  arch = process.arch,
+} = {}) {
+  if (packaged) return path.join(resourcesPath, 'office-runtime');
+  const os = platform === 'darwin' ? 'mac' : platform === 'win32' ? 'win' : platform;
+  return path.join(projectRoot, 'vendor', 'office-runtime', `${os}-${arch}`);
+}
+
 function defaultIsExecutable(candidate) {
   try {
     fs.accessSync(candidate, fs.constants.X_OK);
@@ -28,12 +53,17 @@ function defaultIsExecutable(candidate) {
 }
 
 function resolveLibreOfficeExecutable({
+  bundledRoot = '',
   configured = '',
+  packaged = false,
   platform = process.platform,
   env = process.env,
   isExecutable = defaultIsExecutable,
 } = {}) {
-  const candidates = [configured, ...libreOfficeCandidates(platform, env)].filter(Boolean);
+  const bundled = bundledRoot ? bundledLibreOfficeExecutable(bundledRoot, platform) : '';
+  const candidates = packaged
+    ? [bundled]
+    : [bundled, configured, ...libreOfficeCandidates(platform, env)];
   return candidates.find((candidate) => isExecutable(candidate)) ?? '';
 }
 
@@ -57,8 +87,10 @@ function launchLibreOffice(executable, paths, spawnProcess = spawn) {
 }
 
 module.exports = {
+  bundledLibreOfficeExecutable,
   launchLibreOffice,
   libreOfficeCandidates,
   libreOfficeLaunchArgs,
+  officeRuntimeRoot,
   resolveLibreOfficeExecutable,
 };

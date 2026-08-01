@@ -2,10 +2,13 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
-const { BrowserWindow } = require('electron');
+const { app, BrowserWindow } = require('electron');
 const settings = require('./settings.cjs');
 const { safeFileName } = require('./security.cjs');
-const { resolveLibreOfficeExecutable } = require('./office/libreOffice.cjs');
+const {
+  officeRuntimeRoot,
+  resolveLibreOfficeExecutable,
+} = require('./office/libreOffice.cjs');
 
 /**
  * The main-process capabilities handed to `runtime: 'main'` tools as `ctx.host`.
@@ -117,7 +120,16 @@ function converterConfigFrom(currentSettings, deps = {}) {
   }
 
   const libreOffice = resolveLibreOffice({
+    bundledRoot: officeRuntimeRoot({
+      packaged: deps.packaged ?? app?.isPackaged ?? false,
+      resourcesPath: deps.resourcesPath ?? process.resourcesPath ?? '',
+      projectRoot: deps.projectRoot ?? path.join(__dirname, '..'),
+      platform: deps.platform ?? process.platform,
+      arch: deps.arch ?? process.arch,
+    }),
     configured: currentSettings.office?.libreOfficeExecutable ?? '',
+    packaged: deps.packaged ?? app?.isPackaged ?? false,
+    platform: deps.platform ?? process.platform,
   });
   if (libreOffice) {
     return {

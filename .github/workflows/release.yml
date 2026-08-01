@@ -66,9 +66,6 @@ jobs:
           - name: linux-x64
             os: ubuntu-latest
             script: pack:linux-x64
-          - name: linux-arm64
-            os: ubuntu-24.04-arm
-            script: pack:linux-arm64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

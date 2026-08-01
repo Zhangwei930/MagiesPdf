@@ -65,6 +65,28 @@ describe('Office service', () => {
     });
   });
 
+  it('resolves the editor from packaged app resources', () => {
+    let resolution;
+    const { deps } = dependencies({
+      packaged: true,
+      resourcesPath: '/app/resources',
+      platform: 'linux',
+      arch: 'x64',
+      resolveExecutable: (options) => {
+        resolution = options;
+        return '/app/resources/office-runtime/program/soffice';
+      },
+    });
+
+    assert.equal(createOfficeService(deps).status().libreOffice.available, true);
+    assert.deepEqual(resolution, {
+      bundledRoot: '/app/resources/office-runtime',
+      configured: '',
+      packaged: true,
+      platform: 'linux',
+    });
+  });
+
   it('lets the customer locate an existing LibreOffice installation', async () => {
     const selected = '/Applications/LibreOffice.app/Contents/MacOS/soffice';
     const { deps, getStored } = dependencies({
@@ -147,6 +169,15 @@ describe('Office service', () => {
     await assert.rejects(createOfficeService(deps).createAndOpen({}, 'word'), /not installed/i);
     assert.equal(saveDialogOpened, false);
     assert.deepEqual(calls.written, []);
+  });
+
+  it('treats a missing bundled editor as a damaged packaged installation', async () => {
+    const { deps } = dependencies({ packaged: true, resolveExecutable: () => '' });
+
+    await assert.rejects(
+      createOfficeService(deps).createAndOpen({}, 'word'),
+      /reinstall Magies Office/i,
+    );
   });
 
   it('opens existing Office files selected by the user and remembers newest first', async () => {

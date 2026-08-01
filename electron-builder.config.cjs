@@ -14,6 +14,13 @@ function requestedArch() {
   return process.env.npm_config_arch || process.env.npm_config_target_arch || process.arch;
 }
 
+const { assertOfficeRuntime } = require('./scripts/officePackaging.cjs');
+
+function builderArchName(arch) {
+  if (typeof arch === 'string') return arch;
+  return { 0: 'ia32', 1: 'x64', 2: 'armv7l', 3: 'arm64', 4: 'universal' }[arch] ?? String(arch);
+}
+
 module.exports = {
   appId: 'top.magies.pdf',
   productName: 'Magies Office',
@@ -103,6 +110,21 @@ module.exports = {
     'node_modules/tesseract.js-core/**',
   ],
 
+  extraResources: [
+    {
+      from: 'vendor/office-runtime/${os}-${arch}',
+      to: 'office-runtime',
+    },
+  ],
+
+  beforePack: async (context) => {
+    assertOfficeRuntime({
+      projectRoot: __dirname,
+      platform: context.electronPlatformName,
+      arch: builderArchName(context.arch),
+    });
+  },
+
   mac: {
     icon: 'build/icon.icns',
     // Open-source builds: no paid Developer ID / notarization (same as MagiesTerminal).
@@ -110,10 +132,7 @@ module.exports = {
     notarize: false,
     category: 'public.app-category.productivity',
     darkModeSupport: true,
-    target: [
-      { target: 'dmg', arch: ['arm64', 'x64'] },
-      { target: 'zip', arch: ['arm64', 'x64'] },
-    ],
+    target: ['dmg', 'zip'],
     // The PDF handler declared in `fileAssociations` is registered as an
     // alternate, so MagiesPdf appears in Open With without displacing whatever
     // the user already uses.
