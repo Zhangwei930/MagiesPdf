@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.0.0 — 2026-07-31
+
+### Local Office workspace
+
+- **Create, open and edit Word, Excel and PowerPoint files** from one desktop home screen, with recent documents, rename, remove and move-to-trash actions.
+- **LibreOffice 26.2.5 is included in the installer.** Customers install Magies Office once; no separate editor or online service is required.
+- Documents stay on the computer. Office-to-PDF and supported Office format conversions use the bundled local engine.
+- PDF remains a native Magies workspace, while Word, spreadsheets and slides open in the bundled desktop editor.
+
+### Easier PDF work
+
+- Creating a blank PDF now opens it directly in the editor, and text can be inserted by clicking the page.
+- Tool forms keep the common options visible and move uncommon settings out of the way, with page-range shortcuts, grouped choices and real file pickers.
+- The home screen, document actions and editor entry points use a simpler office-style layout with fewer setup steps.
+
+### Installers and compatibility
+
+- Bundle and verify the matching LibreOffice runtime in macOS Intel/Apple Silicon, Windows x64/ARM64 and Linux x64 packages.
+- Validate runtime architecture, version, open-source notice and native startup before uploading an installer.
+- Packages remain unsigned and free/open-source; macOS Gatekeeper or Windows SmartScreen may require manual confirmation on first launch.
+
 ## 1.0.4 — 2026-07-29
 
 ### From a toolbox to a document editor
