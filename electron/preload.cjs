@@ -25,6 +25,8 @@ const api = {
   getCatalog: () => ipcRenderer.invoke('catalog:get'),
 
   getOfficeStatus: () => ipcRenderer.invoke('office:status'),
+  pickLibreOfficeExecutable: () => ipcRenderer.invoke('office:pickExecutable'),
+  openLibreOfficeDownload: () => ipcRenderer.invoke('office:openDownloadPage'),
   pickAndOpenOffice: (multiple) => ipcRenderer.invoke('office:pickAndOpen', { multiple }),
   createAndOpenOffice: (kind) => ipcRenderer.invoke('office:createAndOpen', { kind }),
   openOfficePaths: (paths) => ipcRenderer.invoke('office:openPaths', { paths }),

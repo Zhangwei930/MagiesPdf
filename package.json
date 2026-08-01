@@ -1,7 +1,7 @@
 {
   "name": "magies-pdf",
-  "productName": "MagiesPdf",
-  "description": "MagiesPdf is a cross-platform desktop PDF toolbox: merge, split, convert, OCR, redact, sign, compress and automate — everything runs locally on your machine.",
+  "productName": "Magies Office",
+  "description": "Magies Office is a local-first desktop workspace for Word, Excel, PowerPoint and PDF documents.",
   "homepage": "https://pdf.magies.top",
   "private": true,
   "version": "1.0.4",

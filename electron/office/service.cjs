@@ -20,6 +20,7 @@ const CREATE_FILTERS = {
 };
 
 const RECENT_DOCUMENT_LIMIT = 20;
+const LIBREOFFICE_DOWNLOAD_URL = 'https://www.libreoffice.org/download/';
 
 function documentKind(candidate) {
   switch (path.extname(candidate).toLowerCase()) {
@@ -47,6 +48,13 @@ function isDocumentPath(candidate) {
   return typeof candidate === 'string' && DOCUMENT_EXTENSIONS.has(path.extname(candidate).toLowerCase());
 }
 
+function normalizeLibreOfficeSelection(candidate, platform = process.platform) {
+  if (platform === 'darwin' && candidate.toLowerCase().endsWith('.app')) {
+    return path.join(candidate, 'Contents', 'MacOS', 'soffice');
+  }
+  return candidate;
+}
+
 function createOfficeService(deps = {}) {
   const runtime = {
     dialog: deps.dialog ?? dialog,
@@ -56,6 +64,7 @@ function createOfficeService(deps = {}) {
     now: deps.now ?? Date.now,
     resolveExecutable: deps.resolveExecutable ?? resolveLibreOfficeExecutable,
     launch: deps.launch ?? launchLibreOffice,
+    openExternal: deps.openExternal ?? ((url) => shell.openExternal(url)),
     trash: deps.trash ?? ((target) => shell.trashItem(target)),
   };
 
@@ -63,6 +72,10 @@ function createOfficeService(deps = {}) {
   const recentSettings = () => runtime.settings.read().recentDocuments ?? [];
   const executable = () =>
     runtime.resolveExecutable({ configured: officeSettings().libreOfficeExecutable ?? '' });
+  const status = () => {
+    const resolved = executable();
+    return { libreOffice: { available: resolved !== '', executable: resolved } };
+  };
 
   function writeRecent(recentDocuments) {
     runtime.settings.write({ recentDocuments: recentDocuments.slice(0, RECENT_DOCUMENT_LIMIT) });
@@ -121,9 +134,26 @@ function createOfficeService(deps = {}) {
   }
 
   return {
-    status() {
-      const resolved = executable();
-      return { libreOffice: { available: resolved !== '', executable: resolved } };
+    status,
+
+    async pickExecutable(window) {
+      const result = await runtime.dialog.showOpenDialog(window, {
+        title: 'Locate LibreOffice',
+        properties: ['openFile'],
+        filters: [{ name: 'LibreOffice', extensions: process.platform === 'win32' ? ['exe'] : ['*'] }],
+      });
+      if (result.canceled || !result.filePaths[0]) return { canceled: true, status: status() };
+
+      const selected = normalizeLibreOfficeSelection(result.filePaths[0]);
+      const resolved = runtime.resolveExecutable({ configured: selected });
+      if (resolved !== selected) throw new Error('The selected file is not a runnable LibreOffice executable');
+      runtime.settings.write({ office: { libreOfficeExecutable: selected } });
+      return { canceled: false, status: status() };
+    },
+
+    async openDownloadPage() {
+      await runtime.openExternal(LIBREOFFICE_DOWNLOAD_URL);
+      return { opened: true };
     },
 
     openPaths,
@@ -222,6 +252,8 @@ module.exports = {
   CREATE_FILTERS,
   OFFICE_FILTERS,
   RECENT_DOCUMENT_LIMIT,
+  LIBREOFFICE_DOWNLOAD_URL,
+  normalizeLibreOfficeSelection,
   createOfficeService,
   documentKind,
 };

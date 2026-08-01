@@ -1,9 +1,9 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
-const { createOfficeService } = require('./service.cjs');
+const { createOfficeService, normalizeLibreOfficeSelection } = require('./service.cjs');
 
 function dependencies(overrides = {}) {
-  const calls = { launched: [], renamed: [], trashed: [], written: [], settings: [] };
+  const calls = { launched: [], openedExternal: [], renamed: [], trashed: [], written: [], settings: [] };
   let stored = {
     office: { libreOfficeExecutable: '' },
     recentDocuments: [],
@@ -38,6 +38,7 @@ function dependencies(overrides = {}) {
     now: () => 2000,
     resolveExecutable: () => '/usr/bin/libreoffice',
     launch: (executable, paths) => calls.launched.push([executable, paths]),
+    openExternal: async (url) => calls.openedExternal.push(url),
     trash: async (target) => calls.trashed.push(target),
     ...overrides,
   };
@@ -45,6 +46,14 @@ function dependencies(overrides = {}) {
 }
 
 describe('Office service', () => {
+  it('accepts selecting the LibreOffice app bundle on macOS', () => {
+    assert.equal(
+      normalizeLibreOfficeSelection('/Applications/LibreOffice.app', 'darwin'),
+      '/Applications/LibreOffice.app/Contents/MacOS/soffice',
+    );
+    assert.equal(normalizeLibreOfficeSelection('/usr/bin/libreoffice', 'linux'), '/usr/bin/libreoffice');
+  });
+
   it('reports only the detected local editor', () => {
     const { deps } = dependencies({
       settings: { read: () => ({ office: { libreOfficeExecutable: '/custom/soffice' } }) },
@@ -54,6 +63,43 @@ describe('Office service', () => {
     assert.deepEqual(createOfficeService(deps).status(), {
       libreOffice: { available: true, executable: '/custom/soffice:resolved' },
     });
+  });
+
+  it('lets the customer locate an existing LibreOffice installation', async () => {
+    const selected = '/Applications/LibreOffice.app/Contents/MacOS/soffice';
+    const { deps, getStored } = dependencies({
+      dialog: {
+        showOpenDialog: async (_window, options) => {
+          assert.equal(options.title, 'Locate LibreOffice');
+          return { canceled: false, filePaths: [selected] };
+        },
+        showSaveDialog: async () => ({ canceled: true }),
+      },
+      resolveExecutable: ({ configured }) => configured,
+    });
+
+    assert.deepEqual(await createOfficeService(deps).pickExecutable({}), {
+      canceled: false,
+      status: { libreOffice: { available: true, executable: selected } },
+    });
+    assert.equal(getStored().office.libreOfficeExecutable, selected);
+  });
+
+  it('does not change settings when locating LibreOffice is cancelled', async () => {
+    const { deps, calls } = dependencies();
+
+    assert.deepEqual(await createOfficeService(deps).pickExecutable({}), {
+      canceled: true,
+      status: { libreOffice: { available: true, executable: '/usr/bin/libreoffice' } },
+    });
+    assert.deepEqual(calls.settings, []);
+  });
+
+  it('opens only the official LibreOffice download page', async () => {
+    const { deps, calls } = dependencies();
+
+    assert.deepEqual(await createOfficeService(deps).openDownloadPage(), { opened: true });
+    assert.deepEqual(calls.openedExternal, ['https://www.libreoffice.org/download/']);
   });
 
   it('creates, opens and remembers a document after Save As', async () => {

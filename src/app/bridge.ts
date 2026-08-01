@@ -92,6 +92,8 @@ export interface MagiesPdfBridge {
   isPackaged(): Promise<boolean>;
   getCatalog(): Promise<ToolMeta[]>;
   getOfficeStatus(): Promise<OfficeStatus>;
+  pickLibreOfficeExecutable(): Promise<{ canceled: boolean; status: OfficeStatus }>;
+  openLibreOfficeDownload(): Promise<{ opened: boolean }>;
   pickAndOpenOffice(multiple: boolean): Promise<OfficeOpenResult>;
   createAndOpenOffice(kind: OfficeCreateKind): Promise<OfficeOpenResult>;
   openOfficePaths(paths: string[]): Promise<OfficeOpenResult>;

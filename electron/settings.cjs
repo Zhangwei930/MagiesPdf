@@ -69,6 +69,10 @@ const DEFAULTS = {
 let cache = null;
 let settingsPath = null;
 
+function preserveLegacyUserDataPath(electronApp = app) {
+  electronApp.setPath('userData', path.join(electronApp.getPath('appData'), 'MagiesPdf'));
+}
+
 function filePath() {
   if (!settingsPath) settingsPath = path.join(app.getPath('userData'), 'settings.json');
   return settingsPath;
@@ -121,4 +125,4 @@ function write(patch) {
   return cache;
 }
 
-module.exports = { DEFAULTS, read, write, merge };
+module.exports = { DEFAULTS, read, write, merge, preserveLegacyUserDataPath };

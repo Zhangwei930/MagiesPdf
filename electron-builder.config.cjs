@@ -16,14 +16,14 @@ function requestedArch() {
 
 module.exports = {
   appId: 'top.magies.pdf',
-  productName: 'MagiesPdf',
+  productName: 'Magies Office',
   copyright: `Copyright © ${new Date().getFullYear()} JasonZhangDad`,
 
   /**
    * Artefact names follow the MagiesTerminal convention so the download page and
    * the R2 mirror can pattern-match releases from either product identically.
    */
-  artifactName: '${productName}-${version}-${os}-${arch}.${ext}',
+  artifactName: 'MagiesPdf-${version}-${os}-${arch}.${ext}',
 
   directories: {
     output: 'release/${version}',
@@ -62,11 +62,35 @@ module.exports = {
    */
   fileAssociations: [
     {
-      ext: 'pdf',
+      ext: ['pdf'],
       name: 'PDF Document',
       description: 'Portable Document Format',
       mimeType: 'application/pdf',
       role: 'Viewer',
+      rank: 'Alternate',
+      isPackage: false,
+    },
+    {
+      ext: ['doc', 'docx', 'odt', 'rtf'],
+      name: 'Word Document',
+      description: 'Word Processing Document',
+      role: 'Editor',
+      rank: 'Alternate',
+      isPackage: false,
+    },
+    {
+      ext: ['xls', 'xlsx', 'ods'],
+      name: 'Spreadsheet',
+      description: 'Spreadsheet Document',
+      role: 'Editor',
+      rank: 'Alternate',
+      isPackage: false,
+    },
+    {
+      ext: ['ppt', 'pptx', 'odp'],
+      name: 'Presentation',
+      description: 'Presentation Document',
+      role: 'Editor',
       rank: 'Alternate',
       isPackage: false,
     },
@@ -100,7 +124,7 @@ module.exports = {
 
   dmg: {
     title: '${productName}',
-    artifactName: '${productName}-${version}-mac-${arch}.${ext}',
+    artifactName: 'MagiesPdf-${version}-mac-${arch}.${ext}',
     iconSize: 100,
     iconTextSize: 12,
     window: {
@@ -135,11 +159,11 @@ module.exports = {
   },
 
   portable: {
-    artifactName: '${productName}-${version}-portable-${os}-${arch}.${ext}',
+    artifactName: 'MagiesPdf-${version}-portable-${os}-${arch}.${ext}',
   },
 
   nsis: {
-    artifactName: '${productName}-${version}-win-${arch}.${ext}',
+    artifactName: 'MagiesPdf-${version}-win-${arch}.${ext}',
     oneClick: false,
     perMachine: false,
     allowElevation: true,
@@ -147,13 +171,13 @@ module.exports = {
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
     deleteAppDataOnUninstall: false,
-    shortcutName: 'MagiesPdf',
+    shortcutName: 'Magies Office',
   },
 
   linux: {
     icon: 'build/icon.png',
     // Align with productName so desktop environments can match the running window.
-    executableName: 'MagiesPdf',
+    executableName: 'magies-office',
     // AppImage + deb ship on every host. rpm/pacman need rpmbuild/fpm host
     // tools (often missing on macOS CI) — build those on a Linux runner.
     target: ['AppImage', 'deb'],
@@ -161,8 +185,8 @@ module.exports = {
     maintainer: 'JasonZhangDad <470059464@qq.com>',
     desktop: {
       entry: {
-        Name: 'MagiesPdf',
-        Comment: 'Local-first PDF toolbox',
+        Name: 'Magies Office',
+        Comment: 'Local-first Office and PDF workspace',
         Categories: 'Office;Utility;',
       },
     },

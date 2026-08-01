@@ -22,6 +22,10 @@ const isDev = Boolean(DEV_SERVER_URL);
 const PACKAGED_INDEX_PATH = path.join(__dirname, '..', 'dist', 'index.html');
 const RENDERER_URL = isDev ? new URL(DEV_SERVER_URL).href : pathToFileURL(PACKAGED_INDEX_PATH).href;
 
+// The visible product name changed, but existing settings and recent documents
+// must remain in the directory used by every previous MagiesPdf release.
+settings.preserveLegacyUserDataPath(app);
+
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
 /** @type {JobPool | null} */

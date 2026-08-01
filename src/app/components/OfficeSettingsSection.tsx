@@ -48,6 +48,28 @@ export function OfficeSettingsSection() {
     }
   };
 
+  const locate = async () => {
+    setError('');
+    try {
+      const result = await bridge().pickLibreOfficeExecutable();
+      setStatus(result.status);
+      if (!result.canceled && result.status.libreOffice.executable) {
+        setExecutable(result.status.libreOffice.executable);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  const download = async () => {
+    setError('');
+    try {
+      await bridge().openLibreOfficeDownload();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
   return (
     <section className="surface-panel space-y-5 p-4">
       <div>
@@ -78,6 +100,10 @@ export function OfficeSettingsSection() {
       {error && <p className="flex items-start gap-1.5 rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-[11px] text-[var(--danger)]"><AlertCircle size={13} className="mt-0.5 shrink-0" /><span>{error}</span></p>}
 
       <div className="flex justify-end gap-2">
+        {!status?.libreOffice.available && (
+          <Button size="sm" variant="primary" onClick={() => void download()}>{t('downloadLibreOffice', locale)}</Button>
+        )}
+        <Button size="sm" onClick={() => void locate()}>{t('locateInstalled', locale)}</Button>
         <Button size="sm" onClick={() => void refreshStatus()}><RefreshCw size={14} />{t('detectAgain', locale)}</Button>
         <Button size="sm" variant="primary" onClick={() => void save()} loading={saving}>{t('saveSettings', locale)}</Button>
       </div>

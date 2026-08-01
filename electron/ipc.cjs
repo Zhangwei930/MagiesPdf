@@ -119,6 +119,8 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   handle('catalog:get', () => readCatalog().tools);
 
   handle('office:status', () => office.status());
+  handle('office:pickExecutable', () => office.pickExecutable(getWindow()));
+  handle('office:openDownloadPage', () => office.openDownloadPage());
   handle('office:pickAndOpen', (_event, { multiple }) =>
     office.pickAndOpen(getWindow(), multiple === true),
   );
