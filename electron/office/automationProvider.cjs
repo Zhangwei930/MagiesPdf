@@ -306,6 +306,16 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
     }, ['path']),
   ),
   tool(
+    'office_presentation_duplicate_slide',
+    { zh: '复制 PPT 幻灯片', en: 'Duplicate presentation slide' },
+    'Duplicate one PowerPoint slide, including its shapes, immediately after the source slide and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      slide_number: { type: 'integer', minimum: 1 },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'slide_number']),
+  ),
+  tool(
     'office_presentation_delete_slide',
     { zh: '删除 PPT 幻灯片', en: 'Delete presentation slide' },
     'Delete one PowerPoint slide by its 1-based number and save a new non-overwriting copy.',
@@ -1178,6 +1188,30 @@ function createOfficeAutomationProvider({
         source: relativePath,
         written: output.relativePath,
         slideNumber: Number(result.slideNumber) || 0,
+        slidesTotal: Number(result.slidesTotal) || 0,
+      };
+    }
+
+    if (functionName === 'office_presentation_duplicate_slide') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const slideNumber = integerValue(args.slide_number, 'slide_number', 1);
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, PRESENTATION_EXTENSIONS, 'PowerPoint');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'presentation_duplicate_slide',
+        inputPath,
+        outputPath: output.absolutePath,
+        slideNumber,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        sourceSlideNumber: Number(result.sourceSlideNumber) || slideNumber,
+        duplicatedSlideNumber: Number(result.duplicatedSlideNumber) || 0,
         slidesTotal: Number(result.slidesTotal) || 0,
       };
     }

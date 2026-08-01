@@ -37,6 +37,7 @@ describe('Office Agent wiring', () => {
     assert.match(workerSource, /'excel_format_range':/);
     assert.match(workerSource, /'excel_create_chart':/);
     assert.match(workerSource, /'presentation_add_slide':/);
+    assert.match(workerSource, /'presentation_duplicate_slide':/);
     assert.match(workerSource, /'presentation_delete_slide':/);
   });
 

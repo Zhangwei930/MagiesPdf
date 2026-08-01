@@ -65,6 +65,7 @@ describe('createOfficeAutomationProvider', () => {
         'office_presentation_read',
         'office_presentation_replace',
         'office_presentation_add_slide',
+        'office_presentation_duplicate_slide',
         'office_presentation_delete_slide',
         'office_presentation_insert_image',
         'office_presentation_insert_table',
@@ -563,7 +564,7 @@ describe('createOfficeAutomationProvider', () => {
     }), /range/);
   });
 
-  it('adds and deletes PowerPoint slides in non-overwriting copies', async () => {
+  it('adds, duplicates, and deletes PowerPoint slides in non-overwriting copies', async () => {
     const root = await temporaryDirectory();
     await fs.writeFile(path.join(root, 'Quarterly.pptx'), 'source');
     const calls = [];
@@ -573,9 +574,13 @@ describe('createOfficeAutomationProvider', () => {
       runUno: async (request) => {
         calls.push(request);
         await fs.copyFile(request.inputPath, request.outputPath);
-        return request.operation === 'presentation_add_slide'
-          ? { slideNumber: 2, slidesTotal: 3 }
-          : { deletedSlideNumber: 1, slidesRemaining: 1 };
+        if (request.operation === 'presentation_add_slide') {
+          return { slideNumber: 2, slidesTotal: 3 };
+        }
+        if (request.operation === 'presentation_duplicate_slide') {
+          return { sourceSlideNumber: 1, duplicatedSlideNumber: 2, slidesTotal: 3 };
+        }
+        return { deletedSlideNumber: 1, slidesRemaining: 1 };
       },
     });
     await provider.setWorkspaceRoot(root);
@@ -595,15 +600,30 @@ describe('createOfficeAutomationProvider', () => {
     assert.equal(calls[0].afterSlide, 1);
     assert.deepEqual(calls[0].body, ['Revenue target', 'Hiring plan']);
 
-    assert.deepEqual(await provider.callTool('office_presentation_delete_slide', {
+    assert.deepEqual(await provider.callTool('office_presentation_duplicate_slide', {
       path: 'Quarterly.pptx', slide_number: 1, output_directory: 'Edited',
     }), {
       source: 'Quarterly.pptx',
       written: 'Edited/Quarterly (2).pptx',
+      sourceSlideNumber: 1,
+      duplicatedSlideNumber: 2,
+      slidesTotal: 3,
+    });
+    assert.equal(calls[1].operation, 'presentation_duplicate_slide');
+    assert.equal(calls[1].slideNumber, 1);
+
+    assert.deepEqual(await provider.callTool('office_presentation_delete_slide', {
+      path: 'Quarterly.pptx', slide_number: 1, output_directory: 'Edited',
+    }), {
+      source: 'Quarterly.pptx',
+      written: 'Edited/Quarterly (3).pptx',
       deletedSlideNumber: 1,
       slidesRemaining: 1,
     });
 
+    await assert.rejects(() => provider.callTool('office_presentation_duplicate_slide', {
+      path: 'Quarterly.pptx', slide_number: 0,
+    }), /slide_number/);
     await assert.rejects(() => provider.callTool('office_presentation_delete_slide', {
       path: 'Quarterly.pptx', slide_number: 0,
     }), /slide_number/);

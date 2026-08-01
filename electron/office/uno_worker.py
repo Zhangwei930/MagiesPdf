@@ -1038,6 +1038,19 @@ def presentation_add_slide(document, request):
     return {'slideNumber': insert_index + 1, 'slidesTotal': pages.getCount()}
 
 
+def presentation_duplicate_slide(document, request):
+    pages = presentation(document)
+    slide_number = int(request['slideNumber'])
+    source = presentation_slide_by_number(pages, slide_number)
+    document.duplicate(source)
+    store_copy(document, request['outputPath'])
+    return {
+        'sourceSlideNumber': slide_number,
+        'duplicatedSlideNumber': slide_number + 1,
+        'slidesTotal': pages.getCount(),
+    }
+
+
 def presentation_delete_slide(document, request):
     pages = presentation(document)
     slide_count = pages.getCount()
@@ -1297,6 +1310,7 @@ OPERATIONS = {
     'presentation_read': (True, presentation_read),
     'presentation_replace': (False, presentation_replace),
     'presentation_add_slide': (False, presentation_add_slide),
+    'presentation_duplicate_slide': (False, presentation_duplicate_slide),
     'presentation_delete_slide': (False, presentation_delete_slide),
     'presentation_insert_image': (False, presentation_insert_image),
     'presentation_insert_table': (False, presentation_insert_table),
