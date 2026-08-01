@@ -37,7 +37,7 @@ function createAiService({
     return { apiKeyConfigured: secretStore.hasApiKey() };
   };
 
-  const runTurn = async (request, sendEvent) => {
+  const executeTurn = async (request, sendEvent, options = {}) => {
     const requestId = String(request?.requestId || '');
     if (!requestId) throw new AiError('AI_INPUT_INVALID', 'requestId is required');
     if (activeTurns.has(requestId)) {
@@ -47,7 +47,7 @@ function createAiService({
     const controller = new AbortController();
     const approvals = new Map();
     const event = (payload) => sendEvent({ requestId, ...payload });
-    const requestApproval = (details) => new Promise((resolve, reject) => {
+    const interactiveApproval = (details) => new Promise((resolve, reject) => {
       if (controller.signal.aborted) {
         reject(abortError());
         return;
@@ -75,15 +75,23 @@ function createAiService({
       event({ type: 'approval_required', approvalId, ...details });
     });
 
+    const requestApproval = options.requestApproval || interactiveApproval;
     const createRuntime = runtimeFactory || ((deps) => new AgentRuntime({
-      tools: readCatalog().tools,
+      tools: deps.tools,
       model,
       executeTool,
       requestApproval: deps.requestApproval,
       externalToolProvider: deps.externalToolProvider,
       officeToolProvider: deps.officeToolProvider,
     }));
-    const runtime = createRuntime({ requestApproval, externalToolProvider, officeToolProvider });
+    const runtime = createRuntime({
+      requestApproval,
+      tools: options.tools || readCatalog().tools,
+      externalToolProvider: Object.hasOwn(options, 'externalToolProvider')
+        ? options.externalToolProvider
+        : externalToolProvider,
+      officeToolProvider: options.officeToolProvider || officeToolProvider,
+    });
     activeTurns.set(requestId, { controller, approvals });
 
     try {
@@ -108,6 +116,45 @@ function createAiService({
     }
   };
 
+  const runTurn = (request, sendEvent) => executeTurn(request, sendEvent);
+
+  const runUnattended = async (request, sendEvent) => {
+    const allowedToolIds = [...new Set((Array.isArray(request?.allowedToolIds)
+      ? request.allowedToolIds
+      : []).map(String))];
+    if (allowedToolIds.length === 0) {
+      throw new AiError('AI_INPUT_INVALID', 'Unattended automation requires an allowed Office tool');
+    }
+    if (allowedToolIds.some((toolId) => !toolId.startsWith('office:'))) {
+      throw new AiError('AI_INPUT_INVALID', 'Unattended tools must use the office: namespace');
+    }
+    const allowed = new Set(allowedToolIds);
+    const filteredOfficeProvider = officeToolProvider && {
+      async listTools(options) {
+        const tools = await officeToolProvider.listTools(options);
+        return tools.filter((tool) => allowed.has(tool.toolId));
+      },
+      callTool: (...args) => officeToolProvider.callTool(...args),
+    };
+    let successfulOfficeTool = false;
+    const result = await executeTurn(request, (event) => {
+      if (event?.type === 'tool_result' && event.ok === true
+        && allowed.has(String(event.toolId || ''))) {
+        successfulOfficeTool = true;
+      }
+      sendEvent(event);
+    }, {
+      tools: [],
+      externalToolProvider: undefined,
+      officeToolProvider: filteredOfficeProvider,
+      requestApproval: async (details) => allowed.has(String(details?.toolId || '')),
+    });
+    if (!successfulOfficeTool) {
+      throw new AiError('AI_AUTOMATION_NO_TOOL', 'Unattended turn did not complete a successful Office tool');
+    }
+    return result;
+  };
+
   const respondApproval = (requestId, approvalId, approved) => {
     const turn = activeTurns.get(String(requestId));
     const approval = turn?.approvals.get(String(approvalId));
@@ -128,6 +175,7 @@ function createAiService({
     cancelTurn,
     getConfig,
     respondApproval,
+    runUnattended,
     runTurn,
     setApiKey,
   };

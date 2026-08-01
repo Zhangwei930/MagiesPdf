@@ -165,4 +165,5 @@ function createAiHistoryStore({
 module.exports = {
   MAX_AI_HISTORY_ENTRIES,
   createAiHistoryStore,
+  redactedText,
 };

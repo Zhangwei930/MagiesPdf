@@ -133,4 +133,53 @@ describe('AI service', () => {
     await service.runTurn({ requestId: 'office-provider', prompt: 'read Word' }, () => {});
     assert.equal(runtimeDependencies.officeToolProvider, officeToolProvider);
   });
+
+  it('runs unattended turns with only explicitly allowed local Office tools', async () => {
+    const listed = [
+      { functionName: 'read', toolId: 'office:excel:read' },
+      { functionName: 'write', toolId: 'office:excel:write' },
+    ];
+    const officeToolProvider = {
+      listTools: async () => listed,
+      callTool: async () => ({}),
+    };
+    let dependencies;
+    const service = serviceWith({
+      officeToolProvider,
+      externalToolProvider: { listTools: async () => [{ toolId: 'external:danger' }] },
+      runtimeFactory: (received) => {
+        dependencies = received;
+        return {
+          async runTurn({ onEvent }) {
+            assert.deepEqual(await received.officeToolProvider.listTools(), [listed[0]]);
+            assert.equal(await received.requestApproval({ toolId: 'office:excel:read' }), true);
+            onEvent({ type: 'tool_result', toolId: 'office:excel:read', ok: true });
+            return { message: 'done', files: [] };
+          },
+        };
+      },
+    });
+
+    const result = await service.runUnattended({
+      requestId: 'automation-1',
+      prompt: 'read workbook',
+      allowedToolIds: ['office:excel:read'],
+    }, () => {});
+
+    assert.deepEqual(result, { message: 'done', files: [] });
+    assert.equal(dependencies.externalToolProvider, undefined);
+  });
+
+  it('rejects unsafe unattended allowlists and turns without a successful tool', async () => {
+    const service = serviceWith({
+      officeToolProvider: { listTools: async () => [] },
+      runtimeFactory: () => ({ runTurn: async () => ({ message: 'no tool', files: [] }) }),
+    });
+    await assert.rejects(() => service.runUnattended({
+      requestId: 'bad', prompt: 'task', allowedToolIds: ['external:danger'],
+    }, () => {}), /office:/);
+    await assert.rejects(() => service.runUnattended({
+      requestId: 'no-tool', prompt: 'task', allowedToolIds: ['office:excel:read'],
+    }, () => {}), /successful Office tool/);
+  });
 });
