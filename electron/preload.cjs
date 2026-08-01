@@ -74,6 +74,18 @@ const api = {
   runJob: (request) => ipcRenderer.invoke('job:run', request),
   cancelJob: (jobId) => ipcRenderer.invoke('job:cancel', { jobId }),
 
+  getAiConfig: () => ipcRenderer.invoke('ai:config'),
+  setAiApiKey: (apiKey) => ipcRenderer.invoke('ai:setApiKey', { apiKey }),
+  runAiTurn: (request) => ipcRenderer.invoke('ai:runTurn', request),
+  cancelAiTurn: (requestId) => ipcRenderer.invoke('ai:cancelTurn', { requestId }),
+  respondAiApproval: (requestId, approvalId, approved) =>
+    ipcRenderer.invoke('ai:approvalResponse', { requestId, approvalId, approved }),
+  onAiEvent: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('ai:event', listener);
+    return () => ipcRenderer.removeListener('ai:event', listener);
+  },
+
   /**
    * Subscribes to documents the OS asked the app to open — a double-click, an
    * Open With, or a second launch. Only paths cross; the renderer reads them
@@ -108,6 +120,11 @@ const api = {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateSettings: (patch) => ipcRenderer.invoke('settings:update', patch),
   getApiStatus: () => ipcRenderer.invoke('api:status'),
+  getMcpConfig: () => ipcRenderer.invoke('mcp:config'),
+  getExternalMcpStatus: () => ipcRenderer.invoke('mcp:externalStatus'),
+  setExternalMcpConfig: (config) => ipcRenderer.invoke('mcp:externalSetConfig', { config }),
+  refreshExternalMcp: () => ipcRenderer.invoke('mcp:externalRefresh'),
+  clearExternalMcpConfig: () => ipcRenderer.invoke('mcp:externalClearConfig'),
 
   pickDirectory: () => ipcRenderer.invoke('files:pickDirectory'),
   pickFolderFiles: (accept, recursive) =>

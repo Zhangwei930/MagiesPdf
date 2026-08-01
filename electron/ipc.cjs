@@ -3,6 +3,7 @@ const path = require('node:path');
 const { app, dialog, ipcMain, shell } = require('electron');
 const settings = require('./settings.cjs');
 const mainRunner = require('./jobs/mainRunner.cjs');
+const { createJobExecutor } = require('./jobs/executor.cjs');
 const { createHostBridge } = require('./host.cjs');
 const { collectFilePaths } = require('./files/walk.cjs');
 const { InputBudget } = require('./files/inputBudget.cjs');
@@ -11,6 +12,10 @@ const updater = require('./updater/index.cjs');
 const { isTrustedIpcSender, safeFileName } = require('./security.cjs');
 const { createOfficeService } = require('./office/service.cjs');
 const { DOCUMENT_EXTENSIONS } = require('./office/formats.cjs');
+const { createAiService } = require('./ai/service.cjs');
+const { getSecretStore } = require('./ai/secrets.cjs');
+const { buildMcpClientConfig } = require('./mcp/config.cjs');
+const { createExternalMcpClientManager } = require('./mcp/clientManager.cjs');
 
 /**
  * IPC handlers. Every one of these is a boundary between untrusted renderer
@@ -262,8 +267,25 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   });
 
   const hostBridge = createHostBridge();
-  const runtimeOf = (toolId) =>
-    readCatalog().tools.find((tool) => tool.id === toolId)?.runtime ?? 'worker';
+  const secretStore = getSecretStore();
+  const externalMcpManager = createExternalMcpClientManager({
+    secretStore,
+    version: app.getVersion(),
+  });
+  const jobExecutor = createJobExecutor({
+    tools: readCatalog().tools,
+    pool,
+    mainRunner,
+    hostBridge,
+  });
+  const aiService = createAiService({
+    readCatalog,
+    readSettings: settings.read,
+    secretStore,
+    externalToolProvider: externalMcpManager,
+    executeTool: ({ signal, onProgress, ...request }) =>
+      jobExecutor.run(request, onProgress, signal),
+  });
 
   handle('job:run', async (event, request) => {
     const onProgress = (fraction, message) => {
@@ -271,14 +293,22 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
       event.sender.send('job:progress', { jobId: request.jobId, fraction, message });
     };
 
-    // Worker tools go to the thread pool; main tools need the host bridge
-    // (printToPDF, external converter) and therefore run right here.
-    return runtimeOf(request.toolId) === 'main'
-      ? mainRunner.run(request, hostBridge, onProgress)
-      : pool.run(request, onProgress);
+    return jobExecutor.run(request, onProgress);
   });
 
-  handle('job:cancel', (_event, { jobId }) => pool.cancel(jobId) || mainRunner.cancel(jobId));
+  handle('job:cancel', (_event, { jobId }) => jobExecutor.cancel(jobId));
+
+  handle('ai:config', () => aiService.getConfig());
+  handle('ai:setApiKey', (_event, { apiKey }) => aiService.setApiKey(apiKey));
+  handle('ai:runTurn', (event, request) =>
+    aiService.runTurn(request, (payload) => {
+      if (!event.sender.isDestroyed()) event.sender.send('ai:event', payload);
+    }),
+  );
+  handle('ai:cancelTurn', (_event, { requestId }) => aiService.cancelTurn(requestId));
+  handle('ai:approvalResponse', (_event, { requestId, approvalId, approved }) =>
+    aiService.respondApproval(requestId, approvalId, approved),
+  );
 
   handle('settings:get', () => settings.read());
   handle('settings:update', (_event, patch) => {
@@ -305,6 +335,27 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
 
   const { getApiStatus } = require('./api/server.cjs');
   handle('api:status', () => getApiStatus());
+  handle('mcp:config', () => {
+    const packedServerPath = path.join(__dirname, 'mcp', 'magies-office-mcp-server.cjs');
+    const serverPath = app.isPackaged
+      ? packedServerPath.replace(
+          `${path.sep}app.asar${path.sep}`,
+          `${path.sep}app.asar.unpacked${path.sep}`,
+        )
+      : packedServerPath;
+    return buildMcpClientConfig({
+      execPath: process.execPath,
+      serverPath,
+      apiStatus: getApiStatus(),
+      token: settings.read().api.token,
+    });
+  });
+  handle('mcp:externalStatus', () => externalMcpManager.getStatus());
+  handle('mcp:externalSetConfig', (_event, { config }) =>
+    externalMcpManager.setConfig(config),
+  );
+  handle('mcp:externalRefresh', () => externalMcpManager.refresh());
+  handle('mcp:externalClearConfig', () => externalMcpManager.clearConfig());
 
   handle('app:getVersion', () => app.getVersion());
   handle('app:isPackaged', () => app.isPackaged);
@@ -336,6 +387,8 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     }
   });
   handle('updater:status', () => updater.getLastStatus?.() ?? { state: 'idle' });
+
+  return { close: () => externalMcpManager.close() };
 }
 
 module.exports = {

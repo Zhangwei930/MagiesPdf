@@ -59,6 +59,12 @@ const DEFAULTS = {
     /** Empty means auto-detect the platform's standard LibreOffice installation. */
     libreOfficeExecutable: '',
   },
+  /** OpenAI-compatible model used by the local Agent runtime. API keys live in safeStorage. */
+  ai: {
+    baseUrl: 'http://127.0.0.1:11434/v1',
+    model: '',
+    maxSteps: 6,
+  },
   /**
    * User-saved pipeline definitions for the visual builder.
    * Each entry: { id, name, steps: [{ toolId, params }], updatedAt }.

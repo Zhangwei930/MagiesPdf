@@ -45,6 +45,11 @@ export interface AppSettings {
   office: {
     libreOfficeExecutable: string;
   };
+  ai: {
+    baseUrl: string;
+    model: string;
+    maxSteps: number;
+  };
   pipelinePresets: PipelinePreset[];
 }
 
@@ -85,6 +90,97 @@ export interface RecentDocument {
   modifiedAt: number;
 }
 
+export type AiConfig = AppSettings['ai'] & { apiKeyConfigured: boolean };
+
+export interface AiArtifact extends ToolOutputFile {
+  id: string;
+}
+
+interface AiEventBase {
+  requestId: string;
+}
+
+export type AiEvent =
+  | (AiEventBase & { type: 'model_start'; step: number })
+  | (AiEventBase & { type: 'assistant_delta'; delta: string })
+  | (AiEventBase & { type: 'assistant_done'; content: string })
+  | (AiEventBase & {
+      type: 'tool_start';
+      callId: string;
+      toolId: string;
+      toolName: LocalizedText;
+      inputFileNames: string[];
+    })
+  | (AiEventBase & {
+      type: 'tool_progress';
+      callId: string;
+      toolId: string;
+      fraction: number;
+      message?: LocalizedText;
+    })
+  | (AiEventBase & {
+      type: 'tool_result';
+      callId: string;
+      toolId: string;
+      ok: boolean;
+      error?: string;
+      files?: AiArtifact[];
+    })
+  | (AiEventBase & {
+      type: 'approval_required';
+      approvalId: string;
+      toolId: string;
+      toolName: LocalizedText;
+      inputFileNames?: string[];
+      details?: string;
+    })
+  | (AiEventBase & { type: 'approval_cleared'; approvalId: string });
+
+export interface AiTurnRequest {
+  requestId: string;
+  prompt: string;
+  history: Array<{ role: 'user' | 'assistant'; content: string }>;
+  locale: 'zh' | 'en';
+  files: Array<{
+    id: string;
+    name: string;
+    mime: string;
+    bytes: Uint8Array;
+    password?: string;
+  }>;
+}
+
+export interface AiTurnResult {
+  message: string;
+  files: ToolOutputFile[];
+}
+
+export interface McpClientConfig {
+  ready: boolean;
+  reason: string;
+  config: {
+    mcpServers: Record<string, {
+      command: string;
+      args: string[];
+      env: Record<string, string>;
+    }>;
+  };
+}
+
+export type ExternalMcpServerState = 'disabled' | 'disconnected' | 'connecting' | 'connected' | 'error';
+
+export interface ExternalMcpStatus {
+  configured: boolean;
+  servers: Array<{
+    id: string;
+    transport: 'stdio' | 'http' | 'unknown';
+    enabled: boolean;
+    state: ExternalMcpServerState;
+    toolCount: number;
+    error: string;
+  }>;
+}
+
 export interface MagiesPdfBridge {
   platform: string;
   version: string;
@@ -118,6 +214,12 @@ export interface MagiesPdfBridge {
   onOpenFiles(callback: (paths: string[]) => void): () => void;
   runJob(request: JobRequest): Promise<JobResult>;
   cancelJob(jobId: string): Promise<boolean>;
+  getAiConfig(): Promise<AiConfig>;
+  setAiApiKey(apiKey: string): Promise<{ apiKeyConfigured: boolean }>;
+  runAiTurn(request: AiTurnRequest): Promise<AiTurnResult>;
+  cancelAiTurn(requestId: string): Promise<boolean>;
+  respondAiApproval(requestId: string, approvalId: string, approved: boolean): Promise<boolean>;
+  onAiEvent(callback: (event: AiEvent) => void): () => void;
   onJobProgress(callback: (event: ProgressEvent) => void): () => void;
   onUpdaterStatus(callback: (status: UpdaterStatus) => void): () => void;
   getUpdaterStatus(): Promise<UpdaterStatus>;
@@ -127,6 +229,11 @@ export interface MagiesPdfBridge {
   getSettings(): Promise<AppSettings>;
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
   getApiStatus(): Promise<{ running: boolean; address: string; enabled: boolean }>;
+  getMcpConfig(): Promise<McpClientConfig>;
+  getExternalMcpStatus(): Promise<ExternalMcpStatus>;
+  setExternalMcpConfig(config: string): Promise<ExternalMcpStatus>;
+  refreshExternalMcp(): Promise<ExternalMcpStatus>;
+  clearExternalMcpConfig(): Promise<ExternalMcpStatus>;
   pickDirectory(): Promise<string>;
   /** Open a folder picker and load matching files (recursive by default). */
   pickFolderFiles(

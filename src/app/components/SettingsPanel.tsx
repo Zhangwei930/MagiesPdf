@@ -1,9 +1,18 @@
 import { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
-import { bridge, hasBridge, type UpdaterStatus } from '../bridge.ts';
-import { t } from '../i18n.ts';
+import {
+  bridge,
+  hasBridge,
+  type AiConfig,
+  type ExternalMcpServerState,
+  type ExternalMcpStatus,
+  type McpClientConfig,
+  type UpdaterStatus,
+} from '../bridge.ts';
+import { t, type UiKey } from '../i18n.ts';
 import {
   ArrowLeft,
+  Bot,
   FileText,
   FolderOpen,
   Languages,
@@ -24,7 +33,7 @@ import { Button, Field } from './ui.tsx';
 
 const SUPPORT_EMAIL = 'hibake888@outlook.com';
 
-type SettingsSection = 'appearance' | 'files' | 'office' | 'converter' | 'api' | 'app';
+type SettingsSection = 'ai' | 'appearance' | 'files' | 'office' | 'converter' | 'api' | 'app';
 
 function randomToken(): string {
   const bytes = new Uint8Array(24);
@@ -53,11 +62,22 @@ function updaterLabel(status: UpdaterStatus, locale: 'zh' | 'en'): string {
   }
 }
 
+function externalMcpStateLabel(state: ExternalMcpServerState, locale: 'zh' | 'en'): string {
+  switch (state) {
+    case 'disabled': return t('externalMcpStateDisabled', locale);
+    case 'disconnected': return t('externalMcpStateDisconnected', locale);
+    case 'connecting': return t('externalMcpStateConnecting', locale);
+    case 'connected': return t('externalMcpStateConnected', locale);
+    case 'error': return t('externalMcpStateError', locale);
+  }
+}
+
 const NAV: Array<{
   id: SettingsSection;
-  labelKey: 'settingsNavAppearance' | 'settingsNavFiles' | 'settingsNavOffice' | 'settingsNavConverter' | 'settingsNavApi' | 'settingsNavApp';
+  labelKey: UiKey;
   Icon: typeof Palette;
 }> = [
+  { id: 'ai', labelKey: 'settingsNavAi', Icon: Bot },
   { id: 'appearance', labelKey: 'settingsNavAppearance', Icon: Palette },
   { id: 'files', labelKey: 'settingsNavFiles', Icon: FolderOpen },
   { id: 'office', labelKey: 'settingsNavOffice', Icon: FileText },
@@ -70,7 +90,22 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
   const locale = useApp((s) => s.locale);
   const settings = useApp((s) => s.settings);
   const update = useApp((s) => s.updateSettings);
-  const [section, setSection] = useState<SettingsSection>('app');
+  const [section, setSection] = useState<SettingsSection>('ai');
+  const [aiConfig, setAiConfig] = useState<AiConfig>({
+    ...settings.ai,
+    apiKeyConfigured: false,
+  });
+  const [apiKey, setApiKey] = useState('');
+  const [savingApiKey, setSavingApiKey] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [mcpConfig, setMcpConfig] = useState<McpClientConfig | null>(null);
+  const [mcpCopied, setMcpCopied] = useState(false);
+  const [externalMcpStatus, setExternalMcpStatus] = useState<ExternalMcpStatus>({
+    configured: false,
+    servers: [],
+  });
+  const [externalMcpConfig, setExternalMcpConfig] = useState('');
+  const [externalMcpBusy, setExternalMcpBusy] = useState(false);
   const [apiStatus, setApiStatus] = useState({ running: false, address: '', enabled: false });
   const [appVersion, setAppVersion] = useState(hasBridge() ? '' : APP_VERSION);
   const [packaged, setPackaged] = useState(false);
@@ -101,6 +136,27 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
 
   useEffect(() => {
     if (!hasBridge()) return;
+    void bridge().getAiConfig().then(setAiConfig).catch((cause: unknown) => {
+      setAiError(cause instanceof Error ? cause.message : String(cause));
+    });
+  }, [settings.ai]);
+
+  useEffect(() => {
+    if (!hasBridge()) return;
+    void bridge().getMcpConfig().then(setMcpConfig).catch((cause: unknown) => {
+      setAiError(cause instanceof Error ? cause.message : String(cause));
+    });
+  }, [apiStatus.address, apiStatus.running, settings.api]);
+
+  useEffect(() => {
+    if (!hasBridge()) return;
+    void bridge().getExternalMcpStatus().then(setExternalMcpStatus).catch((cause: unknown) => {
+      setAiError(cause instanceof Error ? cause.message : String(cause));
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!hasBridge()) return;
     void bridge()
       .getVersion()
       .then(setAppVersion)
@@ -125,6 +181,23 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
   }, []);
 
   const autoUpdate = settings.autoUpdate !== false;
+
+  const runExternalMcpAction = async (
+    action: () => Promise<ExternalMcpStatus>,
+    clearInput = false,
+  ) => {
+    setExternalMcpBusy(true);
+    setAiError('');
+    try {
+      const status = await action();
+      setExternalMcpStatus(status);
+      if (clearInput) setExternalMcpConfig('');
+    } catch (cause) {
+      setAiError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setExternalMcpBusy(false);
+    }
+  };
 
   return (
     <div className="flex h-full min-h-0">
@@ -161,6 +234,224 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-xl space-y-4 px-6 py-6">
+          {section === 'ai' && (
+            <section className="surface-panel space-y-4 p-4">
+              <Field label={t('aiModelSection', locale)} help={t('aiModelHelp', locale)}>
+                <p className="rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-[12px] leading-relaxed text-[var(--accent)]">
+                  {t('aiPrivacy', locale)}
+                </p>
+              </Field>
+
+              <Field label={t('aiBaseUrl', locale)}>
+                <input
+                  className="field-input font-mono text-xs"
+                  value={settings.ai.baseUrl}
+                  placeholder="http://127.0.0.1:11434/v1"
+                  onChange={(event) => void update({
+                    ai: { ...settings.ai, baseUrl: event.target.value },
+                  })}
+                />
+              </Field>
+
+              <Field label={t('aiModel', locale)}>
+                <input
+                  className="field-input font-mono text-xs"
+                  value={settings.ai.model}
+                  placeholder="qwen3:8b"
+                  onChange={(event) => void update({
+                    ai: { ...settings.ai, model: event.target.value },
+                  })}
+                />
+              </Field>
+
+              <Field
+                label={t('aiApiKey', locale)}
+                help={aiConfig.apiKeyConfigured
+                  ? t('aiApiKeyConfigured', locale)
+                  : t('aiApiKeyNotConfigured', locale)}
+              >
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    className="field-input font-mono text-xs"
+                    value={apiKey}
+                    autoComplete="off"
+                    placeholder={aiConfig.apiKeyConfigured ? '••••••••••••' : 'sk-…'}
+                    onChange={(event) => setApiKey(event.target.value)}
+                  />
+                  <Button
+                    size="sm"
+                    loading={savingApiKey}
+                    disabled={!apiKey || !hasBridge()}
+                    onClick={() => {
+                      setSavingApiKey(true);
+                      setAiError('');
+                      void bridge().setAiApiKey(apiKey).then((status) => {
+                        setAiConfig((current) => ({ ...current, ...status }));
+                        setApiKey('');
+                      }).catch((cause: unknown) => {
+                        setAiError(cause instanceof Error ? cause.message : String(cause));
+                      }).finally(() => setSavingApiKey(false));
+                    }}
+                  >
+                    {t('aiApiKeySave', locale)}
+                  </Button>
+                  {aiConfig.apiKeyConfigured && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void bridge().setAiApiKey('').then((status) => {
+                        setAiConfig((current) => ({ ...current, ...status }));
+                      })}
+                    >
+                      {t('clear', locale)}
+                    </Button>
+                  )}
+                </div>
+              </Field>
+
+              <Field label={t('aiMaxSteps', locale)} help={t('aiMaxStepsHelp', locale)}>
+                <input
+                  type="number"
+                  className="field-input w-32"
+                  min={1}
+                  max={12}
+                  value={settings.ai.maxSteps}
+                  onChange={(event) => void update({
+                    ai: {
+                      ...settings.ai,
+                      maxSteps: Math.max(1, Math.min(12, Number(event.target.value) || 6)),
+                    },
+                  })}
+                />
+              </Field>
+
+              <div className="border-t border-[var(--border-subtle)] pt-4">
+                <Field label={t('mcpSection', locale)} help={t('mcpHelp', locale)}>
+                  {mcpConfig?.ready ? (
+                    <div className="space-y-2">
+                      <pre className="max-h-52 overflow-auto rounded-lg bg-[var(--surface-sunken)] p-3 font-mono text-[10px] leading-relaxed whitespace-pre-wrap break-all">
+                        {JSON.stringify({ mcpServers: mcpConfig.config.mcpServers }, null, 2)}
+                      </pre>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(JSON.stringify(mcpConfig.config, null, 2)).then(() => {
+                            setMcpCopied(true);
+                            window.setTimeout(() => setMcpCopied(false), 2000);
+                          });
+                        }}
+                      >
+                        {mcpCopied ? t('mcpCopied', locale) : t('mcpCopyConfig', locale)}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-[12px] text-[var(--text-muted)]">
+                        {t('mcpNeedsApi', locale)}
+                      </p>
+                      <Button
+                        size="sm"
+                        disabled={!hasBridge()}
+                        onClick={() => void update({
+                          api: {
+                            ...settings.api,
+                            enabled: true,
+                            allowLan: false,
+                            token: settings.api.token || randomToken(),
+                          },
+                        })}
+                      >
+                        {t('mcpEnable', locale)}
+                      </Button>
+                    </div>
+                  )}
+                </Field>
+              </div>
+
+              <div className="border-t border-[var(--border-subtle)] pt-4">
+                <Field label={t('externalMcpSection', locale)} help={t('externalMcpHelp', locale)}>
+                  <div className="space-y-3">
+                    <p className="rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-[11px] leading-relaxed text-[var(--accent)]">
+                      {t('externalMcpSecurity', locale)}
+                    </p>
+                    <textarea
+                      className="field-input min-h-40 resize-y font-mono text-[11px] leading-relaxed"
+                      value={externalMcpConfig}
+                      spellCheck={false}
+                      placeholder={'{\n  "mcpServers": {\n    "notion": {\n      "url": "https://example.com/mcp",\n      "headers": { "Authorization": "Bearer …" }\n    }\n  }\n}'}
+                      onChange={(event) => setExternalMcpConfig(event.target.value)}
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        loading={externalMcpBusy}
+                        disabled={!hasBridge() || !externalMcpConfig.trim()}
+                        onClick={() => void runExternalMcpAction(
+                          () => bridge().setExternalMcpConfig(externalMcpConfig),
+                          true,
+                        )}
+                      >
+                        {t('externalMcpSave', locale)}
+                      </Button>
+                      {externalMcpStatus.configured && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={externalMcpBusy}
+                            onClick={() => void runExternalMcpAction(() => bridge().refreshExternalMcp())}
+                          >
+                            {t('externalMcpRefresh', locale)}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={externalMcpBusy}
+                            onClick={() => void runExternalMcpAction(
+                              () => bridge().clearExternalMcpConfig(),
+                              true,
+                            )}
+                          >
+                            {t('externalMcpClear', locale)}
+                          </Button>
+                        </>
+                      )}
+                    </div>
+
+                    {externalMcpStatus.configured && externalMcpStatus.servers.length === 0 && (
+                      <p className="text-[11px] text-[var(--text-muted)]">{t('externalMcpEmpty', locale)}</p>
+                    )}
+                    {externalMcpStatus.servers.map((server) => (
+                      <div
+                        key={server.id}
+                        className="rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-3 py-2"
+                      >
+                        <div className="flex items-center gap-2 text-[11px]">
+                          <span className="min-w-0 flex-1 truncate font-medium">{server.id}</span>
+                          <span className="text-[var(--text-muted)]">{server.transport}</span>
+                          <span className={server.state === 'error' ? 'text-[var(--danger)]' : 'text-[var(--text-secondary)]'}>
+                            {externalMcpStateLabel(server.state, locale)}
+                            {server.state === 'connected' ? ` · ${server.toolCount}` : ''}
+                          </span>
+                        </div>
+                        {server.error && (
+                          <p className="mt-1 break-words text-[10px] text-[var(--danger)]">{server.error}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </Field>
+              </div>
+
+              {aiError && (
+                <p className="rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-[12px] text-[var(--danger)]">
+                  {aiError}
+                </p>
+              )}
+            </section>
+          )}
+
           {section === 'appearance' && (
             <section className="surface-panel space-y-4 p-4">
               <Field label={t('theme', locale)}>

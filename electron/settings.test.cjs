@@ -38,4 +38,28 @@ describe('Office settings', () => {
   it('starts with an empty local recent-document list', () => {
     assert.deepEqual(DEFAULTS.recentDocuments, []);
   });
+
+  it('provides a local-first OpenAI-compatible assistant configuration', () => {
+    assert.deepEqual(DEFAULTS.ai, {
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: '',
+      maxSteps: 6,
+    });
+    assert.equal(JSON.stringify(DEFAULTS.ai).includes('apiKey'), false);
+  });
+
+  it('deep-merges AI provider settings without accepting unknown secret fields', () => {
+    const next = merge(DEFAULTS, {
+      ai: {
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'must-not-persist',
+      },
+    });
+
+    assert.deepEqual(next.ai, {
+      baseUrl: 'https://api.example.com/v1',
+      model: '',
+      maxSteps: 6,
+    });
+  });
 });

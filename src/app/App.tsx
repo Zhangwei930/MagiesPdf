@@ -9,7 +9,7 @@ import {
   type PickedFile,
 } from './bridge.ts';
 import { t } from './i18n.ts';
-import { AlertCircle, Eye, Loader2, Settings } from './icons.ts';
+import { AlertCircle, Bot, Eye, Loader2, Settings } from './icons.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
 import { activeJobCount, useApp } from './store.ts';
 import { isDirty, type DocumentState } from './documents.ts';
@@ -49,6 +49,9 @@ const SettingsPanel = lazy(() =>
 const SignPage = lazy(() =>
   import('./components/SignPage.tsx').then((module) => ({ default: module.SignPage })),
 );
+const AIChatPanel = lazy(() =>
+  import('./components/AIChatPanel.tsx').then((module) => ({ default: module.AIChatPanel })),
+);
 
 /** Shown while one of the screens above is being fetched. */
 function ScreenFallback() {
@@ -84,6 +87,8 @@ export function App() {
   // are scoped to tools that accept a PDF.
   const [paletteForDocument, setPaletteForDocument] = useState(false);
   const [jobsOpen, setJobsOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiMounted, setAiMounted] = useState(false);
   // A tab being closed with unsaved changes, held until the user decides.
   const [closing, setClosing] = useState<DocumentState | null>(null);
   // The tool being run against the open document, if any.
@@ -366,6 +371,18 @@ export function App() {
 
         <button
           type="button"
+          onClick={() => {
+            setAiMounted(true);
+            setAiOpen((open) => !open);
+          }}
+          className="no-drag flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+        >
+          <Bot size={15} />
+          {t('aiAssistantShort', locale)}
+        </button>
+
+        <button
+          type="button"
           onClick={() => setJobsOpen(true)}
           className="no-drag flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
         >
@@ -471,6 +488,21 @@ export function App() {
             </Suspense>
           </main>
         </div>
+        {aiMounted && (
+          <Suspense fallback={null}>
+            <AIChatPanel
+              open={aiOpen}
+              locale={locale}
+              activeDocument={activeDocument}
+              onClose={() => setAiOpen(false)}
+              onOpenSettings={() => {
+                setAiOpen(false);
+                openSettings();
+              }}
+              onPreviewFile={showDocument}
+            />
+          </Suspense>
+        )}
       </div>
 
       {paletteOpen && (

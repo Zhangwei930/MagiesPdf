@@ -30,6 +30,7 @@ settings.preserveLegacyUserDataPath(app);
 let mainWindow = null;
 /** @type {JobPool | null} */
 let pool = null;
+let ipcServices = null;
 
 /**
  * Documents asked for before the renderer could receive them.
@@ -161,7 +162,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     pool = new JobPool();
-    registerIpc({
+    ipcServices = registerIpc({
       pool,
       getWindow: () => mainWindow,
       trustedRendererUrl: RENDERER_URL,
@@ -198,6 +199,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', () => {
     void stopApiServer();
+    void ipcServices?.close();
     void pool?.destroy();
   });
 }

@@ -106,6 +106,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
   externalConverter: { executable: '', argumentTemplate: '', timeoutMs: 120000 },
   office: { libreOfficeExecutable: '' },
+  ai: { baseUrl: 'http://127.0.0.1:11434/v1', model: '', maxSteps: 6 },
   pipelinePresets: [],
 };
 

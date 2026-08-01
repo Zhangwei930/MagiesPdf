@@ -105,9 +105,18 @@ module.exports = {
 
   asar: true,
   asarUnpack: [
+    'electron/mcp/**/*',
+    'node_modules/@modelcontextprotocol/sdk/**/*',
+    'node_modules/ajv/**/*',
+    'node_modules/ajv-formats/**/*',
+    'node_modules/fast-deep-equal/**/*',
+    'node_modules/fast-uri/**/*',
+    'node_modules/json-schema-traverse/**/*',
     'node_modules/mupdf/**',
     'node_modules/tesseract.js/**',
     'node_modules/tesseract.js-core/**',
+    'node_modules/zod/**/*',
+    'node_modules/zod-to-json-schema/**/*',
   ],
 
   extraResources: [
