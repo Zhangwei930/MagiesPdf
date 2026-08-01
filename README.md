@@ -20,7 +20,7 @@ Each package **bundles a matching LibreOffice runtime**. You do not need a
 separate Office install. **Linux ARM64 is not published** (no official LO
 desktop runtime for that target).
 
-**Version 2.0.0** — see [CHANGELOG.md](./CHANGELOG.md) ·
+**Version 2.0.1** — see [CHANGELOG.md](./CHANGELOG.md) ·
 [Releases](https://github.com/Zhangwei930/MagiesPdf/releases).
 
 Installers are **unsigned** (open source), same policy as MagiesTerminal.

@@ -1,13 +1,32 @@
 # Changelog
 
-## Unreleased
+## 2.0.1 — 2026-08-01
 
-### Dual-mode controlled Office automation
+### AI office agent
+
+- OpenAI-compatible chat agent (OpenAI, DeepSeek, Qwen, Ollama, …) with per-tool approval, step budget, and encrypted API-key storage.
+- Grant a workspace folder; the agent runs local PDF tools and allow-listed Office operations without uploading document bytes as model context beyond approved plain-text previews.
+- Local MCP server for external agents, plus encrypted external MCP client configuration (stdio / Streamable HTTP) with approval on each external tool call.
+- Persist bounded, redacted task history for reuse.
+
+### Dual-mode controlled automation
 
 - **Review vs unattended rules.** Folder automation can queue tasks for approval, or run unattended with an explicit allow-list of local Office tools only.
 - **Trusted document macros** (LibreOffice Basic in ODT/ODS/ODP copies) always require interactive approval and are never available to unattended rules.
-- Accept or reject all Word tracked changes through the controlled automation path, saving a new non-overwriting copy.
 - Home screen exposes both manual Office editing and AI automation entry points.
+
+### Office automation actions
+
+- Word: read content and tracked changes, accept/reject all changes, replace (plain or tracked), insert table/image, header/footer, comments.
+- Excel: read/write ranges, sort, auto-filter, format, conditional format, charts, pivot tables.
+- PowerPoint: read, replace text, add/duplicate/delete slides, insert image/table, speaker notes.
+- Templates: single and batch fill; batch convert to PDF; workspace scan and archive.
+- Writes always produce non-overwriting copies.
+
+### Correctness and docs
+
+- Launch the bundled LibreOffice editor through macOS services so packaged apps start reliably.
+- Align Magies Office 2.x product narrative, unsigned first-launch steps, and in-app changelog with the dual-mode AI model.
 
 ## 2.0.0 — 2026-07-31
 
