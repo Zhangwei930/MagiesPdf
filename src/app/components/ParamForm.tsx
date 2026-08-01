@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { clsx } from 'clsx';
-import { isParamVisible } from '@core/params.ts';
 import type { ParamSpec, ParamValues } from '@core/types.ts';
+import { bridge } from '../bridge.ts';
 import { t, type Locale } from '../i18n.ts';
 import { ChevronDown, ChevronRight } from '../icons.ts';
+import { pageRangePreset, partitionToolParams } from '../toolForm.ts';
 import { Field } from './ui.tsx';
 
 /**
@@ -22,15 +23,12 @@ interface ParamFormProps {
 }
 
 export function ParamForm({ params, values, locale, disabled, onChange }: ParamFormProps) {
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showMore, setShowMore] = useState(false);
 
-  const { basic, advanced } = useMemo(() => {
-    const visible = params.filter((param) => isParamVisible(param, values));
-    return {
-      basic: visible.filter((p) => !p.advanced),
-      advanced: visible.filter((p) => p.advanced),
-    };
-  }, [params, values]);
+  const { primary, more } = useMemo(
+    () => partitionToolParams(params, values),
+    [params, values],
+  );
 
   const set = (key: string, value: ParamValues[string]) => onChange({ ...values, [key]: value });
 
@@ -40,7 +38,7 @@ export function ParamForm({ params, values, locale, disabled, onChange }: ParamF
 
   return (
     <div className="space-y-4">
-      {basic.map((param) => (
+      {primary.map((param) => (
         <ParamControl
           key={param.key}
           param={param}
@@ -51,21 +49,22 @@ export function ParamForm({ params, values, locale, disabled, onChange }: ParamF
         />
       ))}
 
-      {advanced.length > 0 && (
+      {more.length > 0 && (
         <div className="pt-1">
           <button
             type="button"
-            onClick={() => setShowAdvanced((open) => !open)}
+            disabled={disabled}
+            onClick={() => setShowMore((open) => !open)}
             className="inline-flex items-center gap-1 text-[13px] font-medium text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
           >
-            {showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            {t('advancedOptions', locale)}
-            <span className="text-[var(--text-muted)]">({advanced.length})</span>
+            {showMore ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            {t('moreSettings', locale)}
+            <span className="text-[var(--text-muted)]">({more.length})</span>
           </button>
 
-          {showAdvanced && (
+          {showMore && (
             <div className="mt-3 space-y-4 border-l-2 border-[var(--border-subtle)] pl-4">
-              {advanced.map((param) => (
+              {more.map((param) => (
                 <ParamControl
                   key={param.key}
                   param={param}
@@ -122,6 +121,40 @@ function ParamControl({ param, value, locale, disabled, onChange }: ControlProps
       );
 
     case 'select':
+      if (param.options.length <= 4) {
+        return (
+          <Field label={label} help={help}>
+            <div
+              role="radiogroup"
+              aria-label={label}
+              className="grid gap-1.5"
+              style={{ gridTemplateColumns: `repeat(${param.options.length}, minmax(0, 1fr))` }}
+            >
+              {param.options.map((option) => {
+                const selected = String(value ?? param.default) === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    disabled={disabled}
+                    onClick={() => onChange(option.value)}
+                    className={clsx(
+                      'min-h-9 rounded-lg border px-2 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-60',
+                      selected
+                        ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                        : 'border-[var(--border-subtle)] bg-[var(--surface-sunken)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]',
+                    )}
+                  >
+                    {option.label[locale]}
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
+        );
+      }
       return (
         <Field label={label} help={help} htmlFor={id}>
           <select
@@ -239,34 +272,82 @@ function ParamControl({ param, value, locale, disabled, onChange }: ControlProps
         </Field>
       );
 
-    case 'pageRange':
+    case 'pageRange': {
+      const selected = pageRangePreset(value);
+      const presets = [
+        { value: 'all', label: t('pageRangeAll', locale) },
+        { value: 'odd', label: t('pageRangeOdd', locale) },
+        { value: 'even', label: t('pageRangeEven', locale) },
+        { value: 'custom', label: t('pageRangeCustom', locale) },
+      ] as const;
       return (
-        <Field label={label} help={help} htmlFor={id}>
-          <input
-            id={id}
-            type="text"
-            className="field-input font-mono"
-            disabled={disabled}
-            value={String(value ?? '')}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder="1-3, 5, 8-"
-            spellCheck={false}
-          />
+        <Field label={label} help={help}>
+          <div className="grid grid-cols-4 gap-1.5">
+            {presets.map((preset) => (
+              <button
+                key={preset.value}
+                type="button"
+                aria-pressed={selected === preset.value}
+                disabled={disabled}
+                onClick={() => {
+                  if (preset.value === 'custom') {
+                    if (selected !== 'custom') onChange('');
+                    return;
+                  }
+                  onChange(preset.value);
+                }}
+                className={clsx(
+                  'h-9 rounded-lg border px-1.5 text-[12px] font-medium transition-colors disabled:opacity-60',
+                  selected === preset.value
+                    ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
+                    : 'border-[var(--border-subtle)] bg-[var(--surface-sunken)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]',
+                )}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          {selected === 'custom' && (
+            <input
+              id={id}
+              type="text"
+              className="field-input mt-2 font-mono"
+              disabled={disabled}
+              value={String(value ?? '')}
+              onChange={(e) => onChange(e.target.value)}
+              placeholder="1-3, 5, 8-"
+              spellCheck={false}
+            />
+          )}
         </Field>
       );
+    }
 
     case 'file':
       return (
         <Field label={label} help={help} htmlFor={id}>
-          <input
-            id={id}
-            type="text"
-            className="field-input"
-            disabled={disabled}
-            value={String(value ?? '')}
-            onChange={(e) => onChange(e.target.value)}
-            spellCheck={false}
-          />
+          <div className="flex gap-2">
+            <input
+              id={id}
+              type="text"
+              className="field-input min-w-0 flex-1"
+              disabled={disabled}
+              value={String(value ?? '')}
+              readOnly
+            />
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => {
+                void bridge().pickFiles(param.accept, false).then(([file]) => {
+                  if (file) onChange(file.path);
+                });
+              }}
+              className="shrink-0 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-3 text-[12px] font-medium text-[var(--text-secondary)] transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] disabled:opacity-60"
+            >
+              {t('chooseFile', locale)}
+            </button>
+          </div>
         </Field>
       );
 

@@ -15,6 +15,7 @@ import { activeJobCount, useApp } from './store.ts';
 import { isDirty, type DocumentState } from './documents.ts';
 import { canApplyToDocument } from './toolApply.ts';
 import { partitionDocumentPaths } from './office.ts';
+import { createDefaultBlankPdf } from './pdf/directEdit.ts';
 import { CommandPalette } from './components/CommandPalette.tsx';
 import { ApplyToolPanel } from './components/ApplyToolPanel.tsx';
 import { DocumentTabs } from './components/DocumentTabs.tsx';
@@ -186,6 +187,10 @@ export function App() {
     },
     [],
   );
+
+  const createPdfDocument = useCallback(async () => {
+    showDocument(await createDefaultBlankPdf(bridge()));
+  }, [showDocument]);
 
   const selectTab = useCallback(
     (id: string) => {
@@ -448,6 +453,7 @@ export function App() {
                   onOpenSearch={() => setPaletteOpen(true)}
                   onOpenDocument={openDocumentPicker}
                   onCreateOffice={createOfficeDocument}
+                  onCreatePdf={createPdfDocument}
                   onOpenRecent={(path) => openPaths([path])}
                 />
               ))}
@@ -458,6 +464,7 @@ export function App() {
                 onOpenSearch={() => setPaletteOpen(true)}
                 onOpenDocument={openDocumentPicker}
                 onCreateOffice={createOfficeDocument}
+                onCreatePdf={createPdfDocument}
                 onOpenRecent={(path) => openPaths([path])}
               />
             )}

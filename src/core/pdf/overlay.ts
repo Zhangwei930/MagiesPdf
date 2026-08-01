@@ -271,6 +271,37 @@ export interface AnchoredTextSpec {
   margin: number;
 }
 
+export interface PointTextSpec {
+  text: string;
+  /** PDF text matrix, including the baseline origin and page rotation. */
+  matrix: mupdf.Matrix;
+  size: number;
+  color: string;
+}
+
+/** Places one line of directly entered text at an exact point on the page. */
+export function placeTextAtPoint(
+  doc: mupdf.PDFDocument,
+  pageIndex: number,
+  spec: PointTextSpec,
+): void {
+  const pageObj = doc.loadPage(pageIndex).getObject();
+  const resources = pageResources(doc, pageObj);
+  ensureDictionary(doc, resources, 'Font').put(OVERLAY_FONT_KEY, ensureOverlayFont(doc));
+  const matrix = spec.matrix.map((value) => value.toFixed(4)).join(' ');
+
+  const content = [
+    'q BT',
+    `/${OVERLAY_FONT_KEY} ${spec.size} Tf`,
+    colorOperands(spec.color),
+    `${matrix} Tm`,
+    `<${hexUtf16(spec.text)}> Tj`,
+    'ET Q',
+  ].join('\n');
+
+  appendContentStream(doc, pageObj, content);
+}
+
 /** Places a line of text at a page-edge anchor — the page-number primitive. */
 export function placeTextOnPage(
   doc: mupdf.PDFDocument,

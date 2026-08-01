@@ -180,6 +180,7 @@ export {
   Moon,
   MoveHorizontal,
   Palette,
+  PenLine,
   Plug,
   Plus,
   Redo2,

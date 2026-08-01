@@ -81,7 +81,7 @@ export function canRedo(doc: DocumentState): boolean {
 
 /** Whether there are changes that are not on disk. */
 export function isDirty(doc: DocumentState): boolean {
-  return doc.past.length > 0 && !doc.saved;
+  return doc.path === '' || (doc.past.length > 0 && !doc.saved);
 }
 
 export function applyEdit(doc: DocumentState, bytes: Uint8Array): DocumentState {

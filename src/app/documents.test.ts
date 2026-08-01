@@ -42,6 +42,11 @@ describe('createDocument', () => {
     const b = createDocument(picked('a.pdf', '/docs/a.pdf'));
     assert.notEqual(a.id, b.id);
   });
+
+  it('treats a newly created document with no path as unsaved', () => {
+    const doc = createDocument(picked('untitled.pdf', ''));
+    assert.equal(isDirty(doc), true);
+  });
 });
 
 describe('applyEdit / undo / redo', () => {

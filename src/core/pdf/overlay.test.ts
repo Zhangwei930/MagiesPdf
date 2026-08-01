@@ -7,6 +7,7 @@ import {
   colorOperands,
   hexUtf16,
   measureText,
+  placeTextAtPoint,
   placeTextOnPage,
   stampTextOnPage,
 } from './overlay.ts';
@@ -175,6 +176,26 @@ describe('placeTextOnPage', () => {
       } finally {
         reopened.destroy();
       }
+    } finally {
+      doc.destroy();
+    }
+  });
+});
+
+describe('placeTextAtPoint', () => {
+  it('places directly entered text at the clicked PDF point', async () => {
+    const doc = openDocument(await samplePdf({ pages: 1, label: () => 'BODY' }));
+    try {
+      placeTextAtPoint(doc, 0, {
+        text: '直接编辑',
+        matrix: [1, 0, 0, 1, 96, 640],
+        size: 16,
+        color: '#2255aa',
+      });
+
+      const text = allPageText(saveDocument(doc))[0] ?? '';
+      assert.ok(text.includes('BODY'));
+      assert.ok(text.includes('直接编辑'));
     } finally {
       doc.destroy();
     }
