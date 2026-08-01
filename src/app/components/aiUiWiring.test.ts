@@ -22,6 +22,14 @@ describe('AI workspace wiring', () => {
     assert.match(aiPanelSource, /try \{\s*const currentConfig = await bridge\(\)\.getAiConfig\(\)/s);
   });
 
+  it('lets the user grant and clear a local Office workspace', () => {
+    assert.match(aiPanelSource, /getAiWorkspaceStatus/);
+    assert.match(aiPanelSource, /pickAiWorkspace/);
+    assert.match(aiPanelSource, /clearAiWorkspace/);
+    assert.match(aiPanelSource, /aiWorkspaceChoose/);
+    assert.match(aiPanelSource, /aiWorkspaceClear/);
+  });
+
   it('shows the generated stdio MCP client configuration', () => {
     assert.match(settingsSource, /getMcpConfig/);
     assert.match(settingsSource, /mcpServers/);

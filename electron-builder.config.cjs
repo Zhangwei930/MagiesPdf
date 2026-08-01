@@ -106,6 +106,7 @@ module.exports = {
   asar: true,
   asarUnpack: [
     'electron/mcp/**/*',
+    'electron/office/uno_worker.py',
     'node_modules/@modelcontextprotocol/sdk/**/*',
     'node_modules/ajv/**/*',
     'node_modules/ajv-formats/**/*',

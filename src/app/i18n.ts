@@ -19,8 +19,8 @@ const UI = {
   aiAssistantShort: { zh: 'AI 助手', en: 'AI Assistant' },
   aiEmpty: { zh: '让 AI 帮你处理文档', en: 'Automate documents with AI' },
   aiEmptyHint: {
-    zh: '可以让它阅读、总结、转换、合并或批量处理当前文档。文件字节不会发送给模型。',
-    en: 'Ask it to inspect, summarize, convert, merge, or batch-process the current document. File bytes are never sent to the model.',
+    zh: '可以处理当前 PDF，或在你授权的目录中读取和编辑 Office 文件。读取到的内容只会在你确认后发送给模型。',
+    en: 'Work with the current PDF or read and edit Office files in a folder you grant. Extracted content is sent to the model only after your approval.',
   },
   aiPlaceholder: { zh: '描述你想完成的办公任务…', en: 'Describe the office task you want to complete…' },
   aiSend: { zh: '发送', en: 'Send' },
@@ -34,6 +34,13 @@ const UI = {
   aiDeny: { zh: '拒绝', en: 'Deny' },
   aiOpenFile: { zh: '打开', en: 'Open' },
   aiSaveFile: { zh: '保存文件', en: 'Save file' },
+  aiWorkspaceLabel: { zh: '办公工作区', en: 'Office workspace' },
+  aiWorkspaceChoose: { zh: '选择办公目录', en: 'Choose office folder' },
+  aiWorkspaceClear: { zh: '取消目录授权', en: 'Clear folder access' },
+  aiWorkspaceHint: {
+    zh: '授权后，智能体可以扫描、读取、编辑、转换和归档其中的办公文件。',
+    en: 'Grant a folder so the Agent can scan, read, edit, convert, and archive its Office files.',
+  },
   recent: { zh: '最近使用', en: 'Recently used' },
   allTools: { zh: '全部工具', en: 'All tools' },
   ribbonAppliesToDocument: {

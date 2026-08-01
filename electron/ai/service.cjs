@@ -18,6 +18,7 @@ function createAiService({
   model = new OpenAiCompatibleClient(),
   runtimeFactory,
   externalToolProvider,
+  officeToolProvider,
 }) {
   const activeTurns = new Map();
 
@@ -80,8 +81,9 @@ function createAiService({
       executeTool,
       requestApproval: deps.requestApproval,
       externalToolProvider: deps.externalToolProvider,
+      officeToolProvider: deps.officeToolProvider,
     }));
-    const runtime = createRuntime({ requestApproval, externalToolProvider });
+    const runtime = createRuntime({ requestApproval, externalToolProvider, officeToolProvider });
     activeTurns.set(requestId, { controller, approvals });
 
     try {

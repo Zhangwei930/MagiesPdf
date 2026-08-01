@@ -118,4 +118,19 @@ describe('AI service', () => {
     await service.runTurn({ requestId: 'external-provider', prompt: 'search' }, () => {});
     assert.equal(runtimeDependencies.externalToolProvider, externalToolProvider);
   });
+
+  it('passes the local Office provider into the Agent runtime factory', async () => {
+    const officeToolProvider = { listTools: async () => [] };
+    let runtimeDependencies;
+    const service = serviceWith({
+      officeToolProvider,
+      runtimeFactory: (dependencies) => {
+        runtimeDependencies = dependencies;
+        return { runTurn: async () => ({ message: 'ok', files: [] }) };
+      },
+    });
+
+    await service.runTurn({ requestId: 'office-provider', prompt: 'read Word' }, () => {});
+    assert.equal(runtimeDependencies.officeToolProvider, officeToolProvider);
+  });
 });

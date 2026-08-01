@@ -12,6 +12,8 @@ const updater = require('./updater/index.cjs');
 const { isTrustedIpcSender, safeFileName } = require('./security.cjs');
 const { createOfficeService } = require('./office/service.cjs');
 const { DOCUMENT_EXTENSIONS } = require('./office/formats.cjs');
+const { createOfficeAutomationProvider } = require('./office/automationProvider.cjs');
+const { runUnoOperation } = require('./office/unoRunner.cjs');
 const { createAiService } = require('./ai/service.cjs');
 const { getSecretStore } = require('./ai/secrets.cjs');
 const { buildMcpClientConfig } = require('./mcp/config.cjs');
@@ -112,6 +114,10 @@ function readCatalog() {
 
 function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl }) {
   const office = createOfficeService();
+  const officeAutomation = createOfficeAutomationProvider({
+    getLibreOfficeExecutable: () => office.status().libreOffice.executable,
+    runUno: runUnoOperation,
+  });
   const handle = (channel, handler) => {
     ipcMain.handle(channel, (event, ...args) => {
       if (!isTrustedIpcSender(event, getWindow(), trustedRendererUrl)) {
@@ -283,6 +289,7 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     readSettings: settings.read,
     secretStore,
     externalToolProvider: externalMcpManager,
+    officeToolProvider: officeAutomation,
     executeTool: ({ signal, onProgress, ...request }) =>
       jobExecutor.run(request, onProgress, signal),
   });
@@ -309,6 +316,13 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   handle('ai:approvalResponse', (_event, { requestId, approvalId, approved }) =>
     aiService.respondApproval(requestId, approvalId, approved),
   );
+  handle('ai:workspaceStatus', () => officeAutomation.getWorkspaceStatus());
+  handle('ai:pickWorkspace', async () => {
+    const result = await dialog.showOpenDialog(getWindow(), { properties: ['openDirectory'] });
+    if (result.canceled || !result.filePaths[0]) return officeAutomation.getWorkspaceStatus();
+    return officeAutomation.setWorkspaceRoot(result.filePaths[0]);
+  });
+  handle('ai:clearWorkspace', () => officeAutomation.clearWorkspace());
 
   handle('settings:get', () => settings.read());
   handle('settings:update', (_event, patch) => {

@@ -80,6 +80,9 @@ const api = {
   cancelAiTurn: (requestId) => ipcRenderer.invoke('ai:cancelTurn', { requestId }),
   respondAiApproval: (requestId, approvalId, approved) =>
     ipcRenderer.invoke('ai:approvalResponse', { requestId, approvalId, approved }),
+  getAiWorkspaceStatus: () => ipcRenderer.invoke('ai:workspaceStatus'),
+  pickAiWorkspace: () => ipcRenderer.invoke('ai:pickWorkspace'),
+  clearAiWorkspace: () => ipcRenderer.invoke('ai:clearWorkspace'),
   onAiEvent: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('ai:event', listener);

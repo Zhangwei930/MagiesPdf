@@ -5,10 +5,11 @@ import {
   bridge,
   hasBridge,
   type AiConfig,
+  type AiWorkspaceStatus,
   type PickedFile,
 } from '../bridge.ts';
 import { formatBytes, localized, t, type Locale } from '../i18n.ts';
-import { AlertCircle, Bot, FileText, Loader2, Save, Send, Square, X } from '../icons.ts';
+import { AlertCircle, Bot, FileText, FolderOpen, Loader2, Save, Send, Square, X } from '../icons.ts';
 import {
   applyAiEvent,
   createTurnState,
@@ -132,6 +133,7 @@ export function AIChatPanel({
   const [draft, setDraft] = useState('');
   const [turn, setTurn] = useState<AiTurnState | null>(null);
   const [config, setConfig] = useState<AiConfig | null>(null);
+  const [workspace, setWorkspace] = useState<AiWorkspaceStatus | null>(null);
   const [error, setError] = useState('');
   const turnRef = useRef<AiTurnState | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -157,7 +159,30 @@ export function AIChatPanel({
     void bridge().getAiConfig().then(setConfig).catch((cause: unknown) => {
       setError(cause instanceof Error ? cause.message : String(cause));
     });
+    void bridge().getAiWorkspaceStatus().then(setWorkspace).catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    });
   }, [open]);
+
+  const chooseWorkspace = useCallback(async () => {
+    if (!hasBridge() || turn) return;
+    setError('');
+    try {
+      setWorkspace(await bridge().pickAiWorkspace());
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [turn]);
+
+  const clearWorkspace = useCallback(async () => {
+    if (!hasBridge() || turn) return;
+    setError('');
+    try {
+      setWorkspace(await bridge().clearAiWorkspace());
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [turn]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -254,6 +279,44 @@ export function AIChatPanel({
           <span className="truncate">{activeDocument.name}</span>
         </div>
       )}
+
+      <div className="border-b border-[var(--border-subtle)] px-3 py-2">
+        {workspace?.configured ? (
+          <div className="flex items-center gap-2">
+            <FolderOpen size={13} className="shrink-0 text-[var(--success)]" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] text-[var(--text-muted)]">{t('aiWorkspaceLabel', locale)}</p>
+              <p className="truncate text-[11px] font-medium" title={workspace.path}>{workspace.path}</p>
+            </div>
+            <button
+              type="button"
+              disabled={Boolean(turn)}
+              onClick={() => void clearWorkspace()}
+              className="rounded-md p-1.5 text-[var(--text-muted)] hover:bg-[var(--surface-hover)] disabled:opacity-50"
+              aria-label={t('aiWorkspaceClear', locale)}
+              title={t('aiWorkspaceClear', locale)}
+            >
+              <X size={13} />
+            </button>
+          </div>
+        ) : (
+          <div>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-[11px]"
+              disabled={Boolean(turn)}
+              onClick={() => void chooseWorkspace()}
+            >
+              <FolderOpen size={13} />
+              {t('aiWorkspaceChoose', locale)}
+            </Button>
+            <p className="mt-1 text-[10px] leading-relaxed text-[var(--text-muted)]">
+              {t('aiWorkspaceHint', locale)}
+            </p>
+          </div>
+        )}
+      </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {messages.length === 0 && !turn && (

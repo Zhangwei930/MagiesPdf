@@ -92,6 +92,11 @@ export interface RecentDocument {
 
 export type AiConfig = AppSettings['ai'] & { apiKeyConfigured: boolean };
 
+export interface AiWorkspaceStatus {
+  configured: boolean;
+  path: string;
+}
+
 export interface AiArtifact extends ToolOutputFile {
   id: string;
 }
@@ -219,6 +224,9 @@ export interface MagiesPdfBridge {
   runAiTurn(request: AiTurnRequest): Promise<AiTurnResult>;
   cancelAiTurn(requestId: string): Promise<boolean>;
   respondAiApproval(requestId: string, approvalId: string, approved: boolean): Promise<boolean>;
+  getAiWorkspaceStatus(): Promise<AiWorkspaceStatus>;
+  pickAiWorkspace(): Promise<AiWorkspaceStatus>;
+  clearAiWorkspace(): Promise<AiWorkspaceStatus>;
   onAiEvent(callback: (event: AiEvent) => void): () => void;
   onJobProgress(callback: (event: ProgressEvent) => void): () => void;
   onUpdaterStatus(callback: (status: UpdaterStatus) => void): () => void;

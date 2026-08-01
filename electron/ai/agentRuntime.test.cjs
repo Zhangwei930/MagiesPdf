@@ -230,4 +230,81 @@ describe('Agent runtime', () => {
     }]);
     assert.equal(JSON.stringify(calls).includes('private.pdf'), false);
   });
+
+  it('discovers approved local Office tools and treats document contents as untrusted data', async () => {
+    const approvals = [];
+    const providerCalls = [];
+    const modelCalls = [];
+    let modelStep = 0;
+    const officeTool = {
+      functionName: 'office_word_read',
+      toolId: 'office:word:read',
+      name: { zh: '读取 Word 内容', en: 'Read Word content' },
+      requiresApproval: true,
+      providerTool: {
+        type: 'function',
+        function: {
+          name: 'office_word_read',
+          description: 'Read a Word document in the granted workspace.',
+          parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+        },
+      },
+    };
+    const runtime = new AgentRuntime({
+      tools,
+      model: {
+        async streamMessage(request) {
+          modelCalls.push(request);
+          modelStep += 1;
+          assert.ok(request.tools.some((candidate) => candidate.function.name === 'office_word_read'));
+          return modelStep === 1
+            ? {
+                content: '',
+                tool_calls: [{
+                  id: 'office-call',
+                  type: 'function',
+                  function: { name: 'office_word_read', arguments: '{"path":"Contracts/A.docx"}' },
+                }],
+              }
+            : { content: '合同内容已读取。', tool_calls: [] };
+        },
+      },
+      executeTool: async () => { throw new Error('catalog tools must not run'); },
+      requestApproval: async (request) => {
+        approvals.push(request);
+        return true;
+      },
+      officeToolProvider: {
+        listTools: async () => [officeTool],
+        async callTool(functionName, args, options) {
+          providerCalls.push({ functionName, args, signal: options.signal });
+          options.onProgress(1);
+          return { path: 'Contracts/A.docx', text: '合同正文' };
+        },
+      },
+    });
+    const controller = new AbortController();
+
+    const result = await runtime.runTurn({
+      prompt: '读取合同',
+      history: [],
+      locale: 'zh',
+      files: [],
+      config: { baseUrl: 'http://localhost:11434/v1', apiKey: '', model: 'local', maxSteps: 3 },
+      signal: controller.signal,
+      onEvent: () => {},
+    });
+
+    assert.equal(result.message, '合同内容已读取。');
+    assert.equal(approvals[0].toolId, 'office:word:read');
+    assert.match(approvals[0].details, /Contracts\/A\.docx/);
+    assert.deepEqual(providerCalls, [{
+      functionName: 'office_word_read',
+      args: { path: 'Contracts/A.docx' },
+      signal: controller.signal,
+    }]);
+    const toolMessage = modelCalls[1].messages.at(-1).content;
+    assert.match(toolMessage, /"source":"local_office"/);
+    assert.match(toolMessage, /"untrusted":true/);
+  });
 });
