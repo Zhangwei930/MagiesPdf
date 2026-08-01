@@ -167,6 +167,7 @@ export function ToolIcon({ name, ...props }: { name: string } & LucideProps) {
 export {
   AlertCircle,
   ArrowLeft,
+  BookOpen,
   Bot,
   Check,
   ChevronDown,

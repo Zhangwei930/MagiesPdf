@@ -5,13 +5,28 @@ import {
   bridge,
   hasBridge,
   type AiConfig,
+  type AiHistoryEntry,
+  type AiHistoryInput,
   type AiWorkspaceStatus,
   type PickedFile,
 } from '../bridge.ts';
 import { formatBytes, localized, t, type Locale } from '../i18n.ts';
-import { AlertCircle, Bot, FileText, FolderOpen, Loader2, Save, Send, Square, X } from '../icons.ts';
+import {
+  AlertCircle,
+  BookOpen,
+  Bot,
+  FileText,
+  FolderOpen,
+  Loader2,
+  Save,
+  Send,
+  Square,
+  Trash2,
+  X,
+} from '../icons.ts';
 import {
   applyAiEvent,
+  createHistoryInput,
   createTurnState,
   type AiChatMessage,
   type AiTurnState,
@@ -148,6 +163,80 @@ function ToolActivities({ tools, locale }: { tools: AiToolActivity[]; locale: Lo
   );
 }
 
+function TaskHistory({
+  entries,
+  locale,
+  onReuse,
+  onClear,
+}: {
+  entries: AiHistoryEntry[];
+  locale: Locale;
+  onReuse(entry: AiHistoryEntry): void;
+  onClear(): void;
+}) {
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <p className="text-[12px] font-semibold">
+            {locale === 'zh' ? '任务历史' : 'Task history'}
+          </p>
+          <p className="text-[10px] text-[var(--text-muted)]">
+            {locale === 'zh' ? '仅保存在本机，最多 50 条' : 'Local only, up to 50 tasks'}
+          </p>
+        </div>
+        {entries.length > 0 && (
+          <Button size="sm" variant="ghost" className="h-7 px-2" onClick={onClear}>
+            <Trash2 size={12} />
+            {locale === 'zh' ? '清空' : 'Clear'}
+          </Button>
+        )}
+      </div>
+      {entries.length === 0 ? (
+        <p className="py-8 text-center text-[11px] text-[var(--text-muted)]">
+          {locale === 'zh' ? '还没有任务记录' : 'No task history yet'}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {entries.map((entry) => (
+            <div
+              key={entry.id}
+              className="rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-raised)] p-2.5"
+            >
+              <div className="flex items-start gap-2">
+                <span className={entry.success ? 'text-[var(--success)]' : 'text-[var(--danger)]'}>
+                  {entry.success ? '✓' : '×'}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="line-clamp-2 text-[11px] font-medium">{entry.prompt}</p>
+                  <p className="mt-1 text-[9px] text-[var(--text-muted)]">
+                    {new Date(entry.createdAt).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')}
+                  </p>
+                  {entry.workflow.length > 0 && (
+                    <p className="mt-1 truncate text-[9px] text-[var(--text-secondary)]">
+                      {entry.workflow
+                        .map((step) => localized(step.toolName, locale) || step.toolId)
+                        .join(' → ')}
+                    </p>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 shrink-0 px-2 text-[10px]"
+                  onClick={() => onReuse(entry)}
+                >
+                  {locale === 'zh' ? '作为草稿' : 'Use draft'}
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AIChatPanel({
   open,
   locale,
@@ -161,6 +250,8 @@ export function AIChatPanel({
   const [turn, setTurn] = useState<AiTurnState | null>(null);
   const [config, setConfig] = useState<AiConfig | null>(null);
   const [workspace, setWorkspace] = useState<AiWorkspaceStatus | null>(null);
+  const [taskHistory, setTaskHistory] = useState<AiHistoryEntry[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [error, setError] = useState('');
   const turnRef = useRef<AiTurnState | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -189,7 +280,36 @@ export function AIChatPanel({
     void bridge().getAiWorkspaceStatus().then(setWorkspace).catch((cause: unknown) => {
       setError(cause instanceof Error ? cause.message : String(cause));
     });
+    void bridge().getAiHistory().then(setTaskHistory).catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    });
   }, [open]);
+
+  const persistHistory = useCallback(async (input: AiHistoryInput) => {
+    try {
+      const entry = await bridge().appendAiHistory(input);
+      setTaskHistory((current) => [
+        entry,
+        ...current.filter((item) => item.id !== entry.id),
+      ].slice(0, 50));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, []);
+
+  const clearHistory = useCallback(async () => {
+    if (!hasBridge()) return;
+    const confirmed = window.confirm(
+      locale === 'zh' ? '确定清空本机任务历史吗？' : 'Clear local task history?',
+    );
+    if (!confirmed) return;
+    try {
+      await bridge().clearAiHistory();
+      setTaskHistory([]);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [locale]);
 
   const chooseWorkspace = useCallback(async () => {
     if (!hasBridge() || turn) return;
@@ -237,6 +357,7 @@ export function AIChatPanel({
     turnRef.current = currentTurn;
     setTurn(currentTurn);
     setDraft('');
+    setHistoryOpen(false);
     const history = messages.map(({ role, content }) => ({ role, content }));
     setMessages((current) => [
       ...current,
@@ -260,28 +381,43 @@ export function AIChatPanel({
           : [],
       });
       const completed = turnRef.current;
+      const response = result.message || completed?.assistantText || '';
       setMessages((current) => [
         ...current,
         {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: result.message || completed?.assistantText || '',
+          content: response,
           workflow: completed?.workflow,
           tools: completed?.tools,
           artifacts: result.files,
         },
       ]);
+      await persistHistory(createHistoryInput({
+        prompt,
+        response,
+        success: true,
+        turn: completed,
+        artifacts: result.files,
+      }));
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       setMessages((current) => [
         ...current,
         { id: crypto.randomUUID(), role: 'assistant', content: message, error: true },
       ]);
+      await persistHistory(createHistoryInput({
+        prompt,
+        response: message,
+        success: false,
+        turn: turnRef.current,
+        artifacts: [],
+      }));
     } finally {
       turnRef.current = null;
       setTurn(null);
     }
-  }, [activeDocument, draft, locale, messages, turn]);
+  }, [activeDocument, draft, locale, messages, persistHistory, turn]);
 
   return (
     <aside
@@ -291,6 +427,16 @@ export function AIChatPanel({
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--border-subtle)] px-3">
         <Bot size={16} className="text-[var(--accent)]" />
         <h2 className="flex-1 text-[13px] font-semibold">{t('aiAssistant', locale)}</h2>
+        <button
+          type="button"
+          disabled={Boolean(turn)}
+          onClick={() => setHistoryOpen((current) => !current)}
+          className={`rounded-md p-1.5 hover:bg-[var(--surface-hover)] disabled:opacity-50 ${historyOpen ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}
+          aria-label={locale === 'zh' ? '任务历史' : 'Task history'}
+          aria-pressed={historyOpen}
+        >
+          <BookOpen size={15} />
+        </button>
         <button
           type="button"
           onClick={onClose}
@@ -347,7 +493,18 @@ export function AIChatPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {messages.length === 0 && !turn && (
+        {historyOpen && (
+          <TaskHistory
+            entries={taskHistory}
+            locale={locale}
+            onClear={() => void clearHistory()}
+            onReuse={(entry) => {
+              setDraft(entry.prompt);
+              setHistoryOpen(false);
+            }}
+          />
+        )}
+        {!historyOpen && messages.length === 0 && !turn && (
           <div className="flex h-full flex-col items-center justify-center px-5 text-center">
             <Bot size={28} strokeWidth={1.5} className="mb-3 text-[var(--accent)]" />
             <p className="text-sm font-medium">{t('aiEmpty', locale)}</p>
@@ -363,7 +520,7 @@ export function AIChatPanel({
         )}
 
         <div className="space-y-3">
-          {messages.map((message) => (
+          {!historyOpen && messages.map((message) => (
             <div
               key={message.id}
               className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
@@ -383,7 +540,7 @@ export function AIChatPanel({
             </div>
           ))}
 
-          {turn && (
+          {!historyOpen && turn && (
             <div className="rounded-xl rounded-bl-sm border border-[var(--border-subtle)] bg-[var(--surface-raised)] px-3 py-2 text-[13px]">
               <WorkflowPreview steps={turn.workflow} locale={locale} />
               <ToolActivities tools={turn.tools} locale={locale} />

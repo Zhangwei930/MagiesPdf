@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   applyAiEvent,
+  createHistoryInput,
   createTurnState,
   type AiEvent,
 } from './chatState.ts';
@@ -76,6 +77,66 @@ describe('AI chat turn state', () => {
     assert.equal(state.workflow.length, 1);
     assert.equal(state.workflow[0]?.toolId, 'office:excel:create:pivot');
     assert.match(state.tools[0]?.details ?? '', /销售\.xlsx/);
+  });
+
+  it('creates a reusable history draft without tool arguments or artifact bytes', () => {
+    let state = createTurnState('turn-1');
+    state = applyAiEvent(state, {
+      requestId: 'turn-1',
+      type: 'workflow_preview',
+      steps: [{
+        callId: 'pivot',
+        toolId: 'office:excel:create:pivot',
+        toolName: { zh: '创建数据透视表', en: 'Create pivot table' },
+        details: '{"api_key":"private-key"}',
+      }],
+    });
+    state = applyAiEvent(state, {
+      requestId: 'turn-1',
+      type: 'tool_start',
+      callId: 'pivot',
+      toolId: 'office:excel:create:pivot',
+      toolName: { zh: '创建数据透视表', en: 'Create pivot table' },
+      inputFileNames: ['销售.xlsx'],
+      details: '{"password":"private-password"}',
+    });
+    state = applyAiEvent(state, {
+      requestId: 'turn-1',
+      type: 'tool_result',
+      callId: 'pivot',
+      toolId: 'office:excel:create:pivot',
+      ok: true,
+      files: [],
+    });
+
+    const input = createHistoryInput({
+      prompt: '按地区汇总销售额',
+      response: '处理完成',
+      success: true,
+      turn: state,
+      artifacts: [{
+        name: '销售汇总.xlsx',
+        mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        bytes: new Uint8Array([1, 2, 3]),
+      }],
+    });
+
+    assert.deepEqual(input, {
+      prompt: '按地区汇总销售额',
+      response: '处理完成',
+      success: true,
+      workflow: [{
+        toolId: 'office:excel:create:pivot',
+        toolName: { zh: '创建数据透视表', en: 'Create pivot table' },
+      }],
+      tools: [{
+        toolId: 'office:excel:create:pivot',
+        toolName: { zh: '创建数据透视表', en: 'Create pivot table' },
+        status: 'done',
+      }],
+      artifacts: [{ name: '销售汇总.xlsx' }],
+    });
+    assert.doesNotMatch(JSON.stringify(input), /private-key|private-password|bytes/);
   });
 
   it('adds and clears approval requests', () => {

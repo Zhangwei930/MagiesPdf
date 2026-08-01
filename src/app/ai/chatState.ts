@@ -1,5 +1,5 @@
 import type { LocalizedText, ToolOutputFile } from '@core/types.ts';
-import type { AiArtifact, AiEvent } from '../bridge.ts';
+import type { AiArtifact, AiEvent, AiHistoryInput } from '../bridge.ts';
 
 export type { AiEvent } from '../bridge.ts';
 
@@ -50,6 +50,33 @@ export interface AiChatMessage {
 
 export function createTurnState(requestId: string): AiTurnState {
   return { requestId, assistantText: '', workflow: [], tools: [], approvals: [], artifacts: [] };
+}
+
+export function createHistoryInput({
+  prompt,
+  response,
+  success,
+  turn,
+  artifacts,
+}: {
+  prompt: string;
+  response: string;
+  success: boolean;
+  turn: AiTurnState | null;
+  artifacts: ToolOutputFile[];
+}): AiHistoryInput {
+  return {
+    prompt,
+    response,
+    success,
+    workflow: (turn?.workflow ?? []).map(({ toolId, toolName }) => ({ toolId, toolName })),
+    tools: (turn?.tools ?? []).map(({ toolId, toolName, status }) => ({
+      toolId,
+      toolName,
+      status: status === 'done' ? 'done' : 'error',
+    })),
+    artifacts: artifacts.map(({ name }) => ({ name })),
+  };
 }
 
 function updateTool(

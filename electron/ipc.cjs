@@ -15,6 +15,7 @@ const { DOCUMENT_EXTENSIONS } = require('./office/formats.cjs');
 const { createOfficeAutomationProvider } = require('./office/automationProvider.cjs');
 const { runUnoOperation } = require('./office/unoRunner.cjs');
 const { createAiService } = require('./ai/service.cjs');
+const { createAiHistoryStore } = require('./ai/history.cjs');
 const { getSecretStore } = require('./ai/secrets.cjs');
 const { buildMcpClientConfig } = require('./mcp/config.cjs');
 const { createExternalMcpClientManager } = require('./mcp/clientManager.cjs');
@@ -274,6 +275,9 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
 
   const hostBridge = createHostBridge();
   const secretStore = getSecretStore();
+  const aiHistory = createAiHistoryStore({
+    filePath: path.join(app.getPath('userData'), 'ai-history.json'),
+  });
   const externalMcpManager = createExternalMcpClientManager({
     secretStore,
     version: app.getVersion(),
@@ -323,6 +327,9 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     return officeAutomation.setWorkspaceRoot(result.filePaths[0]);
   });
   handle('ai:clearWorkspace', () => officeAutomation.clearWorkspace());
+  handle('ai:historyList', () => aiHistory.list());
+  handle('ai:historyAppend', (_event, entry) => aiHistory.append(entry));
+  handle('ai:historyClear', () => aiHistory.clear());
 
   handle('settings:get', () => settings.read());
   handle('settings:update', (_event, patch) => {

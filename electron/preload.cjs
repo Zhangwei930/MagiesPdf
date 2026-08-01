@@ -83,6 +83,9 @@ const api = {
   getAiWorkspaceStatus: () => ipcRenderer.invoke('ai:workspaceStatus'),
   pickAiWorkspace: () => ipcRenderer.invoke('ai:pickWorkspace'),
   clearAiWorkspace: () => ipcRenderer.invoke('ai:clearWorkspace'),
+  getAiHistory: () => ipcRenderer.invoke('ai:historyList'),
+  appendAiHistory: (entry) => ipcRenderer.invoke('ai:historyAppend', entry),
+  clearAiHistory: () => ipcRenderer.invoke('ai:historyClear'),
   onAiEvent: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('ai:event', listener);

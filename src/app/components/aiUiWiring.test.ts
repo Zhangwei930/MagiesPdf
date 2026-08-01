@@ -51,4 +51,13 @@ describe('AI workspace wiring', () => {
     assert.match(aiPanelSource, /completed\?\.workflow/);
     assert.match(aiPanelSource, /tool\.details/);
   });
+
+  it('loads persistent task history and reuses a task only as an editable draft', () => {
+    assert.match(aiPanelSource, /getAiHistory/);
+    assert.match(aiPanelSource, /appendAiHistory/);
+    assert.match(aiPanelSource, /clearAiHistory/);
+    assert.match(aiPanelSource, /setDraft\(entry\.prompt\)/);
+    assert.match(aiPanelSource, /createHistoryInput/);
+    assert.doesNotMatch(aiPanelSource, /runAiTurn\([^)]*entry\.prompt/s);
+  });
 });

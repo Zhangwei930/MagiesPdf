@@ -101,6 +101,24 @@ export interface AiArtifact extends ToolOutputFile {
   id: string;
 }
 
+export interface AiHistoryTool {
+  toolId: string;
+  toolName?: LocalizedText;
+}
+
+export interface AiHistoryEntry {
+  id: string;
+  createdAt: number;
+  prompt: string;
+  response: string;
+  success: boolean;
+  workflow: AiHistoryTool[];
+  tools: Array<AiHistoryTool & { status: 'done' | 'error' }>;
+  artifacts: Array<{ name: string }>;
+}
+
+export type AiHistoryInput = Omit<AiHistoryEntry, 'id' | 'createdAt'>;
+
 interface AiEventBase {
   requestId: string;
 }
@@ -237,6 +255,9 @@ export interface MagiesPdfBridge {
   getAiWorkspaceStatus(): Promise<AiWorkspaceStatus>;
   pickAiWorkspace(): Promise<AiWorkspaceStatus>;
   clearAiWorkspace(): Promise<AiWorkspaceStatus>;
+  getAiHistory(): Promise<AiHistoryEntry[]>;
+  appendAiHistory(entry: AiHistoryInput): Promise<AiHistoryEntry>;
+  clearAiHistory(): Promise<boolean>;
   onAiEvent(callback: (event: AiEvent) => void): () => void;
   onJobProgress(callback: (event: ProgressEvent) => void): () => void;
   onUpdaterStatus(callback: (status: UpdaterStatus) => void): () => void;
