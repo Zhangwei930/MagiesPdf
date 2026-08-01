@@ -119,6 +119,65 @@ export interface AiHistoryEntry {
 
 export type AiHistoryInput = Omit<AiHistoryEntry, 'id' | 'createdAt'>;
 
+export type AiAutomationMode = 'review' | 'unattended';
+
+export type AiAutomationTrigger =
+  | { type: 'daily'; at: string }
+  | { type: 'folder'; extensions: string[] };
+
+export interface AiAutomationRuleInput {
+  name: string;
+  prompt: string;
+  mode: AiAutomationMode;
+  trigger: AiAutomationTrigger;
+  allowedToolIds: string[];
+  maxRunsPerDay: number;
+  retryLimit: number;
+}
+
+export interface AiAutomationRule extends AiAutomationRuleInput {
+  id: string;
+  enabled: boolean;
+  failureCount: number;
+  lastError: string;
+  runDate: string;
+  runCount: number;
+  lastDailyDate: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AiAutomationPending {
+  id: string;
+  ruleId: string;
+  createdAt: number;
+  prompt: string;
+  sourcePath: string;
+}
+
+export interface AiAutomationRun {
+  id: string;
+  ruleId: string;
+  createdAt: number;
+  status: 'queued' | 'success' | 'error';
+  attempts: number;
+  message: string;
+  sourcePath: string;
+}
+
+export interface AiAutomationState {
+  rules: AiAutomationRule[];
+  pending: AiAutomationPending[];
+  runs: AiAutomationRun[];
+  tools: AiHistoryTool[];
+}
+
+export interface AiAutomationEvent {
+  type: 'pending' | 'completed' | 'failed' | 'run_event' | 'engine_error';
+  ruleId?: string;
+  message?: string;
+}
+
 interface AiEventBase {
   requestId: string;
 }
@@ -258,7 +317,13 @@ export interface MagiesPdfBridge {
   getAiHistory(): Promise<AiHistoryEntry[]>;
   appendAiHistory(entry: AiHistoryInput): Promise<AiHistoryEntry>;
   clearAiHistory(): Promise<boolean>;
+  getAiAutomationState(): Promise<AiAutomationState>;
+  createAiAutomationRule(rule: AiAutomationRuleInput): Promise<AiAutomationState>;
+  setAiAutomationRuleEnabled(ruleId: string, enabled: boolean): Promise<AiAutomationState>;
+  deleteAiAutomationRule(ruleId: string): Promise<AiAutomationState>;
+  resolveAiAutomationPending(pendingId: string): Promise<AiAutomationState>;
   onAiEvent(callback: (event: AiEvent) => void): () => void;
+  onAiAutomationEvent(callback: (event: AiAutomationEvent) => void): () => void;
   onJobProgress(callback: (event: ProgressEvent) => void): () => void;
   onUpdaterStatus(callback: (status: UpdaterStatus) => void): () => void;
   getUpdaterStatus(): Promise<UpdaterStatus>;

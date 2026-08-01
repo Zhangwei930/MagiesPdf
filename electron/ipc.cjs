@@ -16,6 +16,8 @@ const { createOfficeAutomationProvider } = require('./office/automationProvider.
 const { runUnoOperation } = require('./office/unoRunner.cjs');
 const { createAiService } = require('./ai/service.cjs');
 const { createAiHistoryStore } = require('./ai/history.cjs');
+const { createAutomationStore } = require('./ai/automationStore.cjs');
+const { createAutomationEngine } = require('./ai/automationEngine.cjs');
 const { getSecretStore } = require('./ai/secrets.cjs');
 const { buildMcpClientConfig } = require('./mcp/config.cjs');
 const { createExternalMcpClientManager } = require('./mcp/clientManager.cjs');
@@ -278,6 +280,9 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   const aiHistory = createAiHistoryStore({
     filePath: path.join(app.getPath('userData'), 'ai-history.json'),
   });
+  const automationStore = createAutomationStore({
+    filePath: path.join(app.getPath('userData'), 'ai-automations.json'),
+  });
   const externalMcpManager = createExternalMcpClientManager({
     secretStore,
     version: app.getVersion(),
@@ -296,6 +301,21 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     officeToolProvider: officeAutomation,
     executeTool: ({ signal, onProgress, ...request }) =>
       jobExecutor.run(request, onProgress, signal),
+  });
+  const automationState = async () => ({
+    ...automationStore.getState(),
+    tools: (await officeAutomation.listTools()).map(({ toolId, name }) => ({ toolId, toolName: name })),
+  });
+  const automationEngine = createAutomationEngine({
+    store: automationStore,
+    officeProvider: officeAutomation,
+    aiService,
+    emit: (payload) => {
+      const window = getWindow();
+      if (window && !window.isDestroyed()) {
+        window.webContents.send('ai:automationEvent', payload);
+      }
+    },
   });
 
   handle('job:run', async (event, request) => {
@@ -330,6 +350,23 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   handle('ai:historyList', () => aiHistory.list());
   handle('ai:historyAppend', (_event, entry) => aiHistory.append(entry));
   handle('ai:historyClear', () => aiHistory.clear());
+  handle('ai:automationState', () => automationState());
+  handle('ai:automationCreate', async (_event, rule) => {
+    automationStore.createRule(rule);
+    return automationState();
+  });
+  handle('ai:automationSetEnabled', async (_event, { ruleId, enabled }) => {
+    automationStore.setRuleEnabled(ruleId, enabled);
+    return automationState();
+  });
+  handle('ai:automationDelete', async (_event, { ruleId }) => {
+    automationStore.deleteRule(ruleId);
+    return automationState();
+  });
+  handle('ai:automationResolvePending', async (_event, { pendingId }) => {
+    automationStore.resolvePending(pendingId);
+    return automationState();
+  });
 
   handle('settings:get', () => settings.read());
   handle('settings:update', (_event, patch) => {
@@ -409,7 +446,14 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   });
   handle('updater:status', () => updater.getLastStatus?.() ?? { state: 'idle' });
 
-  return { close: () => externalMcpManager.close() };
+  automationEngine.start();
+
+  return {
+    close: () => {
+      automationEngine.stop();
+      return externalMcpManager.close();
+    },
+  };
 }
 
 module.exports = {

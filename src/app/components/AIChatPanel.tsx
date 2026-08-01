@@ -5,6 +5,7 @@ import {
   bridge,
   hasBridge,
   type AiConfig,
+  type AiAutomationState,
   type AiHistoryEntry,
   type AiHistoryInput,
   type AiWorkspaceStatus,
@@ -22,6 +23,7 @@ import {
   Send,
   Square,
   Trash2,
+  Workflow,
   X,
 } from '../icons.ts';
 import {
@@ -237,6 +239,322 @@ function TaskHistory({
   );
 }
 
+interface AutomationDraft {
+  name: string;
+  prompt: string;
+  mode: 'review' | 'unattended';
+  triggerType: 'daily' | 'folder';
+  at: string;
+  extensions: string;
+  allowedToolIds: string[];
+  maxRunsPerDay: number;
+  retryLimit: number;
+}
+
+const EMPTY_AUTOMATION: AutomationDraft = {
+  name: '',
+  prompt: '',
+  mode: 'review',
+  triggerType: 'daily',
+  at: '09:00',
+  extensions: '.pdf, .docx, .xlsx, .pptx',
+  allowedToolIds: [],
+  maxRunsPerDay: 5,
+  retryLimit: 1,
+};
+
+function AutomationManager({
+  state,
+  locale,
+  workspace,
+  onState,
+  onUsePending,
+  onError,
+}: {
+  state: AiAutomationState | null;
+  locale: Locale;
+  workspace: AiWorkspaceStatus | null;
+  onState(state: AiAutomationState): void;
+  onUsePending(prompt: string): void;
+  onError(message: string): void;
+}) {
+  const [form, setForm] = useState<AutomationDraft>(EMPTY_AUTOMATION);
+  const [creating, setCreating] = useState(false);
+
+  const mutate = async (operation: () => Promise<AiAutomationState>) => {
+    onError('');
+    try {
+      onState(await operation());
+    } catch (cause) {
+      onError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  const createRule = async () => {
+    setCreating(true);
+    await mutate(async () => {
+      const next = await bridge().createAiAutomationRule({
+        name: form.name,
+        prompt: form.prompt,
+        mode: form.mode,
+        trigger: form.triggerType === 'daily'
+          ? { type: 'daily', at: form.at }
+          : {
+              type: 'folder',
+              extensions: form.extensions.split(/[\s,，]+/).filter(Boolean),
+            },
+        allowedToolIds: form.mode === 'unattended' ? form.allowedToolIds : [],
+        maxRunsPerDay: form.maxRunsPerDay,
+        retryLimit: form.retryLimit,
+      });
+      setForm(EMPTY_AUTOMATION);
+      return next;
+    });
+    setCreating(false);
+  };
+
+  const valid = form.name.trim() && form.prompt.trim()
+    && (form.mode === 'review' || form.allowedToolIds.length > 0);
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="text-[12px] font-semibold">
+          {locale === 'zh' ? '自动化任务' : 'Automations'}
+        </p>
+        <p className="mt-1 text-[10px] leading-relaxed text-[var(--text-muted)]">
+          {locale === 'zh'
+            ? '审核模式只生成待办；无人值守仅能调用你勾选的本地 Office 工具。'
+            : 'Review mode creates a queue item. Unattended mode can call only selected local Office tools.'}
+        </p>
+      </div>
+
+      {(state?.pending.length ?? 0) > 0 && (
+        <section className="space-y-2">
+          <p className="text-[11px] font-semibold">
+            {locale === 'zh' ? `待审核（${state?.pending.length}）` : `Review queue (${state?.pending.length})`}
+          </p>
+          {state?.pending.map((pending) => (
+            <div key={pending.id} className="rounded-lg border border-[var(--accent)] bg-[var(--accent-soft)] p-2.5">
+              <p className="line-clamp-3 text-[11px] leading-relaxed">{pending.prompt}</p>
+              <div className="mt-2 flex justify-end gap-1">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-[10px]"
+                  onClick={() => void mutate(() => bridge().resolveAiAutomationPending(pending.id))}
+                >
+                  {locale === 'zh' ? '忽略' : 'Dismiss'}
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-7 px-2 text-[10px]"
+                  onClick={() => {
+                    onUsePending(pending.prompt);
+                    void mutate(() => bridge().resolveAiAutomationPending(pending.id));
+                  }}
+                >
+                  {locale === 'zh' ? '审核并编辑' : 'Review draft'}
+                </Button>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+
+      <section className="space-y-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-raised)] p-2.5">
+        <p className="text-[11px] font-semibold">{locale === 'zh' ? '新建规则' : 'New rule'}</p>
+        <input
+          value={form.name}
+          placeholder={locale === 'zh' ? '规则名称' : 'Rule name'}
+          className="w-full rounded-md border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-2 py-1.5 text-[11px] outline-none focus:border-[var(--accent)]"
+          onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+        />
+        <textarea
+          value={form.prompt}
+          rows={3}
+          placeholder={locale === 'zh' ? '任务说明，例如：读取新表格并生成汇总图表' : 'Task instructions'}
+          className="w-full resize-none rounded-md border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-2 py-1.5 text-[11px] outline-none focus:border-[var(--accent)]"
+          onChange={(event) => setForm((current) => ({ ...current, prompt: event.target.value }))}
+        />
+        <div className="grid grid-cols-2 gap-2">
+          <select
+            value={form.mode}
+            className="rounded-md border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-2 py-1.5 text-[11px]"
+            onChange={(event) => setForm((current) => ({
+              ...current,
+              mode: event.target.value as AutomationDraft['mode'],
+            }))}
+          >
+            <option value="review">{locale === 'zh' ? '审核队列（推荐）' : 'Review queue (recommended)'}</option>
+            <option value="unattended">{locale === 'zh' ? '无人值守' : 'Unattended'}</option>
+          </select>
+          <select
+            value={form.triggerType}
+            className="rounded-md border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-2 py-1.5 text-[11px]"
+            onChange={(event) => setForm((current) => ({
+              ...current,
+              triggerType: event.target.value as AutomationDraft['triggerType'],
+            }))}
+          >
+            <option value="daily">{locale === 'zh' ? '每天定时' : 'Daily'}</option>
+            <option value="folder">{locale === 'zh' ? '新文件进入目录' : 'New workspace file'}</option>
+          </select>
+        </div>
+        {form.triggerType === 'daily' ? (
+          <input
+            type="time"
+            value={form.at}
+            className="w-full rounded-md border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-2 py-1.5 text-[11px]"
+            onChange={(event) => setForm((current) => ({ ...current, at: event.target.value }))}
+          />
+        ) : (
+          <input
+            value={form.extensions}
+            placeholder=".pdf, .docx, .xlsx, .pptx"
+            className="w-full rounded-md border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-2 py-1.5 text-[11px] outline-none focus:border-[var(--accent)]"
+            onChange={(event) => setForm((current) => ({ ...current, extensions: event.target.value }))}
+          />
+        )}
+        <div className="grid grid-cols-2 gap-2 text-[10px]">
+          <label>
+            <span className="text-[var(--text-muted)]">{locale === 'zh' ? '每日上限' : 'Daily cap'}</span>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={form.maxRunsPerDay}
+              className="mt-1 w-full rounded-md border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-2 py-1.5"
+              onChange={(event) => setForm((current) => ({
+                ...current,
+                maxRunsPerDay: Number(event.target.value),
+              }))}
+            />
+          </label>
+          <label>
+            <span className="text-[var(--text-muted)]">{locale === 'zh' ? '失败重试' : 'Retries'}</span>
+            <input
+              type="number"
+              min={0}
+              max={2}
+              value={form.retryLimit}
+              className="mt-1 w-full rounded-md border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-2 py-1.5"
+              onChange={(event) => setForm((current) => ({
+                ...current,
+                retryLimit: Number(event.target.value),
+              }))}
+            />
+          </label>
+        </div>
+        {form.mode === 'unattended' && (
+          <div>
+            <p className="mb-1 text-[10px] font-medium">
+              {locale === 'zh' ? '允许自动调用的工具' : 'Allowed automatic tools'}
+            </p>
+            {!workspace?.configured ? (
+              <p className="text-[10px] text-[var(--danger)]">
+                {locale === 'zh' ? '请先授权上方办公目录。' : 'Grant an Office workspace first.'}
+              </p>
+            ) : (
+              <div className="max-h-36 space-y-1 overflow-y-auto rounded-md bg-[var(--surface-sunken)] p-2">
+                {state?.tools.map((tool) => (
+                  <label key={tool.toolId} className="flex items-start gap-2 text-[10px]">
+                    <input
+                      type="checkbox"
+                      checked={form.allowedToolIds.includes(tool.toolId)}
+                      onChange={(event) => setForm((current) => ({
+                        ...current,
+                        allowedToolIds: event.target.checked
+                          ? [...current.allowedToolIds, tool.toolId]
+                          : current.allowedToolIds.filter((toolId) => toolId !== tool.toolId),
+                      }))}
+                    />
+                    <span>{localized(tool.toolName, locale) || tool.toolId}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        <Button
+          size="sm"
+          className="w-full"
+          disabled={!valid || creating || !hasBridge()}
+          onClick={() => void createRule()}
+        >
+          {creating ? <Loader2 size={12} className="animate-spin" /> : <Workflow size={12} />}
+          {locale === 'zh' ? '创建自动化规则' : 'Create automation'}
+        </Button>
+      </section>
+
+      <section className="space-y-2">
+        <p className="text-[11px] font-semibold">
+          {locale === 'zh' ? `规则（${state?.rules.length ?? 0}）` : `Rules (${state?.rules.length ?? 0})`}
+        </p>
+        {state?.rules.map((rule) => (
+          <div key={rule.id} className="rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-raised)] p-2.5">
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[11px] font-medium">{rule.name}</p>
+                <p className="mt-1 text-[9px] text-[var(--text-muted)]">
+                  {rule.mode === 'review'
+                    ? (locale === 'zh' ? '审核队列' : 'Review')
+                    : (locale === 'zh' ? '无人值守' : 'Unattended')}
+                  {' · '}
+                  {rule.trigger.type === 'daily'
+                    ? `${locale === 'zh' ? '每天' : 'Daily'} ${rule.trigger.at}`
+                    : rule.trigger.extensions.join(', ')}
+                  {` · ${rule.runCount}/${rule.maxRunsPerDay}`}
+                </p>
+                {rule.lastError && <p className="mt-1 line-clamp-2 text-[9px] text-[var(--danger)]">{rule.lastError}</p>}
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-[10px]"
+                onClick={() => void mutate(() => bridge().setAiAutomationRuleEnabled(rule.id, !rule.enabled))}
+              >
+                {rule.enabled
+                  ? (locale === 'zh' ? '暂停' : 'Pause')
+                  : (locale === 'zh' ? '启用' : 'Enable')}
+              </Button>
+              <button
+                type="button"
+                className="rounded-md p-1.5 text-[var(--text-muted)] hover:text-[var(--danger)]"
+                aria-label={locale === 'zh' ? '删除规则' : 'Delete rule'}
+                onClick={() => {
+                  if (window.confirm(locale === 'zh' ? '确定删除这条自动化规则吗？' : 'Delete this automation rule?')) {
+                    void mutate(() => bridge().deleteAiAutomationRule(rule.id));
+                  }
+                }}
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          </div>
+        ))}
+      </section>
+
+      {(state?.runs.length ?? 0) > 0 && (
+        <section className="space-y-1.5">
+          <p className="text-[11px] font-semibold">{locale === 'zh' ? '最近运行' : 'Recent runs'}</p>
+          {state?.runs.slice(0, 10).map((run) => (
+            <div key={run.id} className="flex gap-2 rounded-md bg-[var(--surface-sunken)] px-2 py-1.5 text-[10px]">
+              <span className={run.status === 'error' ? 'text-[var(--danger)]' : 'text-[var(--success)]'}>
+                {run.status === 'queued' ? '…' : run.status === 'success' ? '✓' : '×'}
+              </span>
+              <span className="min-w-0 flex-1 truncate">{run.message}</span>
+              <span className="text-[var(--text-muted)]">
+                {new Date(run.createdAt).toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')}
+              </span>
+            </div>
+          ))}
+        </section>
+      )}
+    </div>
+  );
+}
+
 export function AIChatPanel({
   open,
   locale,
@@ -251,7 +569,9 @@ export function AIChatPanel({
   const [config, setConfig] = useState<AiConfig | null>(null);
   const [workspace, setWorkspace] = useState<AiWorkspaceStatus | null>(null);
   const [taskHistory, setTaskHistory] = useState<AiHistoryEntry[]>([]);
+  const [automationState, setAutomationState] = useState<AiAutomationState | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [automationOpen, setAutomationOpen] = useState(false);
   const [error, setError] = useState('');
   const turnRef = useRef<AiTurnState | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -273,6 +593,15 @@ export function AIChatPanel({
   }, [updateTurn]);
 
   useEffect(() => {
+    if (!hasBridge()) return;
+    return bridge().onAiAutomationEvent(() => {
+      void bridge().getAiAutomationState().then(setAutomationState).catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      });
+    });
+  }, []);
+
+  useEffect(() => {
     if (!open || !hasBridge()) return;
     void bridge().getAiConfig().then(setConfig).catch((cause: unknown) => {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -281,6 +610,9 @@ export function AIChatPanel({
       setError(cause instanceof Error ? cause.message : String(cause));
     });
     void bridge().getAiHistory().then(setTaskHistory).catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    });
+    void bridge().getAiAutomationState().then(setAutomationState).catch((cause: unknown) => {
       setError(cause instanceof Error ? cause.message : String(cause));
     });
   }, [open]);
@@ -316,6 +648,7 @@ export function AIChatPanel({
     setError('');
     try {
       setWorkspace(await bridge().pickAiWorkspace());
+      setAutomationState(await bridge().getAiAutomationState());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -326,6 +659,7 @@ export function AIChatPanel({
     setError('');
     try {
       setWorkspace(await bridge().clearAiWorkspace());
+      setAutomationState(await bridge().getAiAutomationState());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -430,7 +764,23 @@ export function AIChatPanel({
         <button
           type="button"
           disabled={Boolean(turn)}
-          onClick={() => setHistoryOpen((current) => !current)}
+          onClick={() => {
+            setAutomationOpen((current) => !current);
+            setHistoryOpen(false);
+          }}
+          className={`rounded-md p-1.5 hover:bg-[var(--surface-hover)] disabled:opacity-50 ${automationOpen ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}
+          aria-label={locale === 'zh' ? '自动化任务' : 'Automations'}
+          aria-pressed={automationOpen}
+        >
+          <Workflow size={15} />
+        </button>
+        <button
+          type="button"
+          disabled={Boolean(turn)}
+          onClick={() => {
+            setHistoryOpen((current) => !current);
+            setAutomationOpen(false);
+          }}
           className={`rounded-md p-1.5 hover:bg-[var(--surface-hover)] disabled:opacity-50 ${historyOpen ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}
           aria-label={locale === 'zh' ? '任务历史' : 'Task history'}
           aria-pressed={historyOpen}
@@ -493,6 +843,19 @@ export function AIChatPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {automationOpen && (
+          <AutomationManager
+            state={automationState}
+            locale={locale}
+            workspace={workspace}
+            onState={setAutomationState}
+            onError={setError}
+            onUsePending={(prompt) => {
+              setDraft(prompt);
+              setAutomationOpen(false);
+            }}
+          />
+        )}
         {historyOpen && (
           <TaskHistory
             entries={taskHistory}
@@ -504,7 +867,7 @@ export function AIChatPanel({
             }}
           />
         )}
-        {!historyOpen && messages.length === 0 && !turn && (
+        {!historyOpen && !automationOpen && messages.length === 0 && !turn && (
           <div className="flex h-full flex-col items-center justify-center px-5 text-center">
             <Bot size={28} strokeWidth={1.5} className="mb-3 text-[var(--accent)]" />
             <p className="text-sm font-medium">{t('aiEmpty', locale)}</p>
@@ -520,7 +883,7 @@ export function AIChatPanel({
         )}
 
         <div className="space-y-3">
-          {!historyOpen && messages.map((message) => (
+          {!historyOpen && !automationOpen && messages.map((message) => (
             <div
               key={message.id}
               className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
@@ -540,7 +903,7 @@ export function AIChatPanel({
             </div>
           ))}
 
-          {!historyOpen && turn && (
+          {!historyOpen && !automationOpen && turn && (
             <div className="rounded-xl rounded-bl-sm border border-[var(--border-subtle)] bg-[var(--surface-raised)] px-3 py-2 text-[13px]">
               <WorkflowPreview steps={turn.workflow} locale={locale} />
               <ToolActivities tools={turn.tools} locale={locale} />
@@ -598,7 +961,7 @@ export function AIChatPanel({
         </div>
       )}
 
-      <div className="shrink-0 border-t border-[var(--border-subtle)] p-3">
+      {!automationOpen && <div className="shrink-0 border-t border-[var(--border-subtle)] p-3">
         <div className="rounded-xl border border-[var(--border-strong)] bg-[var(--surface-raised)] p-2 focus-within:border-[var(--accent)]">
           <textarea
             value={draft}
@@ -642,7 +1005,7 @@ export function AIChatPanel({
             )}
           </div>
         </div>
-      </div>
+      </div>}
     </aside>
   );
 }

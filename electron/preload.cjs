@@ -86,10 +86,22 @@ const api = {
   getAiHistory: () => ipcRenderer.invoke('ai:historyList'),
   appendAiHistory: (entry) => ipcRenderer.invoke('ai:historyAppend', entry),
   clearAiHistory: () => ipcRenderer.invoke('ai:historyClear'),
+  getAiAutomationState: () => ipcRenderer.invoke('ai:automationState'),
+  createAiAutomationRule: (rule) => ipcRenderer.invoke('ai:automationCreate', rule),
+  setAiAutomationRuleEnabled: (ruleId, enabled) =>
+    ipcRenderer.invoke('ai:automationSetEnabled', { ruleId, enabled }),
+  deleteAiAutomationRule: (ruleId) => ipcRenderer.invoke('ai:automationDelete', { ruleId }),
+  resolveAiAutomationPending: (pendingId) =>
+    ipcRenderer.invoke('ai:automationResolvePending', { pendingId }),
   onAiEvent: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('ai:event', listener);
     return () => ipcRenderer.removeListener('ai:event', listener);
+  },
+  onAiAutomationEvent: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('ai:automationEvent', listener);
+    return () => ipcRenderer.removeListener('ai:automationEvent', listener);
   },
 
   /**

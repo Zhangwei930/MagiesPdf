@@ -203,6 +203,7 @@ export {
   Sun,
   Trash2,
   Undo2,
+  Workflow,
   Wrench,
   X,
   Ban,

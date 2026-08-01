@@ -60,4 +60,17 @@ describe('AI workspace wiring', () => {
     assert.match(aiPanelSource, /createHistoryInput/);
     assert.doesNotMatch(aiPanelSource, /runAiTurn\([^)]*entry\.prompt/s);
   });
+
+  it('manages review and unattended automations without exposing a direct unattended runner', () => {
+    assert.match(aiPanelSource, /getAiAutomationState/);
+    assert.match(aiPanelSource, /createAiAutomationRule/);
+    assert.match(aiPanelSource, /setAiAutomationRuleEnabled/);
+    assert.match(aiPanelSource, /deleteAiAutomationRule/);
+    assert.match(aiPanelSource, /resolveAiAutomationPending/);
+    assert.match(aiPanelSource, /onAiAutomationEvent/);
+    assert.match(aiPanelSource, /mode: 'review' \| 'unattended'/);
+    assert.match(aiPanelSource, /triggerType: 'daily' \| 'folder'/);
+    assert.match(aiPanelSource, /allowedToolIds/);
+    assert.doesNotMatch(aiPanelSource, /runAiUnattended/);
+  });
 });
