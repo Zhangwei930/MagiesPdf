@@ -125,25 +125,6 @@ describe('REST API handler', () => {
     assert.equal(body.ok, true);
   });
 
-  it('delegates WOPI requests before REST bearer authentication', async () => {
-    const wopiHandler = createHandler({
-      pool,
-      wopiHandler: async (request, response) => {
-        assert.equal(request.url, '/wopi/files/id?access_token=office-token');
-        response.writeHead(204);
-        response.end();
-        return true;
-      },
-    });
-    const rr = mockReqRes({
-      method: 'GET',
-      url: '/wopi/files/id?access_token=office-token',
-    });
-
-    await wopiHandler(rr.req, rr.res);
-    assert.deepEqual(await rr.result(), { statusCode: 204, body: null });
-  });
-
   it('rejects tools list without a token', async () => {
     const { req, res, result } = mockReqRes({ method: 'GET', url: '/v1/tools' });
     await handler(req, res);
@@ -237,18 +218,14 @@ describe('REST API handler', () => {
   });
 });
 
-describe('WOPI server activation', () => {
-  it('runs for a configured online editor even when the automation API is disabled', () => {
+describe('REST API activation', () => {
+  it('stays disabled when the automation API is disabled', () => {
     const previous = testSettings;
     withSettings({
       api: { enabled: false, token: '' },
-      office: {
-        collaboraUrl: 'https://office.example.com',
-        wopiPublicUrl: 'https://files.example.com',
-      },
     });
     try {
-      assert.equal(isEnabled(), true);
+      assert.equal(isEnabled(), false);
     } finally {
       testSettings = previous;
     }

@@ -31,8 +31,3 @@ export function partitionDocumentPaths(paths: readonly string[]): {
   }
   return result;
 }
-
-export function canUseOnlineOffice(status: OfficeStatus): boolean {
-  return status.collabora.configured && status.wopiPublicUrl !== '';
-}
-import type { OfficeStatus } from './bridge.ts';

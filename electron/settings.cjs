@@ -23,6 +23,8 @@ const DEFAULTS = {
    * production, which is the worst possible failure mode.
    */
   recentToolIds: [],
+  /** Documents opened most recently, stored as paths only and never uploaded. */
+  recentDocuments: [],
   /**
    * Check for updates on launch and download in the background when a newer
    * build is found. Installation still always requires an explicit restart
@@ -52,14 +54,10 @@ const DEFAULTS = {
     argumentTemplate: '',
     timeoutMs: 120000,
   },
-  /** Office-suite engines. Local editing and collaboration can be configured independently. */
+  /** Local Office-suite engine. */
   office: {
     /** Empty means auto-detect the platform's standard LibreOffice installation. */
     libreOfficeExecutable: '',
-    /** Collabora Online origin, for example https://office.example.com. */
-    collaboraUrl: '',
-    /** Public HTTPS origin Collabora uses to call this app's WOPI endpoints. */
-    wopiPublicUrl: '',
   },
   /**
    * User-saved pipeline definitions for the visual builder.

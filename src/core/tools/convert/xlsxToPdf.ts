@@ -62,8 +62,8 @@ export const xlsxToPdfTool: ToolDescriptor = {
   category: 'convert',
   name: { zh: 'Excel 转 PDF', en: 'Excel to PDF' },
   description: {
-    zh: '把 .xlsx 工作簿转成 PDF。每个工作表一节；如配置了外部转换器则优先使用。',
-    en: 'Convert an .xlsx workbook to PDF — one section per sheet. Prefers an external converter when configured.',
+    zh: '把 .xlsx 工作簿转成 PDF。检测到 LibreOffice 时自动使用本地办公引擎。',
+    en: 'Convert an .xlsx workbook to PDF. Automatically uses the local LibreOffice engine when available.',
   },
   icon: 'Table',
   keywords: ['excel', 'xlsx', 'spreadsheet', '表格', '工作簿', '转换'],
@@ -75,14 +75,14 @@ export const xlsxToPdfTool: ToolDescriptor = {
   async run(ctx) {
     const file = soleFile(ctx);
 
-    if (ctx.host?.hasExternalConverter()) {
+    if (ctx.host?.hasExternalConverter('pdf')) {
       const output = await ctx.host.externalConvert(file, 'pdf', ctx.signal);
       ctx.report(1);
       return {
         files: [pdfOutput(suffixedName(file.name, '', '.pdf'), output.bytes)],
         summary: {
-          zh: `已通过外部转换器转换「${file.name}」`,
-          en: `Converted "${file.name}" via the external converter`,
+          zh: `已通过本地办公引擎转换「${file.name}」`,
+          en: `Converted "${file.name}" via the local Office engine`,
         },
       };
     }

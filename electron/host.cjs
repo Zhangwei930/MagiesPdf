@@ -5,15 +5,15 @@ const { execFile } = require('node:child_process');
 const { BrowserWindow } = require('electron');
 const settings = require('./settings.cjs');
 const { safeFileName } = require('./security.cjs');
+const { resolveLibreOfficeExecutable } = require('./office/libreOffice.cjs');
 
 /**
  * The main-process capabilities handed to `runtime: 'main'` tools as `ctx.host`.
  *
  * - `htmlToPdf` prints HTML through a hidden window with Chromium's own print
  *   pipeline — the layout engine behind every HTML/Markdown/Office conversion.
- * - `externalConvert` shells out to whatever command-line converter the user
- *   configured in Settings. MagiesPdf ships none and names none; the hook just
- *   exists for users who want maximum layout fidelity from their own tooling.
+ * - `externalConvert` uses a configured command-line converter, or the detected
+ *   LibreOffice executable for high-fidelity Office-to-PDF conversion.
  */
 
 /** Prints are serialised: hidden windows are cheap but not free. */
@@ -93,32 +93,67 @@ async function printHtml(html, options, signal) {
   }
 }
 
-function externalConverterConfig() {
-  const { executable, argumentTemplate, timeoutMs } = settings.read().externalConverter;
-  return { executable, argumentTemplate, timeoutMs };
-}
-
-function hasExternalConverter() {
-  const { executable } = externalConverterConfig();
-  if (!executable) return false;
+function isExecutable(candidate) {
+  if (!candidate) return false;
   try {
-    require('node:fs').accessSync(executable, require('node:fs').constants.X_OK);
+    require('node:fs').accessSync(candidate, require('node:fs').constants.X_OK);
     return true;
   } catch {
     return false;
   }
 }
 
+function converterConfigFrom(currentSettings, deps = {}) {
+  const canRun = deps.isExecutable ?? isExecutable;
+  const resolveLibreOffice = deps.resolveLibreOffice ?? resolveLibreOfficeExecutable;
+  const external = currentSettings.externalConverter ?? {};
+  if (canRun(external.executable)) {
+    return {
+      kind: 'custom',
+      executable: external.executable,
+      argumentTemplate: external.argumentTemplate ?? '',
+      timeoutMs: external.timeoutMs ?? 120000,
+    };
+  }
+
+  const libreOffice = resolveLibreOffice({
+    configured: currentSettings.office?.libreOfficeExecutable ?? '',
+  });
+  if (libreOffice) {
+    return {
+      kind: 'libreoffice',
+      executable: libreOffice,
+      argumentTemplate: '--headless --nologo --nodefault --nofirststartwizard --norestore --convert-to {target} --outdir {out} {in}',
+      timeoutMs: 120000,
+    };
+  }
+
+  return { kind: 'none', executable: '', argumentTemplate: '', timeoutMs: 120000 };
+}
+
+function externalConverterConfig() {
+  return converterConfigFrom(settings.read());
+}
+
+function converterSupports(config, targetExtension) {
+  return config.kind === 'custom' || (config.kind === 'libreoffice' && targetExtension === 'pdf');
+}
+
+function hasExternalConverter(targetExtension) {
+  return converterSupports(externalConverterConfig(), targetExtension);
+}
+
 /**
- * Runs the configured converter: writes the input to a temp dir, substitutes
+ * Runs the selected local converter: writes the input to a temp dir, substitutes
  * `{in}`/`{out}` in the argument template, and picks up `<stem>.<extension>`
  * from the output dir.
  */
 async function externalConvert(input, targetExtension, signal) {
-  const { executable, argumentTemplate, timeoutMs } = externalConverterConfig();
-  if (!hasExternalConverter()) {
-    throw new Error('No external converter is configured');
+  const config = externalConverterConfig();
+  if (!converterSupports(config, targetExtension)) {
+    throw new Error('No local converter supports this format');
   }
+  const { executable, argumentTemplate, timeoutMs } = config;
 
   const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'magiespdf-conv-'));
   try {
@@ -132,7 +167,12 @@ async function externalConvert(input, targetExtension, signal) {
     const args = argumentTemplate
       .split(/\s+/)
       .filter(Boolean)
-      .map((argument) => argument.replaceAll('{in}', inputPath).replaceAll('{out}', workDir));
+      .map((argument) =>
+        argument
+          .replaceAll('{in}', inputPath)
+          .replaceAll('{out}', workDir)
+          .replaceAll('{target}', targetExtension),
+      );
 
     await new Promise((resolve, reject) => {
       const child = execFile(executable, args, { timeout: timeoutMs || 120000 }, (error, _stdout, stderr) => {
@@ -169,6 +209,8 @@ function createHostBridge() {
 }
 
 module.exports = {
+  converterConfigFrom,
+  converterSupports,
   createHostBridge,
   htmlToPdf,
   PRINT_WEB_PREFERENCES,

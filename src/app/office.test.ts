@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { canUseOnlineOffice, partitionDocumentPaths } from './office.ts';
+import { partitionDocumentPaths } from './office.ts';
 
 describe('partitionDocumentPaths', () => {
   it('routes PDFs to Magies and Office formats to LibreOffice', () => {
@@ -28,27 +28,6 @@ describe('partitionDocumentPaths', () => {
         office: ['/docs/a.odt', '/docs/b.ods', '/docs/c.odp', '/docs/d.doc'],
         unsupported: [],
       },
-    );
-  });
-});
-
-describe('canUseOnlineOffice', () => {
-  it('requires both Collabora and a public WOPI origin', () => {
-    assert.equal(
-      canUseOnlineOffice({
-        libreOffice: { available: true, executable: '/usr/bin/soffice' },
-        collabora: { configured: true, serverUrl: 'https://office.example.com' },
-        wopiPublicUrl: 'https://files.example.com',
-      }),
-      true,
-    );
-    assert.equal(
-      canUseOnlineOffice({
-        libreOffice: { available: true, executable: '/usr/bin/soffice' },
-        collabora: { configured: true, serverUrl: 'https://office.example.com' },
-        wopiPublicUrl: '',
-      }),
-      false,
     );
   });
 });

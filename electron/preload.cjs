@@ -27,10 +27,12 @@ const api = {
   getOfficeStatus: () => ipcRenderer.invoke('office:status'),
   pickAndOpenOffice: (multiple) => ipcRenderer.invoke('office:pickAndOpen', { multiple }),
   createAndOpenOffice: (kind) => ipcRenderer.invoke('office:createAndOpen', { kind }),
-  createOffice: (kind) => ipcRenderer.invoke('office:create', { kind }),
   openOfficePaths: (paths) => ipcRenderer.invoke('office:openPaths', { paths }),
-  prepareOnlineOffice: (target) => ipcRenderer.invoke('office:prepareOnline', { path: target }),
-  checkCollabora: () => ipcRenderer.invoke('office:checkCollabora'),
+  listRecentDocuments: () => ipcRenderer.invoke('office:listRecent'),
+  renameRecentDocument: (target, name) =>
+    ipcRenderer.invoke('office:renameRecent', { path: target, name }),
+  trashRecentDocument: (target) => ipcRenderer.invoke('office:trashRecent', { path: target }),
+  forgetRecentDocument: (target) => ipcRenderer.invoke('office:forgetRecent', { path: target }),
 
   /** Opens the system file picker. Returns [] when the user cancels. */
   pickFiles: (accept, multiple) => ipcRenderer.invoke('files:pick', { accept, multiple }),

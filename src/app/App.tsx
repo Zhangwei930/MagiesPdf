@@ -1,12 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import type { CategoryId, ToolMeta } from '@core/types.ts';
+import type { ToolMeta } from '@core/types.ts';
 import { uiRegistry } from './catalog.ts';
 import {
   bridge,
   hasBridge,
   type OfficeCreateKind,
-  type OnlineOfficeSession,
   type PickedFile,
 } from './bridge.ts';
 import { t } from './i18n.ts';
@@ -15,13 +14,12 @@ import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
 import { activeJobCount, useApp } from './store.ts';
 import { isDirty, type DocumentState } from './documents.ts';
 import { canApplyToDocument } from './toolApply.ts';
-import { canUseOnlineOffice, partitionDocumentPaths } from './office.ts';
+import { partitionDocumentPaths } from './office.ts';
 import { CommandPalette } from './components/CommandPalette.tsx';
 import { ApplyToolPanel } from './components/ApplyToolPanel.tsx';
 import { DocumentTabs } from './components/DocumentTabs.tsx';
 import { Home } from './components/Home.tsx';
 import { JobPanel } from './components/JobPanel.tsx';
-import { OfficeEditor } from './components/OfficeEditor.tsx';
 import { Ribbon } from './components/Ribbon.tsx';
 import { ToolPage } from './components/ToolPage.tsx';
 import { UpdatePrompt } from './components/UpdatePrompt.tsx';
@@ -64,7 +62,6 @@ type MainView =
   | { name: 'welcome' }
   | { name: 'tool'; toolId: string; initialFile?: PickedFile }
   | { name: 'document' }
-  | { name: 'office'; path: string; session: OnlineOfficeSession }
   | { name: 'settings' };
 
 export function App() {
@@ -171,24 +168,7 @@ export function App() {
     async (paths: string[]) => {
       if (paths.length === 0) return;
       const partitioned = partitionDocumentPaths(paths);
-      if (partitioned.office.length === 1) {
-        const status = await bridge().getOfficeStatus();
-        const officePath = partitioned.office[0];
-        if (officePath && partitioned.pdf.length === 0 && canUseOnlineOffice(status)) {
-          try {
-            const session = await bridge().prepareOnlineOffice(officePath);
-            setMain({ name: 'office', path: officePath, session });
-          } catch (cause) {
-            console.error('[magiesoffice] online editor unavailable:', cause);
-            setDropError(t('onlineEditorFallback', locale));
-            await bridge().openOfficePaths([officePath]);
-          }
-        } else if (officePath) {
-          await bridge().openOfficePaths([officePath]);
-        }
-      } else if (partitioned.office.length > 1) {
-        await bridge().openOfficePaths(partitioned.office);
-      }
+      if (partitioned.office.length > 0) await bridge().openOfficePaths(partitioned.office);
       for (const file of await bridge().readFiles(partitioned.pdf)) showDocument(file);
       if (partitioned.unsupported.length > 0) throw new Error(t('dropNotDocument', locale));
     },
@@ -202,10 +182,9 @@ export function App() {
 
   const createOfficeDocument = useCallback(
     async (kind: OfficeCreateKind) => {
-      const result = await bridge().createOffice(kind);
-      if (!result.canceled && result.created) await openPaths([result.created]);
+      await bridge().createAndOpenOffice(kind);
     },
-    [openPaths],
+    [],
   );
 
   const selectTab = useCallback(
@@ -331,7 +310,7 @@ export function App() {
 
   const running = activeJobCount(jobs);
   const tool = view.name === 'tool' ? uiRegistry.tryGet(view.toolId) : undefined;
-  const showRibbon = view.name !== 'settings' && view.name !== 'welcome' && view.name !== 'office';
+  const showRibbon = view.name !== 'settings' && view.name !== 'welcome';
 
   return (
     <div
@@ -426,7 +405,7 @@ export function App() {
           <main
             className={clsx(
               'min-h-0 flex-1 bg-[var(--surface-app)]',
-              view.name === 'settings' || view.name === 'document' || view.name === 'office'
+              view.name === 'settings' || view.name === 'document'
                 ? 'overflow-hidden'
                 : 'overflow-y-auto',
             )}
@@ -443,17 +422,6 @@ export function App() {
                 key={activeDocument.id}
                 document={activeDocument}
                 onChooseTool={openToolPickerForDocument}
-              />
-            )}
-
-            {view.name === 'office' && (
-              <OfficeEditor
-                path={view.path}
-                session={view.session}
-                onClose={openWelcome}
-                onOpenLocal={async (path) => {
-                  await bridge().openOfficePaths([path]);
-                }}
               />
             )}
 
@@ -478,9 +446,9 @@ export function App() {
                 <Home
                   onOpenTool={openTool}
                   onOpenSearch={() => setPaletteOpen(true)}
-                  onOpenCategory={(_categoryId: CategoryId) => openWelcome()}
                   onOpenDocument={openDocumentPicker}
                   onCreateOffice={createOfficeDocument}
+                  onOpenRecent={(path) => openPaths([path])}
                 />
               ))}
 
@@ -488,12 +456,9 @@ export function App() {
               <Home
                 onOpenTool={openTool}
                 onOpenSearch={() => setPaletteOpen(true)}
-                onOpenCategory={(_categoryId: CategoryId) => {
-                  // Categories live in the ribbon; keep welcome and let the user pick there.
-                  openWelcome();
-                }}
                 onOpenDocument={openDocumentPicker}
                 onCreateOffice={createOfficeDocument}
+                onOpenRecent={(path) => openPaths([path])}
               />
             )}
             </Suspense>

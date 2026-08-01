@@ -3,11 +3,58 @@ const { describe, it } = require('node:test');
 
 const {
   PRINT_WEB_PREFERENCES,
+  converterConfigFrom,
+  converterSupports,
   isSafePrintRequest,
   safeTemporaryName,
 } = require('./host.cjs');
 
 describe('host boundary helpers', () => {
+  it('uses a configured converter before the detected LibreOffice executable', () => {
+    assert.deepEqual(
+      converterConfigFrom(
+        {
+          externalConverter: {
+            executable: '/custom/converter',
+            argumentTemplate: '--to pdf {in} {out}',
+            timeoutMs: 5000,
+          },
+          office: { libreOfficeExecutable: '/custom/soffice' },
+        },
+        {
+          isExecutable: (candidate) => candidate === '/custom/converter',
+          resolveLibreOffice: () => '/custom/soffice',
+        },
+      ),
+      {
+        kind: 'custom',
+        executable: '/custom/converter',
+        argumentTemplate: '--to pdf {in} {out}',
+        timeoutMs: 5000,
+      },
+    );
+  });
+
+  it('automatically uses LibreOffice for Office-to-PDF conversion', () => {
+    const config = converterConfigFrom(
+      {
+        externalConverter: { executable: '', argumentTemplate: '', timeoutMs: 120000 },
+        office: { libreOfficeExecutable: '' },
+      },
+      {
+        isExecutable: () => false,
+        resolveLibreOffice: () => '/usr/bin/libreoffice',
+      },
+    );
+
+    assert.equal(config.kind, 'libreoffice');
+    assert.equal(config.executable, '/usr/bin/libreoffice');
+    assert.ok(config.argumentTemplate.includes('--headless'));
+    assert.ok(config.argumentTemplate.includes('--convert-to {target}'));
+    assert.equal(converterSupports(config, 'pdf'), true);
+    assert.equal(converterSupports(config, 'docx'), false);
+  });
+
   it('accepts a plain file name for the external converter', () => {
     assert.equal(safeTemporaryName('report.docx'), 'report.docx');
   });

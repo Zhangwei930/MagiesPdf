@@ -30,6 +30,7 @@ export interface AppSettings {
   defaultOutputDirectory: string;
   onNameCollision: 'rename' | 'overwrite';
   recentToolIds: string[];
+  recentDocuments: Array<{ path: string; openedAt: number }>;
   /** Default true: check feeds on launch and auto-download; install is manual. */
   autoUpdate: boolean;
   api: {
@@ -43,8 +44,6 @@ export interface AppSettings {
   externalConverter: { executable: string; argumentTemplate: string; timeoutMs: number };
   office: {
     libreOfficeExecutable: string;
-    collaboraUrl: string;
-    wopiPublicUrl: string;
   };
   pipelinePresets: PipelinePreset[];
 }
@@ -71,8 +70,6 @@ export type OfficeCreateKind = 'word' | 'sheet' | 'slide';
 
 export interface OfficeStatus {
   libreOffice: { available: boolean; executable: string };
-  collabora: { configured: boolean; serverUrl: string };
-  wopiPublicUrl: string;
 }
 
 export interface OfficeOpenResult {
@@ -80,23 +77,12 @@ export interface OfficeOpenResult {
   canceled: boolean;
 }
 
-export interface OfficeCreateResult {
-  created: string;
-  canceled: boolean;
-}
-
-export interface OnlineOfficeSession {
+export interface RecentDocument {
+  path: string;
   name: string;
-  editorUrl: string;
-  accessToken: string;
-  accessTokenTtl: number;
-}
-
-export interface CollaboraStatus {
-  configured: boolean;
-  reachable: boolean;
-  serverUrl: string;
-  error?: string;
+  kind: 'word' | 'sheet' | 'slide' | 'pdf';
+  openedAt: number;
+  modifiedAt: number;
 }
 
 export interface MagiesPdfBridge {
@@ -108,10 +94,11 @@ export interface MagiesPdfBridge {
   getOfficeStatus(): Promise<OfficeStatus>;
   pickAndOpenOffice(multiple: boolean): Promise<OfficeOpenResult>;
   createAndOpenOffice(kind: OfficeCreateKind): Promise<OfficeOpenResult>;
-  createOffice(kind: OfficeCreateKind): Promise<OfficeCreateResult>;
   openOfficePaths(paths: string[]): Promise<OfficeOpenResult>;
-  prepareOnlineOffice(path: string): Promise<OnlineOfficeSession>;
-  checkCollabora(): Promise<CollaboraStatus>;
+  listRecentDocuments(): Promise<RecentDocument[]>;
+  renameRecentDocument(path: string, name: string): Promise<{ path: string; name: string }>;
+  trashRecentDocument(path: string): Promise<{ trashed: boolean }>;
+  forgetRecentDocument(path: string): Promise<{ forgotten: boolean }>;
   pickFiles(accept: string[], multiple: boolean): Promise<PickedFile[]>;
   /** Picks supported documents without copying their contents through IPC. */
   pickDocumentPaths(multiple: boolean): Promise<string[]>;

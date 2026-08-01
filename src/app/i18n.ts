@@ -5,14 +5,6 @@ export type Locale = 'zh' | 'en';
 /** UI chrome strings. Tool names and params carry their own bilingual text. */
 const UI = {
   appName: { zh: 'Magies Office', en: 'Magies Office' },
-  officeOnline: { zh: '在线协作', en: 'Online collaboration' },
-  openLocalEditor: { zh: '用本地编辑器打开', en: 'Open in local editor' },
-  closeOfficeEditor: { zh: '关闭 Office 编辑器', en: 'Close Office editor' },
-  loadingOfficeEditor: { zh: '正在连接在线编辑器…', en: 'Connecting to the online editor…' },
-  onlineEditorFallback: {
-    zh: '在线编辑器暂时不可用，已改用本地 LibreOffice 打开。',
-    en: 'The online editor is unavailable. Opened in local LibreOffice instead.',
-  },
   tagline: {
     zh: '全部处理都在这台电脑上完成，文件不会离开本机。',
     en: 'Everything runs on this machine. Your files never leave it.',
@@ -52,16 +44,32 @@ const UI = {
     zh: '支持 DOC、DOCX、ODT、XLS、XLSX、ODS、PPT、PPTX、ODP 和 PDF',
     en: 'DOC, DOCX, ODT, XLS, XLSX, ODS, PPT, PPTX, ODP and PDF',
   },
-  officeEngines: { zh: '办公引擎', en: 'Office engines' },
+  openDocumentShortHint: { zh: '打开本机文档', en: 'Open a local document' },
   libreOfficeReady: { zh: '本地编辑已就绪', en: 'Local editing is ready' },
   libreOfficeMissing: { zh: '未检测到本地编辑器', en: 'Local editor not detected' },
-  collaboraConfigured: { zh: '协作服务已配置', en: 'Collaboration configured' },
-  collaboraNotConfigured: { zh: '尚未配置协作服务', en: 'Collaboration not configured' },
-  officeEngineHint: {
-    zh: '未配置协作时使用本地编辑；启用协作后，Office 文档会通过受保护的 WOPI 会话交给 Collabora 编辑。',
-    en: 'Without collaboration, editing stays local. Once enabled, Office files are edited by Collabora through protected WOPI sessions.',
+  localOfficeEditor: { zh: '本地 Office 编辑器', en: 'Local Office editor' },
+  localOfficeReadyHint: {
+    zh: 'Word、Excel 和 PowerPoint 文档会直接交给 LibreOffice 编辑，保存仍在原文件。',
+    en: 'Word, Excel and PowerPoint files open directly in LibreOffice and save back to the original file.',
   },
-  recentTools: { zh: '常用 PDF 工具', en: 'Recent PDF tools' },
+  localOfficeMissingHint: {
+    zh: '请先安装 LibreOffice，或在设置中填写 soffice 的路径。PDF 功能不受影响。',
+    en: 'Install LibreOffice or set the soffice path in Settings. PDF features remain available.',
+  },
+  recentDocuments: { zh: '最近文档', en: 'Recent documents' },
+  searchRecentDocuments: { zh: '搜索最近文档', en: 'Search recent documents' },
+  recentDocumentsEmpty: { zh: '还没有最近文档', en: 'No recent documents yet' },
+  recentDocumentsEmptyHint: { zh: '新建或打开文档后会显示在这里', en: 'Documents you create or open appear here' },
+  noRecentSearchResults: { zh: '没有匹配的文档', en: 'No matching documents' },
+  showInFolder: { zh: '在文件夹中显示', en: 'Show in folder' },
+  renameDocument: { zh: '重命名', en: 'Rename' },
+  renameKeepsFormat: { zh: '文件格式和扩展名保持不变。', en: 'The file format and extension stay unchanged.' },
+  removeFromRecent: { zh: '从最近列表移除', en: 'Remove from recent' },
+  moveToTrash: { zh: '移到废纸篓', en: 'Move to trash' },
+  moveToTrashConfirm: { zh: '确定要把“{name}”移到系统废纸篓吗？', en: 'Move “{name}” to the system trash?' },
+  moveToTrashHint: { zh: '需要时可以从系统废纸篓恢复。', en: 'You can restore it later from the system trash.' },
+  quickConversions: { zh: '常用转换', en: 'Quick conversions' },
+  localOnly: { zh: '纯本地', en: 'Local only' },
   pdfToolbox: { zh: 'PDF 工具箱', en: 'PDF toolbox' },
   pdfToolboxHint: { zh: '本地处理，不上传文件', en: 'Processed locally, never uploaded' },
 
@@ -257,8 +265,8 @@ const UI = {
 
   externalConverter: { zh: '外部文档转换器', en: 'External document converter' },
   externalConverterHelp: {
-    zh: '可选。配置后，Office 类转换会优先走此命令行工具以获得更高版式保真度。不配置则使用内置转换。MagiesPdf 不捆绑、不依赖任何具体第三方软件。',
-    en: 'Optional. When set, Office conversions prefer this command-line tool for higher layout fidelity; otherwise the built-in converter is used. MagiesPdf ships and names no third-party converter.',
+    zh: '可选的高级覆盖项。默认会自动使用已检测到的 LibreOffice 完成 Office 转 PDF；填写后将优先使用这里的命令行工具。',
+    en: 'Optional advanced override. Office-to-PDF uses detected LibreOffice automatically; when set, this command-line tool takes priority.',
   },
   externalConverterExecutable: { zh: '可执行文件路径', en: 'Executable path' },
   externalConverterArgs: { zh: '参数模板', en: 'Argument template' },
@@ -277,8 +285,8 @@ const UI = {
   },
   officeIntegration: { zh: 'Office 深度集成', en: 'Office integration' },
   officeIntegrationHelp: {
-    zh: 'LibreOffice 负责本地创建与编辑；Collabora Online 负责浏览器内实时协作。两种模式共享同一文件中心。',
-    en: 'LibreOffice handles local creation and editing; Collabora Online handles real-time browser collaboration. Both share one file centre.',
+    zh: 'LibreOffice 负责 Word、Excel 和 PowerPoint 的本地创建与编辑；文件不上传，编辑器会在独立窗口打开。',
+    en: 'LibreOffice creates and edits Word, Excel and PowerPoint files locally. Files are never uploaded and the editor opens in its own window.',
   },
   libreOfficeExecutable: { zh: 'LibreOffice 可执行文件', en: 'LibreOffice executable' },
   libreOfficeExecutableHelp: {
@@ -286,19 +294,7 @@ const UI = {
     en: 'Leave empty to detect a standard installation, or enter the absolute path to soffice.',
   },
   libreOfficeAutoDetect: { zh: '自动检测', en: 'Auto-detect' },
-  collaboraUrl: { zh: 'Collabora Online 地址', en: 'Collabora Online URL' },
-  collaboraUrlHelp: {
-    zh: '生产环境必须使用 HTTPS；本机调试允许 localhost HTTP。',
-    en: 'Production requires HTTPS; localhost HTTP is allowed for development.',
-  },
-  wopiPublicUrl: { zh: 'WOPI 公网地址', en: 'Public WOPI URL' },
-  wopiPublicUrlHelp: {
-    zh: 'Collabora 用这个地址读取和保存文档；需将它反向代理到本机 API 端口，并确保 Collabora 所在网络可访问。',
-    en: 'Collabora uses this origin to read and save files. Reverse-proxy it to the local API port and make it reachable from Collabora.',
-  },
-  collaboraReachable: { zh: '协作服务连接正常', en: 'Collaboration server is reachable' },
-  collaboraUnreachable: { zh: '无法连接协作服务', en: 'Could not reach collaboration server' },
-  testConnection: { zh: '测试连接', en: 'Test connection' },
+  detectAgain: { zh: '重新检测', en: 'Detect again' },
   saveSettings: { zh: '保存设置', en: 'Save settings' },
 
   apiSection: { zh: '本地 REST API', en: 'Local REST API' },

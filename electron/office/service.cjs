@@ -1,11 +1,9 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { dialog } = require('electron');
+const { dialog, shell } = require('electron');
 const settings = require('../settings.cjs');
 const mainRunner = require('../jobs/mainRunner.cjs');
-const { checkCollaboraServer, getCollaboraEditorAction } = require('./collabora.cjs');
-const { isOfficeDocumentPath } = require('./formats.cjs');
-const { wopiStore } = require('./wopi.cjs');
+const { DOCUMENT_EXTENSIONS, isOfficeDocumentPath } = require('./formats.cjs');
 const {
   launchLibreOffice,
   resolveLibreOfficeExecutable,
@@ -21,24 +19,74 @@ const CREATE_FILTERS = {
   slide: { name: 'PowerPoint presentation', extension: 'pptx' },
 };
 
+const RECENT_DOCUMENT_LIMIT = 20;
+
+function documentKind(candidate) {
+  switch (path.extname(candidate).toLowerCase()) {
+    case '.doc':
+    case '.docx':
+    case '.odt':
+    case '.rtf':
+      return 'word';
+    case '.xls':
+    case '.xlsx':
+    case '.ods':
+      return 'sheet';
+    case '.ppt':
+    case '.pptx':
+    case '.odp':
+      return 'slide';
+    case '.pdf':
+      return 'pdf';
+    default:
+      return '';
+  }
+}
+
+function isDocumentPath(candidate) {
+  return typeof candidate === 'string' && DOCUMENT_EXTENSIONS.has(path.extname(candidate).toLowerCase());
+}
+
 function createOfficeService(deps = {}) {
   const runtime = {
     dialog: deps.dialog ?? dialog,
     settings: deps.settings ?? settings,
     fs: deps.fs ?? fs,
     loadCore: deps.loadCore ?? mainRunner.loadCore,
+    now: deps.now ?? Date.now,
     resolveExecutable: deps.resolveExecutable ?? resolveLibreOfficeExecutable,
     launch: deps.launch ?? launchLibreOffice,
-    checkCollabora: deps.checkCollabora ?? checkCollaboraServer,
-    collaboraAction: deps.collaboraAction ?? getCollaboraEditorAction,
-    wopiStore: deps.wopiStore ?? wopiStore,
-    getWopiServerStatus:
-      deps.getWopiServerStatus ?? (() => require('../api/server.cjs').getApiStatus()),
+    trash: deps.trash ?? ((target) => shell.trashItem(target)),
   };
 
   const officeSettings = () => runtime.settings.read().office ?? {};
+  const recentSettings = () => runtime.settings.read().recentDocuments ?? [];
   const executable = () =>
     runtime.resolveExecutable({ configured: officeSettings().libreOfficeExecutable ?? '' });
+
+  function writeRecent(recentDocuments) {
+    runtime.settings.write({ recentDocuments: recentDocuments.slice(0, RECENT_DOCUMENT_LIMIT) });
+  }
+
+  function rememberRecent(paths) {
+    let recentDocuments = [...recentSettings()];
+    for (const candidate of paths) {
+      if (!path.isAbsolute(candidate) || !isDocumentPath(candidate)) continue;
+      recentDocuments = [
+        { path: candidate, openedAt: runtime.now() },
+        ...recentDocuments.filter((item) => item.path !== candidate),
+      ];
+    }
+    writeRecent(recentDocuments);
+  }
+
+  function forgetRecent(candidate) {
+    if (typeof candidate !== 'string') return { forgotten: false };
+    const recentDocuments = recentSettings().filter((item) => item.path !== candidate);
+    const forgotten = recentDocuments.length !== recentSettings().length;
+    if (forgotten) writeRecent(recentDocuments);
+    return { forgotten };
+  }
 
   async function openPaths(paths) {
     if (!Array.isArray(paths) || paths.length === 0) return { opened: [], canceled: false };
@@ -53,6 +101,7 @@ function createOfficeService(deps = {}) {
     const resolved = executable();
     if (!resolved) throw new Error('LibreOffice is not installed or configured');
     runtime.launch(resolved, paths);
+    rememberRecent(paths);
     return { opened: [...paths], canceled: false };
   }
 
@@ -73,20 +122,83 @@ function createOfficeService(deps = {}) {
 
   return {
     status() {
-      const configured = officeSettings();
       const resolved = executable();
-      return {
-        libreOffice: { available: resolved !== '', executable: resolved },
-        collabora: {
-          configured: Boolean(configured.collaboraUrl),
-          serverUrl: configured.collaboraUrl ?? '',
-        },
-        wopiPublicUrl: configured.wopiPublicUrl ?? '',
-      };
+      return { libreOffice: { available: resolved !== '', executable: resolved } };
     },
 
     openPaths,
     create,
+    rememberRecent,
+    forgetRecent,
+
+    async listRecent() {
+      const recentDocuments = [];
+      const result = [];
+      for (const item of recentSettings()) {
+        try {
+          const stat = await runtime.fs.stat(item.path);
+          if (!stat.isFile() || !isDocumentPath(item.path)) continue;
+          recentDocuments.push(item);
+          result.push({
+            path: item.path,
+            name: path.basename(item.path),
+            kind: documentKind(item.path),
+            openedAt: item.openedAt,
+            modifiedAt: stat.mtimeMs ?? item.openedAt,
+          });
+        } catch (cause) {
+          if (cause?.code !== 'ENOENT') throw cause;
+        }
+      }
+      if (recentDocuments.length !== recentSettings().length) writeRecent(recentDocuments);
+      return result;
+    },
+
+    async renameRecent(candidate, requestedName) {
+      if (!path.isAbsolute(candidate) || !isDocumentPath(candidate)) {
+        throw new Error('An absolute supported document path is required');
+      }
+      const stat = await runtime.fs.stat(candidate);
+      if (!stat.isFile()) throw new Error(`Not a file: ${candidate}`);
+
+      const name = typeof requestedName === 'string' ? requestedName.trim() : '';
+      const hasControlCharacter = [...name].some((character) => character.charCodeAt(0) < 32);
+      if (!name || name !== path.basename(name) || hasControlCharacter || name === '.' || name === '..') {
+        throw new Error('A valid file name is required');
+      }
+      const originalExtension = path.extname(candidate);
+      const requestedExtension = path.extname(name);
+      if (requestedExtension && requestedExtension.toLowerCase() !== originalExtension.toLowerCase()) {
+        throw new Error('Renaming cannot change the document format');
+      }
+      const targetName = requestedExtension ? name : `${name}${originalExtension}`;
+      const target = path.join(path.dirname(candidate), targetName);
+      if (target !== candidate) {
+        try {
+          await runtime.fs.access(target);
+          throw new Error(`A file named ${targetName} already exists`);
+        } catch (cause) {
+          if (cause?.code !== 'ENOENT') throw cause;
+        }
+        await runtime.fs.rename(candidate, target);
+      }
+
+      const previous = recentSettings().find((item) => item.path === candidate);
+      writeRecent([
+        { path: target, openedAt: previous?.openedAt ?? runtime.now() },
+        ...recentSettings().filter((item) => item.path !== candidate && item.path !== target),
+      ]);
+      return { path: target, name: targetName };
+    },
+
+    async trashRecent(candidate) {
+      if (!path.isAbsolute(candidate) || !isDocumentPath(candidate)) {
+        throw new Error('An absolute supported document path is required');
+      }
+      await runtime.trash(candidate);
+      forgetRecent(candidate);
+      return { trashed: true };
+    },
 
     async pickAndOpen(window, multiple = false) {
       const result = await runtime.dialog.showOpenDialog(window, {
@@ -98,45 +210,18 @@ function createOfficeService(deps = {}) {
     },
 
     async createAndOpen(window, kind) {
+      if (!executable()) throw new Error('LibreOffice is not installed or configured');
       const result = await create(window, kind);
       if (result.canceled) return { opened: [], canceled: true };
       return openPaths([result.created]);
     },
-
-    checkCollabora() {
-      return runtime.checkCollabora(officeSettings().collaboraUrl ?? '');
-    },
-
-    async prepareOnline(filePath) {
-      const configured = officeSettings();
-      if (!configured.collaboraUrl || !configured.wopiPublicUrl) {
-        throw new Error('Collabora and the public WOPI URL are not configured');
-      }
-      if (!runtime.getWopiServerStatus().running) {
-        throw new Error('The local WOPI server is not running');
-      }
-      if (!path.isAbsolute(filePath) || !isOfficeDocumentPath(filePath)) {
-        throw new Error('An absolute supported Office document path is required');
-      }
-      const stat = await runtime.fs.stat(filePath);
-      if (!stat.isFile()) throw new Error(`Not a file: ${filePath}`);
-
-      const action = await runtime.collaboraAction(
-        configured.collaboraUrl,
-        path.extname(filePath),
-      );
-      const session = await runtime.wopiStore.register(filePath);
-      const wopiSource = `${configured.wopiPublicUrl.replace(/\/+$/, '')}/wopi/files/${encodeURIComponent(session.id)}`;
-      const editorUrl = new URL(action);
-      editorUrl.searchParams.set('WOPISrc', wopiSource);
-      return {
-        name: path.basename(filePath),
-        editorUrl: editorUrl.toString(),
-        accessToken: session.accessToken,
-        accessTokenTtl: session.accessTokenTtl,
-      };
-    },
   };
 }
 
-module.exports = { CREATE_FILTERS, OFFICE_FILTERS, createOfficeService };
+module.exports = {
+  CREATE_FILTERS,
+  OFFICE_FILTERS,
+  RECENT_DOCUMENT_LIMIT,
+  createOfficeService,
+  documentKind,
+};

@@ -10,7 +10,6 @@ const writableTargets = require('./files/writableTargets.cjs');
 const updater = require('./updater/index.cjs');
 const { isTrustedIpcSender, safeFileName } = require('./security.cjs');
 const { createOfficeService } = require('./office/service.cjs');
-const { normalizeCollaboraUrl } = require('./office/collabora.cjs');
 const { DOCUMENT_EXTENSIONS } = require('./office/formats.cjs');
 
 /**
@@ -126,14 +125,15 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   handle('office:createAndOpen', (_event, { kind }) =>
     office.createAndOpen(getWindow(), kind),
   );
-  handle('office:create', (_event, { kind }) => office.create(getWindow(), kind));
   handle('office:openPaths', (_event, { paths }) =>
     office.openPaths(Array.isArray(paths) ? paths : []),
   );
-  handle('office:prepareOnline', (_event, { path: target }) =>
-    office.prepareOnline(target),
+  handle('office:listRecent', () => office.listRecent());
+  handle('office:renameRecent', (_event, { path: target, name }) =>
+    office.renameRecent(target, name),
   );
-  handle('office:checkCollabora', () => office.checkCollabora());
+  handle('office:trashRecent', (_event, { path: target }) => office.trashRecent(target));
+  handle('office:forgetRecent', (_event, { path: target }) => office.forgetRecent(target));
 
   handle('files:pick', async (_event, { accept, multiple }) => {
     const extensions = (accept ?? ['.pdf']).map((e) => e.replace(/^\./, ''));
@@ -160,7 +160,10 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
 
   handle('files:read', async (_event, { paths }) => {
     if (!Array.isArray(paths)) return [];
-    return readMany(paths.filter((p) => typeof p === 'string' && p !== ''));
+    const targets = paths.filter((p) => typeof p === 'string' && p !== '');
+    const files = await readMany(targets);
+    office.rememberRecent(targets);
+    return files;
   });
 
   handle('files:pickDirectory', async () => {
@@ -277,26 +280,10 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
 
   handle('settings:get', () => settings.read());
   handle('settings:update', (_event, patch) => {
-    if (patch?.office) {
-      patch = {
-        ...patch,
-        office: {
-          ...patch.office,
-          ...(Object.prototype.hasOwnProperty.call(patch.office, 'collaboraUrl')
-            ? { collaboraUrl: normalizeCollaboraUrl(patch.office.collaboraUrl) }
-            : {}),
-          ...(Object.prototype.hasOwnProperty.call(patch.office, 'wopiPublicUrl')
-            ? { wopiPublicUrl: normalizeCollaboraUrl(patch.office.wopiPublicUrl) }
-            : {}),
-        },
-      };
-    }
     const next = settings.write(patch);
     // API bind address / token changes need a live server restart.
     if (
-      patch &&
-      (Object.prototype.hasOwnProperty.call(patch, 'api') ||
-        Object.prototype.hasOwnProperty.call(patch, 'office'))
+      patch && Object.prototype.hasOwnProperty.call(patch, 'api')
     ) {
       try {
         onSettingsChanged?.();
