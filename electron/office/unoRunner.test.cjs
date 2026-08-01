@@ -91,14 +91,11 @@ describe('LibreOffice UNO runtime resolution', () => {
     );
   });
 
-  it('launches the macOS app through LaunchServices and other platforms directly', () => {
+  it('launches the bundled executable directly on every platform', () => {
     const acceptArgs = ['--headless', '--accept=pipe,name=magies_test;urp;StarOffice.ComponentContext'];
     assert.deepEqual(
       officeLaunch('/runtime/LibreOffice.app/Contents/MacOS/soffice', acceptArgs, 'darwin'),
-      {
-        command: '/usr/bin/open',
-        args: ['-n', '-W', '/runtime/LibreOffice.app', '--args', ...acceptArgs],
-      },
+      { command: '/runtime/LibreOffice.app/Contents/MacOS/soffice', args: acceptArgs },
     );
     assert.deepEqual(
       officeLaunch('/runtime/program/soffice', acceptArgs, 'linux'),

@@ -304,7 +304,9 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   });
   const automationState = async () => ({
     ...automationStore.getState(),
-    tools: (await officeAutomation.listTools()).map(({ toolId, name }) => ({ toolId, toolName: name })),
+    tools: (await officeAutomation.listTools())
+      .filter(({ unattended }) => unattended !== false)
+      .map(({ toolId, name }) => ({ toolId, toolName: name })),
   });
   const automationEngine = createAutomationEngine({
     store: automationStore,

@@ -19,6 +19,7 @@ describe('Office Agent wiring', () => {
     assert.match(ipcSource, /ai:pickWorkspace/);
     assert.match(ipcSource, /ai:clearWorkspace/);
     assert.match(ipcSource, /properties:\s*\['openDirectory'\]/);
+    assert.match(ipcSource, /filter\(\(\{ unattended \}\) => unattended !== false\)/);
   });
 
   it('exposes only status, explicit folder selection, and clear actions to the renderer', () => {
@@ -90,6 +91,18 @@ describe('Office Agent wiring', () => {
     assert.match(workerSource, /com\.sun\.star\.sheet\.ConditionOperator/);
     assert.match(workerSource, /conditional_format\.addNew/);
     assert.match(workerSource, /selected\.ConditionalFormat = conditional_format/);
+  });
+
+  it('allow-lists controlled tracked-change resolution and trusted document macros', () => {
+    assert.match(workerSource, /'word_resolve_changes':/);
+    assert.match(workerSource, /\.uno:AcceptAllTrackedChanges/);
+    assert.match(workerSource, /\.uno:RejectAllTrackedChanges/);
+    assert.match(workerSource, /'macro_run':/);
+    assert.match(workerSource, /property_value\('MacroExecutionMode', 9\)/);
+    assert.match(workerSource, /com\.sun\.star\.configuration\.ConfigurationUpdateAccess/);
+    assert.match(workerSource, /configuration\.SecureURL/);
+    assert.match(workerSource, /document\.getScriptProvider\(\)/);
+    assert.match(workerSource, /\.invoke\(/);
   });
 
   it('embeds only workspace-resolved images and returns presentation notes', () => {

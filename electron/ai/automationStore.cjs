@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { redactedText } = require('./history.cjs');
+const { requiresInteractiveApproval } = require('./automationPolicy.cjs');
 
 const MAX_RULES = 20;
 const MAX_PENDING = 100;
@@ -61,6 +62,9 @@ function normalizeAllowedToolIds(value, mode) {
   }
   if (toolIds.some((toolId) => !toolId.startsWith('office:'))) {
     throw new Error('Unattended automation tools must use the office: namespace');
+  }
+  if (toolIds.some(requiresInteractiveApproval)) {
+    throw new Error('This Office tool requires interactive approval and cannot run unattended');
   }
   return toolIds;
 }

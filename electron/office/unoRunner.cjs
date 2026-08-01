@@ -61,15 +61,7 @@ function officeAcceptArgs(pipeName, profileUrl) {
   ];
 }
 
-function officeLaunch(soffice, args, platform = process.platform) {
-  const marker = `${path.sep}Contents${path.sep}MacOS${path.sep}`;
-  if (platform === 'darwin' && soffice.includes(marker)) {
-    const appBundle = path.resolve(path.dirname(soffice), '..', '..');
-    return {
-      command: '/usr/bin/open',
-      args: ['-n', '-W', appBundle, '--args', ...args],
-    };
-  }
+function officeLaunch(soffice, args) {
   return { command: soffice, args };
 }
 

@@ -3,6 +3,7 @@
 const { randomUUID } = require('node:crypto');
 const { AgentRuntime } = require('./agentRuntime.cjs');
 const { AiError, OpenAiCompatibleClient } = require('./openAiClient.cjs');
+const { requiresInteractiveApproval } = require('./automationPolicy.cjs');
 
 function abortError() {
   const error = new Error('AI turn cancelled');
@@ -127,6 +128,9 @@ function createAiService({
     }
     if (allowedToolIds.some((toolId) => !toolId.startsWith('office:'))) {
       throw new AiError('AI_INPUT_INVALID', 'Unattended tools must use the office: namespace');
+    }
+    if (allowedToolIds.some(requiresInteractiveApproval)) {
+      throw new AiError('AI_INPUT_INVALID', 'This Office tool requires interactive approval');
     }
     const allowed = new Set(allowedToolIds);
     const filteredOfficeProvider = officeToolProvider && {

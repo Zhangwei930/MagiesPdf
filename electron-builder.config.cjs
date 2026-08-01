@@ -207,8 +207,7 @@ module.exports = {
     icon: 'build/icon.png',
     // Align with productName so desktop environments can match the running window.
     executableName: 'magies-office',
-    // AppImage + deb ship on every host. rpm/pacman need rpmbuild/fpm host
-    // tools (often missing on macOS CI) — build those on a Linux runner.
+    // AppImage + deb are built on the native Linux release runner.
     target: ['AppImage', 'deb'],
     category: 'Office',
     maintainer: 'JasonZhangDad <470059464@qq.com>',

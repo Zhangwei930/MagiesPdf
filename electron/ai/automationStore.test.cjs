@@ -81,6 +81,10 @@ describe('AI automation store', () => {
       name: 'bad', prompt: 'task', mode: 'unattended',
       trigger: { type: 'daily', at: '10:00' }, allowedToolIds: ['external:danger'],
     }), /office:/);
+    assert.throws(() => store.createRule({
+      name: 'bad macro', prompt: 'task', mode: 'unattended',
+      trigger: { type: 'daily', at: '10:00' }, allowedToolIds: ['office:macro:run'],
+    }), /requires interactive approval/);
   });
 
   it('tracks pending review tasks, daily limits, retries, pause, resume, and deletion', async () => {

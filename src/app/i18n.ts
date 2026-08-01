@@ -55,6 +55,17 @@ const UI = {
     zh: '文档、表格、演示和 PDF，在一个工作台完成',
     en: 'Documents, spreadsheets, slides and PDFs in one workspace',
   },
+  manualOfficeMode: { zh: '手工办公', en: 'Manual office' },
+  manualOfficeModeHint: {
+    zh: '新建或打开文件，在内置编辑器中直接操作。',
+    en: 'Create or open a file and work directly in the built-in editor.',
+  },
+  aiOfficeMode: { zh: 'AI 自动办公', en: 'AI automation' },
+  aiOfficeModeHint: {
+    zh: '用自然语言批量读取、编辑、转换和归档办公文件。',
+    en: 'Use natural language to read, edit, convert, and archive office files in batches.',
+  },
+  enterAiOfficeMode: { zh: '进入 AI 模式', en: 'Open AI mode' },
   newDocument: { zh: '新建', en: 'Create new' },
   newDocumentHint: { zh: '选择类型，立即开始工作', en: 'Choose a format and start working' },
   newWord: { zh: '文字文档', en: 'Document' },

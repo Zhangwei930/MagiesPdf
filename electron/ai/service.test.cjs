@@ -179,6 +179,9 @@ describe('AI service', () => {
       requestId: 'bad', prompt: 'task', allowedToolIds: ['external:danger'],
     }, () => {}), /office:/);
     await assert.rejects(() => service.runUnattended({
+      requestId: 'bad-macro', prompt: 'task', allowedToolIds: ['office:macro:run'],
+    }, () => {}), /interactive approval/);
+    await assert.rejects(() => service.runUnattended({
       requestId: 'no-tool', prompt: 'task', allowedToolIds: ['office:excel:read'],
     }, () => {}), /successful Office tool/);
   });

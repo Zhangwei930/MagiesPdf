@@ -48,6 +48,7 @@ describe('createOfficeAutomationProvider', () => {
         'office_workspace_list',
         'office_word_read',
         'office_word_read_changes',
+        'office_word_resolve_changes',
         'office_word_replace',
         'office_word_replace_tracked',
         'office_word_insert_table',
@@ -72,11 +73,13 @@ describe('createOfficeAutomationProvider', () => {
         'office_presentation_set_notes',
         'office_template_fill',
         'office_template_batch_fill',
+        'office_macro_run',
         'office_batch_convert_pdf',
         'office_workspace_archive',
       ],
     );
     assert.ok(tools.every((tool) => tool.requiresApproval === true));
+    assert.equal(tools.find((tool) => tool.functionName === 'office_macro_run').unattended, false);
     assert.match(tools[0].providerTool.function.description, /Office, PDF, and image files/);
   });
 
@@ -195,6 +198,37 @@ describe('createOfficeAutomationProvider', () => {
       executable: '/office/soffice',
       signal: undefined,
     });
+  });
+
+  it('accepts or rejects all Word revisions in a non-overwriting copy', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Contract.docx'), 'source');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { action: request.action, resolvedChanges: 3, remainingChanges: 0 };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    assert.deepEqual(await provider.callTool('office_word_resolve_changes', {
+      path: 'Contract.docx', action: 'accept', output_directory: 'Reviewed',
+    }), {
+      source: 'Contract.docx',
+      written: 'Reviewed/Contract.docx',
+      action: 'accept',
+      resolvedChanges: 3,
+      remainingChanges: 0,
+    });
+    assert.equal(calls[0].operation, 'word_resolve_changes');
+    assert.equal(calls[0].action, 'accept');
+    await assert.rejects(() => provider.callTool('office_word_resolve_changes', {
+      path: 'Contract.docx', action: 'some',
+    }), /action must be accept or reject/);
   });
 
   it('inserts a rectangular table into a Word copy', async () => {
@@ -627,6 +661,70 @@ describe('createOfficeAutomationProvider', () => {
     await assert.rejects(() => provider.callTool('office_presentation_delete_slide', {
       path: 'Quarterly.pptx', slide_number: 0,
     }), /slide_number/);
+  });
+
+  it('runs only a document-scoped LibreOffice Basic macro in an approved copy', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Trusted.odt'), 'source');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.writeFile(request.inputPath, 'macro result');
+        return { returnValue: '完成' };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+    const scriptUri = 'vnd.sun.star.script:Standard.Module1.Main?language=Basic&location=document';
+
+    assert.deepEqual(await provider.callTool('office_macro_run', {
+      path: 'Trusted.odt', script_uri: scriptUri, arguments: ['中文', 2, true, null],
+      output_directory: 'Macro Output',
+    }), {
+      source: 'Trusted.odt',
+      written: 'Macro Output/Trusted.odt',
+      scriptUri,
+      returnValue: '完成',
+    });
+    assert.equal(calls[0].operation, 'macro_run');
+    assert.equal(calls[0].inputPath, path.join(await fs.realpath(root), 'Macro Output', 'Trusted.odt'));
+    assert.equal(calls[0].outputPath, undefined);
+    assert.deepEqual(calls[0].arguments, ['中文', 2, true, null]);
+    assert.equal(await fs.readFile(path.join(root, 'Trusted.odt'), 'utf8'), 'source');
+    assert.equal(await fs.readFile(calls[0].inputPath, 'utf8'), 'macro result');
+    await assert.rejects(() => provider.callTool('office_macro_run', {
+      path: 'Trusted.odt',
+      script_uri: 'vnd.sun.star.script:Standard.Module1.Main?language=Basic&location=user',
+    }), /document-scoped/);
+    await assert.rejects(() => provider.callTool('office_macro_run', {
+      path: 'Trusted.odt', script_uri: scriptUri, arguments: [{ command: 'unsafe' }],
+    }), /primitive/);
+    await assert.rejects(() => provider.callTool('office_macro_run', {
+      path: 'Trusted.odt', script_uri: scriptUri.replace('language=Basic', 'language=Python'),
+    }), /LibreOffice Basic/);
+  });
+
+  it('removes the macro copy if execution fails and preserves the original', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Trusted.odt'), 'source');
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async () => {
+        throw new Error('Macro failed');
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    await assert.rejects(() => provider.callTool('office_macro_run', {
+      path: 'Trusted.odt',
+      script_uri: 'vnd.sun.star.script:Standard.Module1.Main?language=Basic&location=document',
+      output_directory: 'Macro Output',
+    }), /Macro failed/);
+    assert.equal(await fs.readFile(path.join(root, 'Trusted.odt'), 'utf8'), 'source');
+    await assert.rejects(() => fs.access(path.join(root, 'Macro Output', 'Trusted.odt')), /ENOENT/);
   });
 
   it('inserts PowerPoint images and updates speaker notes', async () => {

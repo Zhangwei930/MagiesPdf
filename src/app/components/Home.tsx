@@ -12,6 +12,7 @@ import { uiRegistry } from '../catalog.ts';
 import { t } from '../i18n.ts';
 import {
   AlertCircle,
+  Bot,
   Check,
   FilePenLine,
   FolderOpen,
@@ -31,6 +32,7 @@ interface HomeProps {
   onCreateOffice(kind: OfficeCreateKind): Promise<void>;
   onCreatePdf(): Promise<void>;
   onOpenRecent(path: string): Promise<void>;
+  onOpenAi(): void;
 }
 
 const CREATE_ACTIONS: Array<{
@@ -69,6 +71,7 @@ export function Home({
   onCreateOffice,
   onCreatePdf,
   onOpenRecent,
+  onOpenAi,
 }: HomeProps) {
   const locale = useApp((state) => state.locale);
   const [office, setOffice] = useState<OfficeStatus | null>(null);
@@ -205,6 +208,36 @@ export function Home({
             <kbd className="rounded border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">⌘K</kbd>
           </button>
         </header>
+
+        <section className="mt-5 grid gap-2.5 sm:grid-cols-2">
+          <div className="surface-panel flex items-center gap-3 p-3.5">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-sunken)] text-[var(--text-secondary)]">
+              <FilePenLine size={18} />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-[13px] font-semibold">{t('manualOfficeMode', locale)}</h2>
+              <p className="mt-0.5 text-[10.5px] leading-snug text-[var(--text-muted)]">
+                {t('manualOfficeModeHint', locale)}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenAi}
+            className="surface-panel flex items-center gap-3 p-3.5 text-left transition-[border-color,box-shadow] hover:border-[var(--accent)] hover:shadow-[var(--shadow-card)]"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
+              <Bot size={18} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-semibold">{t('aiOfficeMode', locale)}</span>
+              <span className="mt-0.5 block text-[10.5px] leading-snug text-[var(--text-muted)]">
+                {t('aiOfficeModeHint', locale)}
+              </span>
+            </span>
+            <span className="shrink-0 text-[10px] font-medium text-[var(--accent)]">{t('enterAiOfficeMode', locale)}</span>
+          </button>
+        </section>
 
         <section className="mt-6">
           <div className="mb-3 flex items-end justify-between gap-3">

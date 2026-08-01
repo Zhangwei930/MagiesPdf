@@ -9,6 +9,7 @@ const { IMAGE_EXTENSIONS } = require('./formats.cjs');
 const WORD_EXTENSIONS = new Set(['.doc', '.docx', '.odt', '.rtf']);
 const EXCEL_EXTENSIONS = new Set(['.xls', '.xlsx', '.ods']);
 const PRESENTATION_EXTENSIONS = new Set(['.ppt', '.pptx', '.odp']);
+const MACRO_DOCUMENT_EXTENSIONS = new Set(['.odt', '.ods', '.odp']);
 const CONVERTIBLE_EXTENSIONS = new Set([...WORD_EXTENSIONS, ...EXCEL_EXTENSIONS, ...PRESENTATION_EXTENSIONS]);
 const CELL_REFERENCE = /^[A-Za-z]{1,3}[1-9]\d*$/;
 const RANGE_REFERENCE = /^[A-Za-z]{1,3}[1-9]\d*(?::[A-Za-z]{1,3}[1-9]\d*)?$/;
@@ -18,12 +19,13 @@ function schema(properties, required = []) {
   return { type: 'object', additionalProperties: false, properties, required };
 }
 
-function tool(functionName, name, description, parameters) {
+function tool(functionName, name, description, parameters, { unattended = true } = {}) {
   return {
     functionName,
     toolId: `office:${functionName.replace(/^office_/, '').replaceAll('_', ':')}`,
     name,
     requiresApproval: true,
+    unattended,
     providerTool: {
       type: 'function',
       function: { name: functionName, description, parameters },
@@ -68,6 +70,16 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
     { zh: '读取 Word 修订', en: 'Read Word tracked changes' },
     'Read bounded tracked-change metadata and text from a Word document after user approval.',
     schema({ path: PATH_PROPERTY }, ['path']),
+  ),
+  tool(
+    'office_word_resolve_changes',
+    { zh: '接受或拒绝 Word 修订', en: 'Accept or reject Word changes' },
+    'Accept or reject all tracked changes in a Word document and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      action: { type: 'string', enum: ['accept', 'reject'] },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'action']),
   ),
   tool(
     'office_word_replace',
@@ -418,6 +430,26 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
     }, ['path', 'records']),
   ),
   tool(
+    'office_macro_run',
+    { zh: '运行可信文档宏', en: 'Run trusted document macro' },
+    'Run one document-scoped LibreOffice Basic macro in an ODT, ODS, or ODP copy. This always requires interactive approval and is never available to unattended automation.',
+    schema({
+      path: PATH_PROPERTY,
+      script_uri: {
+        type: 'string',
+        maxLength: 600,
+        description: 'Document-scoped LibreOffice Basic URI ending in ?language=Basic&location=document.',
+      },
+      arguments: {
+        type: 'array',
+        maxItems: 20,
+        items: { type: ['string', 'number', 'boolean', 'null'] },
+      },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'script_uri']),
+    { unattended: false },
+  ),
+  tool(
     'office_batch_convert_pdf',
     { zh: '批量转为 PDF', en: 'Batch convert to PDF' },
     'Convert Word, Excel, or PowerPoint documents to PDF with LibreOffice. Outputs never overwrite existing files.',
@@ -543,6 +575,33 @@ function slideBody(value) {
   ) {
     throw new Error('body must contain at most 20 text items and 20000 characters');
   }
+  return value;
+}
+
+function macroScriptUri(value) {
+  const uri = stringValue(value, 'script_uri', { required: true, maxLength: 600 });
+  if (!/^vnd\.sun\.star\.script:[^?&\r\n]{1,500}\?language=Basic&location=document$/.test(uri)) {
+    throw new Error('script_uri must identify a document-scoped LibreOffice Basic macro');
+  }
+  return uri;
+}
+
+function macroArguments(value) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 20) {
+    throw new Error('arguments must contain at most 20 primitive values');
+  }
+  let characters = 0;
+  for (const argument of value) {
+    if (argument !== null && !['string', 'number', 'boolean'].includes(typeof argument)) {
+      throw new Error('Macro arguments may only contain primitive values');
+    }
+    if (typeof argument === 'number' && !Number.isFinite(argument)) {
+      throw new Error('Macro number arguments must be finite');
+    }
+    characters += typeof argument === 'string' ? argument.length : 0;
+  }
+  if (characters > 10000) throw new Error('Macro string arguments may contain at most 10000 characters');
   return value;
 }
 
@@ -673,6 +732,31 @@ function createOfficeAutomationProvider({
       requireExtension(inputPath, WORD_EXTENSIONS, 'Word');
       const result = await callUno({ operation: 'word_read_changes', inputPath }, options);
       return { path: relativePath, ...result };
+    }
+
+    if (functionName === 'office_word_resolve_changes') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const action = args.action;
+      if (action !== 'accept' && action !== 'reject') throw new Error('action must be accept or reject');
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, WORD_EXTENSIONS, 'Word');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'word_resolve_changes',
+        inputPath,
+        outputPath: output.absolutePath,
+        action,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        action,
+        resolvedChanges: Number(result.resolvedChanges) || 0,
+        remainingChanges: Number(result.remainingChanges) || 0,
+      };
     }
 
     if (functionName === 'office_word_replace') {
@@ -1401,6 +1485,37 @@ function createOfficeAutomationProvider({
       };
     }
 
+    if (functionName === 'office_macro_run') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const scriptUri = macroScriptUri(args.script_uri);
+      const macroArgs = macroArguments(args.arguments);
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, MACRO_DOCUMENT_EXTENSIONS, 'macro');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      await fileSystem.copyFile(inputPath, output.absolutePath, constants.COPYFILE_EXCL);
+      let result;
+      try {
+        result = await callUno({
+          operation: 'macro_run',
+          inputPath: output.absolutePath,
+          scriptUri,
+          arguments: macroArgs,
+        }, options);
+      } catch (cause) {
+        await fileSystem.rm(output.absolutePath, { force: true });
+        throw cause;
+      }
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        scriptUri,
+        returnValue: result.returnValue ?? null,
+      };
+    }
+
     if (functionName === 'office_batch_convert_pdf') {
       const paths = pathList(args.paths);
       const outputDirectory = stringValue(args.output_directory, 'output_directory', { maxLength: 1000 })
@@ -1454,5 +1569,7 @@ module.exports = {
   OFFICE_AUTOMATION_TOOLS,
   createOfficeAutomationProvider,
   excelValues,
+  macroArguments,
+  macroScriptUri,
   wordTableValues,
 };

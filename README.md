@@ -3,7 +3,20 @@
 A cross-platform desktop PDF toolbox. Merge, split, convert, protect and automate —
 **everything runs on your own machine**. No upload, no account, no telemetry.
 
-Built with Electron + React 19 + TypeScript, for macOS, Windows and Linux.
+Built with Electron + React 19 + TypeScript, for macOS, Windows and Linux. Every
+supported desktop client provides two Office modes: manual editing in the
+built-in LibreOffice editor, and AI automation for approved workspace files.
+
+Supported packaged clients are macOS Intel/Apple Silicon, Windows x64/ARM64,
+and Linux x64. Each package carries its matching LibreOffice runtime, so users
+do not need a separate Office installation. Linux ARM64 is intentionally not
+published because LibreOffice does not provide the required official desktop
+runtime for that target.
+
+AI automation covers Word, Excel, PowerPoint, OpenDocument and PDF workflows,
+including batch processing. High-risk document macros always require an
+interactive approval, are limited to trusted document-scoped LibreOffice Basic
+macros in ODT/ODS/ODP copies, and can never run in unattended rules.
 
 **Version 1.0.2** — see [CHANGELOG.md](./CHANGELOG.md) ·
 [Download](https://github.com/Zhangwei930/MagiesPdf/releases/tag/v1.0.2).
@@ -39,18 +52,18 @@ is never saved by MagiesPdf.
 
 ### Package artefacts (same family as MagiesTerminal)
 
-| OS | Artefacts | Your Intel Mac |
+| OS | Artefacts | Build command |
 | --- | --- | --- |
-| macOS | `MagiesPdf-*-mac-x64.dmg` / `.zip`, `*-mac-arm64.*` | Use **`mac-x64`** |
-| Windows | NSIS `*-win-x64.exe`, portable `*-portable-win-x64.exe`, zip | `npm run pack:win-x64` |
-| Linux | AppImage, deb, rpm, pacman | `npm run pack:linux-x64` |
+| macOS | Intel/Apple Silicon DMG and zip | `npm run pack:mac-x64` / `pack:mac-arm64` |
+| Windows | x64/ARM64 NSIS, portable exe and zip | `npm run pack:win-x64` / `pack:win-arm64` |
+| Linux | x64 AppImage and deb | `npm run pack:linux-x64` |
 
 ```bash
 npm run pack:mac-x64    # Intel (x86_64)
 npm run pack:win-x64
 npm run pack:linux-x64
-# or full matrix:
-npm run pack:all
+# The release workflow builds the five supported OS/architecture targets
+# on their native GitHub Actions runners.
 ```
 
 ---

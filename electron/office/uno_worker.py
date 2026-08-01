@@ -2,8 +2,8 @@
 """Small, fixed-operation LibreOffice UNO bridge used by Office Agent.
 
 The Node boundary validates workspace paths and request sizes. This worker only
-implements the allow-listed document operations below; it never evaluates code
-or executes commands supplied by the model.
+implements the allow-listed document operations below. Its sole code-execution
+path is an interactively approved, signed/trusted, document-scoped Basic macro.
 """
 
 import json
@@ -36,7 +36,7 @@ def connect(pipe_name):
     )
     endpoint = f'uno:pipe,name={pipe_name};urp;StarOffice.ComponentContext'
     last_error = None
-    for _attempt in range(100):
+    for _attempt in range(300):
         try:
             return resolver.resolve(endpoint)
         except Exception as cause:  # LibreOffice needs a short startup window.
@@ -45,9 +45,31 @@ def connect(pipe_name):
     raise RuntimeError(f'Unable to connect to LibreOffice: {last_error}')
 
 
-def load_document(desktop, input_path, read_only):
+def trust_macro_location(context, input_path):
+    provider = context.ServiceManager.createInstanceWithContext(
+        'com.sun.star.configuration.ConfigurationProvider', context
+    )
+    configuration = provider.createInstanceWithArguments(
+        'com.sun.star.configuration.ConfigurationUpdateAccess',
+        (property_value(
+            'nodepath', '/org.openoffice.Office.Common/Security/Scripting'
+        ),),
+    )
+    location = uno.systemPathToFileUrl(os.path.dirname(os.path.realpath(input_path)))
+    if not location.endswith('/'):
+        location += '/'
+    configuration.SecureURL = (location,)
+    configuration.commitChanges()
+
+
+def load_document(desktop, input_path, read_only, trusted_macro=False):
     if not isinstance(input_path, str) or not os.path.isabs(input_path):
         raise ValueError('UNO input path must be absolute')
+    macro_mode = (
+        property_value('MacroExecutionMode', 9)
+        if trusted_macro
+        else property_value('MacroExecutionMode', 0)
+    )
     document = desktop.loadComponentFromURL(
         uno.systemPathToFileUrl(input_path),
         '_blank',
@@ -55,6 +77,7 @@ def load_document(desktop, input_path, read_only):
         (
             property_value('Hidden', True),
             property_value('ReadOnly', bool(read_only)),
+            macro_mode,
         ),
     )
     if document is None:
@@ -275,6 +298,45 @@ def word_read_changes(document, _request):
             used_characters += len(bounded)
         changes.append(change)
     return {'changes': changes, 'truncated': truncated}
+
+
+def redline_count(document):
+    enumeration = document.getRedlines().createEnumeration()
+    count = 0
+    while enumeration.hasMoreElements():
+        enumeration.nextElement()
+        count += 1
+    return count
+
+
+def dispatch_command(document, request, command):
+    context = request['_context']
+    helper = context.ServiceManager.createInstanceWithContext(
+        'com.sun.star.frame.DispatchHelper', context
+    )
+    frame = document.getCurrentController().getFrame()
+    helper.executeDispatch(frame, command, '', 0, ())
+
+
+def word_resolve_changes(document, request):
+    if not document.supportsService('com.sun.star.text.TextDocument'):
+        raise ValueError('The selected file is not a Word document')
+    action = request['action']
+    commands = {
+        'accept': '.uno:AcceptAllTrackedChanges',
+        'reject': '.uno:RejectAllTrackedChanges',
+    }
+    if action not in commands:
+        raise ValueError('Tracked-change action must be accept or reject')
+    before = redline_count(document)
+    dispatch_command(document, request, commands[action])
+    remaining = redline_count(document)
+    store_copy(document, request['outputPath'])
+    return {
+        'action': action,
+        'resolvedChanges': max(0, before - remaining),
+        'remainingChanges': remaining,
+    }
 
 
 def word_replace(document, request):
@@ -1178,6 +1240,22 @@ def presentation_set_notes(document, request):
     return {'noteCharacters': len(notes), 'slideNumber': slide_number}
 
 
+def macro_result(value):
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value if not isinstance(value, str) else value[:2000]
+    return str(value)[:2000]
+
+
+def macro_run(document, request):
+    provider = document.getScriptProvider()
+    script = provider.getScript(request['scriptUri'])
+    return_value, _out_parameters, _out_indices = script.invoke(
+        tuple(request.get('arguments', [])), (), ()
+    )
+    document.store()
+    return {'returnValue': macro_result(return_value)}
+
+
 def replace_text(original, replacements):
     changed = original
     replacement_count = 0
@@ -1293,6 +1371,7 @@ def convert_pdf(document, request):
 OPERATIONS = {
     'word_read': (True, word_read),
     'word_read_changes': (True, word_read_changes),
+    'word_resolve_changes': (False, word_resolve_changes),
     'word_replace': (False, word_replace),
     'word_replace_tracked': (False, word_replace_tracked),
     'word_insert_table': (False, word_insert_table),
@@ -1316,6 +1395,7 @@ OPERATIONS = {
     'presentation_insert_table': (False, presentation_insert_table),
     'presentation_set_notes': (False, presentation_set_notes),
     'template_fill': (False, template_fill),
+    'macro_run': (False, macro_run),
     'convert_pdf': (True, convert_pdf),
 }
 
@@ -1326,10 +1406,18 @@ def execute(request):
         raise ValueError(f'Unsupported UNO operation: {operation}')
     read_only, handler = OPERATIONS[operation]
     context = connect(request['pipeName'])
+    if operation == 'macro_run':
+        trust_macro_location(context, request.get('inputPath'))
     desktop = context.ServiceManager.createInstanceWithContext(
         'com.sun.star.frame.Desktop', context
     )
-    document = load_document(desktop, request.get('inputPath'), read_only)
+    request['_context'] = context
+    document = load_document(
+        desktop,
+        request.get('inputPath'),
+        read_only,
+        trusted_macro=operation == 'macro_run',
+    )
     try:
         return handler(document, request)
     finally:

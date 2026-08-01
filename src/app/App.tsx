@@ -159,6 +159,10 @@ export function App() {
 
   const openWelcome = useCallback(() => setMain({ name: 'welcome' }), []);
   const openSettings = useCallback(() => setMain({ name: 'settings' }), []);
+  const openAi = useCallback(() => {
+    setAiMounted(true);
+    setAiOpen(true);
+  }, []);
 
   /** Opens a file as a document and shows it. */
   const showDocument = useCallback(
@@ -472,6 +476,7 @@ export function App() {
                   onCreateOffice={createOfficeDocument}
                   onCreatePdf={createPdfDocument}
                   onOpenRecent={(path) => openPaths([path])}
+                  onOpenAi={openAi}
                 />
               ))}
 
@@ -483,6 +488,7 @@ export function App() {
                 onCreateOffice={createOfficeDocument}
                 onCreatePdf={createPdfDocument}
                 onOpenRecent={(path) => openPaths([path])}
+                onOpenAi={openAi}
               />
             )}
             </Suspense>
