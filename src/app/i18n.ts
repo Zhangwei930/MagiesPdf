@@ -57,13 +57,13 @@ const UI = {
   },
   manualOfficeMode: { zh: '手工办公', en: 'Manual office' },
   manualOfficeModeHint: {
-    zh: '新建或打开文件，在内置编辑器中直接操作。',
-    en: 'Create or open a file and work directly in the built-in editor.',
+    zh: 'PDF 在应用内编辑；Word / 表格 / 演示用内置 Office 引擎打开。',
+    en: 'Edit PDFs in-app; Word, sheets and slides open in the bundled Office engine.',
   },
   aiOfficeMode: { zh: 'AI 自动办公', en: 'AI automation' },
   aiOfficeModeHint: {
-    zh: '用自然语言批量读取、编辑、转换和归档办公文件。',
-    en: 'Use natural language to read, edit, convert, and archive office files in batches.',
+    zh: '授权目录后用自然语言处理；可审核队列或仅白名单无人值守。',
+    en: 'Grant a folder, then automate with review queues or allow-listed unattended rules.',
   },
   enterAiOfficeMode: { zh: '进入 AI 模式', en: 'Open AI mode' },
   newDocument: { zh: '新建', en: 'Create new' },
@@ -86,8 +86,8 @@ const UI = {
   libreOfficeMissing: { zh: '内置 Office 引擎缺失', en: 'Built-in Office engine is missing' },
   localOfficeEditor: { zh: '内置 Office 编辑器', en: 'Built-in Office editor' },
   localOfficeReadyHint: {
-    zh: '客户端已自带 Word、Excel 和 PowerPoint 本地编辑能力，打开即可使用。',
-    en: 'Word, Excel and PowerPoint editing is included with the app and ready to use.',
+    zh: '内置引擎已就绪：新建或打开 Word / 表格 / 演示即可编辑，无需另装套件。',
+    en: 'Engine ready: create or open Word, sheets and slides to edit. No separate suite install.',
   },
   localOfficeMissingHint: {
     zh: '安装包不完整，请重新安装 Magies Office；无需另装 LibreOffice。',
