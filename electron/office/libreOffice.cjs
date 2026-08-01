@@ -77,9 +77,16 @@ function libreOfficeLaunchArgs(paths) {
   return ['--nologo', '--nodefault', '--nofirststartwizard', '--norestore', ...paths];
 }
 
-function launchLibreOffice(executable, paths, spawnProcess = spawn) {
+function launchLibreOffice(executable, paths, spawnProcess = spawn, platform = process.platform) {
   if (!executable) throw new Error('LibreOffice is not configured or installed');
-  const child = spawnProcess(executable, libreOfficeLaunchArgs(paths), {
+  const documentArgs = libreOfficeLaunchArgs(paths);
+  const appMarker = '.app/Contents/MacOS/';
+  const appMarkerIndex = executable.indexOf(appMarker);
+  const command = platform === 'darwin' && appMarkerIndex >= 0 ? '/usr/bin/open' : executable;
+  const args = command === '/usr/bin/open'
+    ? ['-n', executable.slice(0, appMarkerIndex + 4), '--args', ...documentArgs]
+    : documentArgs;
+  const child = spawnProcess(command, args, {
     detached: true,
     stdio: 'ignore',
   });

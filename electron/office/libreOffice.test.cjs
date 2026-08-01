@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const {
   bundledLibreOfficeExecutable,
+  launchLibreOffice,
   libreOfficeCandidates,
   libreOfficeLaunchArgs,
   officeRuntimeRoot,
@@ -144,5 +145,52 @@ describe('libreOfficeLaunchArgs', () => {
 
   it('rejects unsupported paths before starting another process', () => {
     assert.throws(() => libreOfficeLaunchArgs(['/docs/script.js']), /unsupported document/i);
+  });
+});
+
+describe('launchLibreOffice', () => {
+  it('uses LaunchServices for a macOS app bundle instead of starting soffice directly', () => {
+    const calls = [];
+    let unrefCalled = false;
+    const spawnProcess = (...args) => {
+      calls.push(args);
+      return { unref: () => { unrefCalled = true; } };
+    };
+
+    launchLibreOffice(
+      '/runtime/LibreOffice.app/Contents/MacOS/soffice',
+      ['/docs/a.docx'],
+      spawnProcess,
+      'darwin',
+    );
+
+    assert.deepEqual(calls, [[
+      '/usr/bin/open',
+      [
+        '-n',
+        '/runtime/LibreOffice.app',
+        '--args',
+        '--nologo',
+        '--nodefault',
+        '--nofirststartwizard',
+        '--norestore',
+        '/docs/a.docx',
+      ],
+      { detached: true, stdio: 'ignore' },
+    ]]);
+    assert.equal(unrefCalled, true);
+  });
+
+  it('starts the executable directly on non-macOS platforms', () => {
+    const calls = [];
+    const spawnProcess = (...args) => {
+      calls.push(args);
+      return { unref() {} };
+    };
+
+    launchLibreOffice('/runtime/program/soffice', ['/docs/a.docx'], spawnProcess, 'linux');
+
+    assert.equal(calls[0][0], '/runtime/program/soffice');
+    assert.deepEqual(calls[0][1], libreOfficeLaunchArgs(['/docs/a.docx']));
   });
 });
