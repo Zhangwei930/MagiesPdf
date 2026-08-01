@@ -27,8 +27,8 @@ export const pptxToPdfTool: ToolDescriptor = {
   category: 'convert',
   name: { zh: 'PPT 转 PDF', en: 'PowerPoint to PDF' },
   description: {
-    zh: '把 .pptx 幻灯片文字排成 PDF。版式为简化重排；配置外部转换器可获得更高保真度。',
-    en: 'Typeset .pptx slide text into a PDF. Built-in path is text-first; use an external converter for higher fidelity.',
+    zh: '把 .pptx 演示文稿转成 PDF。检测到 LibreOffice 时自动使用本地办公引擎保留版式。',
+    en: 'Convert a .pptx presentation to PDF. Automatically uses the local LibreOffice engine to preserve layout when available.',
   },
   icon: 'GalleryVertical',
   keywords: ['powerpoint', 'pptx', 'slides', 'presentation', '演示', '幻灯片', '转换'],
@@ -40,14 +40,14 @@ export const pptxToPdfTool: ToolDescriptor = {
   async run(ctx) {
     const file = soleFile(ctx);
 
-    if (ctx.host?.hasExternalConverter()) {
+    if (ctx.host?.hasExternalConverter('pdf')) {
       const output = await ctx.host.externalConvert(file, 'pdf', ctx.signal);
       ctx.report(1);
       return {
         files: [pdfOutput(suffixedName(file.name, '', '.pdf'), output.bytes)],
         summary: {
-          zh: `已通过外部转换器转换「${file.name}」`,
-          en: `Converted "${file.name}" via the external converter`,
+          zh: `已通过本地办公引擎转换「${file.name}」`,
+          en: `Converted "${file.name}" via the local Office engine`,
         },
       };
     }

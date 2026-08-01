@@ -24,8 +24,21 @@ const api = {
   /** Tool metadata for the UI. Implementations stay in the worker pool. */
   getCatalog: () => ipcRenderer.invoke('catalog:get'),
 
+  getOfficeStatus: () => ipcRenderer.invoke('office:status'),
+  pickLibreOfficeExecutable: () => ipcRenderer.invoke('office:pickExecutable'),
+  openLibreOfficeDownload: () => ipcRenderer.invoke('office:openDownloadPage'),
+  pickAndOpenOffice: (multiple) => ipcRenderer.invoke('office:pickAndOpen', { multiple }),
+  createAndOpenOffice: (kind) => ipcRenderer.invoke('office:createAndOpen', { kind }),
+  openOfficePaths: (paths) => ipcRenderer.invoke('office:openPaths', { paths }),
+  listRecentDocuments: () => ipcRenderer.invoke('office:listRecent'),
+  renameRecentDocument: (target, name) =>
+    ipcRenderer.invoke('office:renameRecent', { path: target, name }),
+  trashRecentDocument: (target) => ipcRenderer.invoke('office:trashRecent', { path: target }),
+  forgetRecentDocument: (target) => ipcRenderer.invoke('office:forgetRecent', { path: target }),
+
   /** Opens the system file picker. Returns [] when the user cancels. */
   pickFiles: (accept, multiple) => ipcRenderer.invoke('files:pick', { accept, multiple }),
+  pickDocumentPaths: (multiple) => ipcRenderer.invoke('files:pickDocumentPaths', { multiple }),
 
   /** Reads files the user dropped onto the window, by absolute path. */
   readFiles: (paths) => ipcRenderer.invoke('files:read', { paths }),
@@ -61,6 +74,36 @@ const api = {
   runJob: (request) => ipcRenderer.invoke('job:run', request),
   cancelJob: (jobId) => ipcRenderer.invoke('job:cancel', { jobId }),
 
+  getAiConfig: () => ipcRenderer.invoke('ai:config'),
+  setAiApiKey: (apiKey) => ipcRenderer.invoke('ai:setApiKey', { apiKey }),
+  runAiTurn: (request) => ipcRenderer.invoke('ai:runTurn', request),
+  cancelAiTurn: (requestId) => ipcRenderer.invoke('ai:cancelTurn', { requestId }),
+  respondAiApproval: (requestId, approvalId, approved) =>
+    ipcRenderer.invoke('ai:approvalResponse', { requestId, approvalId, approved }),
+  getAiWorkspaceStatus: () => ipcRenderer.invoke('ai:workspaceStatus'),
+  pickAiWorkspace: () => ipcRenderer.invoke('ai:pickWorkspace'),
+  clearAiWorkspace: () => ipcRenderer.invoke('ai:clearWorkspace'),
+  getAiHistory: () => ipcRenderer.invoke('ai:historyList'),
+  appendAiHistory: (entry) => ipcRenderer.invoke('ai:historyAppend', entry),
+  clearAiHistory: () => ipcRenderer.invoke('ai:historyClear'),
+  getAiAutomationState: () => ipcRenderer.invoke('ai:automationState'),
+  createAiAutomationRule: (rule) => ipcRenderer.invoke('ai:automationCreate', rule),
+  setAiAutomationRuleEnabled: (ruleId, enabled) =>
+    ipcRenderer.invoke('ai:automationSetEnabled', { ruleId, enabled }),
+  deleteAiAutomationRule: (ruleId) => ipcRenderer.invoke('ai:automationDelete', { ruleId }),
+  resolveAiAutomationPending: (pendingId) =>
+    ipcRenderer.invoke('ai:automationResolvePending', { pendingId }),
+  onAiEvent: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('ai:event', listener);
+    return () => ipcRenderer.removeListener('ai:event', listener);
+  },
+  onAiAutomationEvent: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('ai:automationEvent', listener);
+    return () => ipcRenderer.removeListener('ai:automationEvent', listener);
+  },
+
   /**
    * Subscribes to documents the OS asked the app to open — a double-click, an
    * Open With, or a second launch. Only paths cross; the renderer reads them
@@ -95,6 +138,11 @@ const api = {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateSettings: (patch) => ipcRenderer.invoke('settings:update', patch),
   getApiStatus: () => ipcRenderer.invoke('api:status'),
+  getMcpConfig: () => ipcRenderer.invoke('mcp:config'),
+  getExternalMcpStatus: () => ipcRenderer.invoke('mcp:externalStatus'),
+  setExternalMcpConfig: (config) => ipcRenderer.invoke('mcp:externalSetConfig', { config }),
+  refreshExternalMcp: () => ipcRenderer.invoke('mcp:externalRefresh'),
+  clearExternalMcpConfig: () => ipcRenderer.invoke('mcp:externalClearConfig'),
 
   pickDirectory: () => ipcRenderer.invoke('files:pickDirectory'),
   pickFolderFiles: (accept, recursive) =>

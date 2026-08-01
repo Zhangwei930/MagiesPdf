@@ -22,10 +22,15 @@ const isDev = Boolean(DEV_SERVER_URL);
 const PACKAGED_INDEX_PATH = path.join(__dirname, '..', 'dist', 'index.html');
 const RENDERER_URL = isDev ? new URL(DEV_SERVER_URL).href : pathToFileURL(PACKAGED_INDEX_PATH).href;
 
+// The visible product name changed, but existing settings and recent documents
+// must remain in the directory used by every previous MagiesPdf release.
+settings.preserveLegacyUserDataPath(app);
+
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
 /** @type {JobPool | null} */
 let pool = null;
+let ipcServices = null;
 
 /**
  * Documents asked for before the renderer could receive them.
@@ -71,7 +76,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     show: false,
-    title: 'MagiesPdf',
+    title: 'Magies Office',
     // Dock / taskbar icon (Windows & Linux; macOS uses the .icns in the bundle).
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     // Painted before the renderer has any CSS, so it must match the theme the
@@ -157,7 +162,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     pool = new JobPool();
-    registerIpc({
+    ipcServices = registerIpc({
       pool,
       getWindow: () => mainWindow,
       trustedRendererUrl: RENDERER_URL,
@@ -194,6 +199,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', () => {
     void stopApiServer();
+    void ipcServices?.close();
     void pool?.destroy();
   });
 }

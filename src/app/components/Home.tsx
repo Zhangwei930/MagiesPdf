@@ -1,146 +1,509 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CATEGORIES } from '@core/registry.ts';
-import type { CategoryId, ToolMeta } from '@core/types.ts';
+import type { CategoryId } from '@core/types.ts';
+import {
+  bridge,
+  hasBridge,
+  type OfficeCreateKind,
+  type OfficeStatus,
+  type RecentDocument,
+} from '../bridge.ts';
 import { uiRegistry } from '../catalog.ts';
 import { t } from '../i18n.ts';
-import { AlertCircle, Eye, Search, ToolIcon } from '../icons.ts';
+import {
+  AlertCircle,
+  Bot,
+  Check,
+  FilePenLine,
+  FolderOpen,
+  Loader2,
+  Search,
+  Trash2,
+  X,
+  ToolIcon,
+} from '../icons.ts';
 import { useApp } from '../store.ts';
+import { Button } from './ui.tsx';
 
 interface HomeProps {
   onOpenTool(toolId: string): void;
   onOpenSearch(): void;
-  onOpenCategory(categoryId: CategoryId): void;
-  onOpenPreview(): Promise<void>;
+  onOpenDocument(): Promise<void>;
+  onCreateOffice(kind: OfficeCreateKind): Promise<void>;
+  onCreatePdf(): Promise<void>;
+  onOpenRecent(path: string): Promise<void>;
+  onOpenAi(): void;
 }
 
-/**
- * Welcome / overview panel shown in the main column when no tool is selected.
- * Tool navigation lives in the sidebar; this surface is orientation + shortcuts.
- */
-export function Home({ onOpenTool, onOpenSearch, onOpenCategory, onOpenPreview }: HomeProps) {
-  const locale = useApp((s) => s.locale);
-  const recentToolIds = useApp((s) => s.recentToolIds);
-  const [previewError, setPreviewError] = useState('');
+const CREATE_ACTIONS: Array<{
+  kind: OfficeCreateKind;
+  labelKey: 'newWord' | 'newSheet' | 'newSlides';
+  hintKey: 'newWordHint' | 'newSheetHint' | 'newSlidesHint';
+  icon: string;
+  tone: string;
+}> = [
+  { kind: 'word', labelKey: 'newWord', hintKey: 'newWordHint', icon: 'FileText', tone: 'office-word' },
+  { kind: 'sheet', labelKey: 'newSheet', hintKey: 'newSheetHint', icon: 'Table', tone: 'office-sheet' },
+  { kind: 'slide', labelKey: 'newSlides', hintKey: 'newSlidesHint', icon: 'GalleryVertical', tone: 'office-slide' },
+];
 
-  const recent = useMemo(
-    () =>
-      recentToolIds
-        .map((id) => uiRegistry.tryGet(id))
-        .filter((tool): tool is ToolMeta => Boolean(tool))
-        .slice(0, 6),
-    [recentToolIds],
+const QUICK_CONVERSIONS = [
+  'convert.docx-to-pdf',
+  'convert.xlsx-to-pdf',
+  'convert.pptx-to-pdf',
+  'convert.pdf-to-docx',
+  'convert.pdf-to-xlsx',
+  'convert.pdf-to-pptx',
+];
+
+const DOCUMENT_TONES: Record<RecentDocument['kind'], { icon: string; className: string }> = {
+  word: { icon: 'FileText', className: 'office-word' },
+  sheet: { icon: 'Table', className: 'office-sheet' },
+  slide: { icon: 'GalleryVertical', className: 'office-slide' },
+  pdf: { icon: 'FilePenLine', className: 'office-pdf' },
+};
+
+/** WPS-style start centre focused on the customer's files, not engine configuration. */
+export function Home({
+  onOpenTool,
+  onOpenSearch,
+  onOpenDocument,
+  onCreateOffice,
+  onCreatePdf,
+  onOpenRecent,
+  onOpenAi,
+}: HomeProps) {
+  const locale = useApp((state) => state.locale);
+  const [office, setOffice] = useState<OfficeStatus | null>(null);
+  const [recentDocuments, setRecentDocuments] = useState<RecentDocument[]>([]);
+  const [query, setQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<CategoryId | null>(null);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const [renaming, setRenaming] = useState<RecentDocument | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [deleting, setDeleting] = useState<RecentDocument | null>(null);
+
+  const loadWorkspace = useCallback(async () => {
+    if (!hasBridge()) return;
+    const [status, recent] = await Promise.all([
+      bridge().getOfficeStatus(),
+      bridge().listRecentDocuments(),
+    ]);
+    setOffice(status);
+    setRecentDocuments(recent);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!hasBridge()) return;
+    void Promise.all([bridge().getOfficeStatus(), bridge().listRecentDocuments()])
+      .then(([status, recent]) => {
+        if (cancelled) return;
+        setOffice(status);
+        setRecentDocuments(recent);
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const visibleDocuments = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase(locale);
+    if (!needle) return recentDocuments;
+    return recentDocuments.filter((document) =>
+      `${document.name} ${document.path}`.toLocaleLowerCase(locale).includes(needle),
+    );
+  }, [locale, query, recentDocuments]);
+
+  const conversions = useMemo(
+    () => QUICK_CONVERSIONS.map((id) => uiRegistry.tryGet(id)).filter((tool) => tool !== undefined),
+    [],
   );
 
   const categories = useMemo(
     () =>
-      CATEGORIES.map((category) => ({
-        category,
-        count: uiRegistry.byCategory(category.id).length,
-      })).filter(({ count }) => count > 0),
+      CATEGORIES.map((category) => ({ category, count: uiRegistry.byCategory(category.id).length }))
+        .filter(({ count }) => count > 0),
     [],
   );
 
+  const selectedTools = useMemo(
+    () => (selectedCategory ? uiRegistry.byCategory(selectedCategory).slice(0, 12) : []),
+    [selectedCategory],
+  );
+
+  const run = async (key: string, action: () => Promise<void>, refresh = false) => {
+    setBusy(key);
+    setError('');
+    try {
+      await action();
+      if (refresh) await loadWorkspace();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const startRename = (document: RecentDocument) => {
+    const dot = document.name.lastIndexOf('.');
+    setRenameValue(dot > 0 ? document.name.slice(0, dot) : document.name);
+    setRenaming(document);
+  };
+
+  const submitRename = async () => {
+    if (!renaming || !renameValue.trim()) return;
+    await run(`rename:${renaming.path}`, async () => {
+      await bridge().renameRecentDocument(renaming.path, renameValue);
+      setRenaming(null);
+    }, true);
+  };
+
+  const submitDelete = async () => {
+    if (!deleting) return;
+    await run(`delete:${deleting.path}`, async () => {
+      await bridge().trashRecentDocument(deleting.path);
+      setDeleting(null);
+    }, true);
+  };
+
+  const createOffice = async (kind: OfficeCreateKind) => {
+    await run(kind, () => onCreateOffice(kind), true);
+  };
+
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col justify-center px-8 py-10">
-      <section className="text-center">
-        <img
-          src={`${import.meta.env.BASE_URL}logo.png`}
-          alt="MagiesPDF"
-          width={96}
-          height={96}
-          className="mx-auto h-24 w-24 select-none object-contain drop-shadow-[0_0_24px_rgba(59,130,246,0.35)]"
-          draggable={false}
-        />
-        <h1 className="mt-3 text-[26px] font-semibold tracking-tight">MagiesPdf</h1>
-        <p className="mx-auto mt-1.5 max-w-md text-sm text-[var(--text-secondary)]">
-          {t('tagline', locale)}
-        </p>
-        <p className="mx-auto mt-2 max-w-sm text-[12px] text-[var(--text-muted)]">
-          {t('sidebarHint', locale)}
-        </p>
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto w-full max-w-6xl px-5 py-5 lg:px-8 lg:py-7">
+        <header className="flex items-center justify-between gap-5">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="h-12 w-12 shrink-0 overflow-hidden" aria-hidden="true">
+              <img
+                src={`${import.meta.env.BASE_URL}logo.png`}
+                alt=""
+                width={88}
+                height={88}
+                className="h-[88px] w-[88px] max-w-none -translate-x-5 -translate-y-2 select-none"
+                draggable={false}
+              />
+            </span>
+            <div className="min-w-0">
+              <h1 className="truncate text-[22px] font-semibold tracking-tight">{t('appName', locale)}</h1>
+              <p className="mt-0.5 truncate text-[12px] text-[var(--text-secondary)]">
+                {t('officeTagline', locale)}
+              </p>
+            </div>
+          </div>
 
-        <button
-          type="button"
-          onClick={onOpenSearch}
-          className="mx-auto mt-5 flex w-full max-w-md items-center gap-2.5 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-2.5 text-left transition-colors hover:border-[var(--accent)]"
-        >
-          <Search size={16} className="shrink-0 text-[var(--text-muted)]" />
-          <span className="flex-1 text-sm text-[var(--text-muted)]">{t('search', locale)}</span>
-          <kbd className="shrink-0 rounded border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
-            ⌘K
-          </kbd>
-        </button>
+          <button
+            type="button"
+            onClick={onOpenSearch}
+            className="flex w-full max-w-[300px] items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-3 py-2 text-left shadow-sm transition-[border-color,box-shadow] hover:border-[var(--accent)] hover:shadow-[var(--shadow-card)]"
+          >
+            <Search size={15} className="text-[var(--text-muted)]" />
+            <span className="flex-1 text-[12px] text-[var(--text-muted)]">{t('search', locale)}</span>
+            <kbd className="rounded border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">⌘K</kbd>
+          </button>
+        </header>
 
-        <button
-          type="button"
-          onClick={() => {
-            setPreviewError('');
-            onOpenPreview().catch((cause) => {
-              setPreviewError(cause instanceof Error ? cause.message : String(cause));
-            });
-          }}
-          className="mx-auto mt-2.5 flex w-full max-w-md items-center gap-2.5 rounded-xl border border-dashed border-[var(--border-subtle)] px-4 py-2.5 text-left transition-colors hover:border-[var(--accent)]"
-        >
-          <Eye size={16} className="shrink-0 text-[var(--text-muted)]" />
-          <span className="flex-1 text-sm text-[var(--text-muted)]">{t('openPreview', locale)}</span>
-        </button>
-        {previewError && (
-          <p className="mx-auto mt-2 flex max-w-md items-center gap-1.5 text-xs text-[var(--danger)]">
-            <AlertCircle size={12} />
-            {previewError}
-          </p>
-        )}
-      </section>
+        <section className="mt-5 grid gap-2.5 sm:grid-cols-2">
+          <div className="surface-panel flex items-center gap-3 p-3.5">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-sunken)] text-[var(--text-secondary)]">
+              <FilePenLine size={18} />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-[13px] font-semibold">{t('manualOfficeMode', locale)}</h2>
+              <p className="mt-0.5 text-[10.5px] leading-snug text-[var(--text-muted)]">
+                {t('manualOfficeModeHint', locale)}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenAi}
+            className="surface-panel flex items-center gap-3 p-3.5 text-left transition-[border-color,box-shadow] hover:border-[var(--accent)] hover:shadow-[var(--shadow-card)]"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
+              <Bot size={18} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-semibold">{t('aiOfficeMode', locale)}</span>
+              <span className="mt-0.5 block text-[10.5px] leading-snug text-[var(--text-muted)]">
+                {t('aiOfficeModeHint', locale)}
+              </span>
+            </span>
+            <span className="shrink-0 text-[10px] font-medium text-[var(--accent)]">{t('enterAiOfficeMode', locale)}</span>
+          </button>
+        </section>
 
-      {recent.length > 0 && (
-        <section className="mt-9">
-          <h2 className="mb-2.5 text-[12px] font-semibold tracking-wide text-[var(--text-muted)] uppercase">
-            {t('recent', locale)}
-          </h2>
-          <div className="flex flex-wrap gap-2">
-            {recent.map((tool) => (
+        <section className="mt-6">
+          <div className="mb-3 flex items-end justify-between gap-3">
+            <div>
+              <h2 className="text-[15px] font-semibold">{t('newDocument', locale)}</h2>
+              <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{t('newDocumentHint', locale)}</p>
+            </div>
+            <span className="hidden items-center gap-1.5 text-[10.5px] text-[var(--text-muted)] sm:flex">
+              <span className={`h-1.5 w-1.5 rounded-full ${office?.libreOffice.available ? 'bg-[var(--success)]' : 'bg-[var(--danger)]'}`} />
+              {office?.libreOffice.available ? t('libreOfficeReady', locale) : t('libreOfficeMissing', locale)}
+            </span>
+          </div>
+
+          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
+            {CREATE_ACTIONS.map((action) => (
               <button
-                key={tool.id}
+                key={action.kind}
                 type="button"
-                onClick={() => onOpenTool(tool.id)}
-                className="inline-flex items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-2.5 py-1.5 text-[12px] transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]"
+                disabled={busy !== ''}
+                onClick={() => void createOffice(action.kind)}
+                className="group surface-panel min-h-[112px] p-3.5 text-left transition-[border-color,transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-[var(--shadow-card)] active:translate-y-0 disabled:pointer-events-none disabled:opacity-60"
               >
-                <ToolIcon name={tool.icon} size={14} className="text-[var(--accent)]" />
-                {tool.name[locale]}
+                <span className={`flex h-9 w-9 items-center justify-center rounded-lg ${action.tone}`}>
+                  {busy === action.kind ? <Loader2 size={18} className="animate-spin" /> : <ToolIcon name={action.icon} size={18} />}
+                </span>
+                <span className="mt-3 block text-[13px] font-medium">{t(action.labelKey, locale)}</span>
+                <span className="mt-1 block text-[10.5px] leading-snug text-[var(--text-muted)]">{t(action.hintKey, locale)}</span>
+              </button>
+            ))}
+
+            <button
+              type="button"
+              disabled={busy !== ''}
+              onClick={() => void run('pdf', onCreatePdf)}
+              className="surface-panel min-h-[112px] p-3.5 text-left transition-[border-color,transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-[var(--shadow-card)] active:translate-y-0 disabled:pointer-events-none disabled:opacity-60"
+            >
+              <span className="office-pdf flex h-9 w-9 items-center justify-center rounded-lg">
+                {busy === 'pdf' ? <Loader2 size={18} className="animate-spin" /> : <ToolIcon name="FilePenLine" size={18} />}
+              </span>
+              <span className="mt-3 block text-[13px] font-medium">{t('newPdf', locale)}</span>
+              <span className="mt-1 block text-[10.5px] leading-snug text-[var(--text-muted)]">{t('newPdfHint', locale)}</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={busy !== ''}
+              onClick={() => void run('open', onOpenDocument, true)}
+              className="surface-panel min-h-[112px] p-3.5 text-left transition-[border-color,transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-[var(--shadow-card)] active:translate-y-0 disabled:pointer-events-none disabled:opacity-60"
+            >
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
+                {busy === 'open' ? <Loader2 size={18} className="animate-spin" /> : <FolderOpen size={18} />}
+              </span>
+              <span className="mt-3 block text-[13px] font-medium">{t('openDocument', locale)}</span>
+              <span className="mt-1 block text-[10.5px] leading-snug text-[var(--text-muted)]">{t('openDocumentShortHint', locale)}</span>
+            </button>
+          </div>
+
+          {error && (
+            <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-[11px] text-[var(--danger)]">
+              <AlertCircle size={13} className="mt-0.5 shrink-0" />
+              <span>{error}</span>
+            </p>
+          )}
+        </section>
+
+        <div className="mt-7 grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+          <section className="min-w-0">
+            <div className="mb-2.5 flex items-center justify-between gap-3">
+              <h2 className="text-[14px] font-semibold">{t('recentDocuments', locale)}</h2>
+              <label className="flex w-full max-w-[220px] items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-2.5 py-1.5 focus-within:border-[var(--accent)]">
+                <Search size={13} className="text-[var(--text-muted)]" />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder={t('searchRecentDocuments', locale)}
+                  className="min-w-0 flex-1 bg-transparent text-[11px] outline-none placeholder:text-[var(--text-muted)]"
+                />
+                {query && <button type="button" onClick={() => setQuery('')} aria-label={t('clear', locale)}><X size={12} /></button>}
+              </label>
+            </div>
+
+            <div className="surface-panel overflow-hidden">
+              {visibleDocuments.length > 0 ? (
+                visibleDocuments.map((document) => {
+                  const tone = DOCUMENT_TONES[document.kind];
+                  const folder = document.path.slice(0, Math.max(document.path.lastIndexOf('/'), document.path.lastIndexOf('\\')));
+                  return (
+                    <div key={document.path} className="group flex items-center border-b border-[var(--border-subtle)] px-3 py-2.5 last:border-b-0 hover:bg-[var(--surface-hover)]">
+                      <button
+                        type="button"
+                        disabled={busy !== ''}
+                        onClick={() => void run(`open:${document.path}`, () => onOpenRecent(document.path), true)}
+                        className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:opacity-60"
+                      >
+                        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${tone.className}`}>
+                          {busy === `open:${document.path}` ? <Loader2 size={16} className="animate-spin" /> : <ToolIcon name={tone.icon} size={17} />}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[12px] font-medium">{document.name}</span>
+                          <span className="mt-0.5 block truncate text-[9.5px] text-[var(--text-muted)]">{folder}</span>
+                        </span>
+                        <span className="hidden shrink-0 text-[9.5px] text-[var(--text-muted)] sm:block">{formatDate(document.modifiedAt, locale)}</span>
+                      </button>
+
+                      <div className="ml-2 flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                        <RowAction label={t('showInFolder', locale)} onClick={() => void bridge().revealPath(document.path)}><FolderOpen size={13} /></RowAction>
+                        <RowAction label={t('renameDocument', locale)} onClick={() => startRename(document)}><FilePenLine size={13} /></RowAction>
+                        <RowAction label={t('removeFromRecent', locale)} onClick={() => void run(`forget:${document.path}`, async () => { await bridge().forgetRecentDocument(document.path); }, true)}><X size={13} /></RowAction>
+                        <RowAction label={t('moveToTrash', locale)} danger onClick={() => setDeleting(document)}><Trash2 size={13} /></RowAction>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="flex min-h-[150px] flex-col items-center justify-center px-4 text-center">
+                  <FolderOpen size={24} strokeWidth={1.5} className="text-[var(--text-muted)]" />
+                  <p className="mt-2 text-[12px] font-medium text-[var(--text-secondary)]">{query ? t('noRecentSearchResults', locale) : t('recentDocumentsEmpty', locale)}</p>
+                  <p className="mt-1 text-[10.5px] text-[var(--text-muted)]">{t('recentDocumentsEmptyHint', locale)}</p>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <aside className="space-y-4">
+            <section className="surface-panel p-4">
+              <div className="flex items-start gap-2.5">
+                <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${office?.libreOffice.available ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--danger-soft)] text-[var(--danger)]'}`}>
+                  {office?.libreOffice.available ? <Check size={13} /> : <AlertCircle size={13} />}
+                </span>
+                <div className="min-w-0">
+                  <h2 className="text-[12px] font-semibold">{t('localOfficeEditor', locale)}</h2>
+                  <p className="mt-1 text-[10.5px] leading-relaxed text-[var(--text-muted)]">
+                    {office?.libreOffice.available ? t('localOfficeReadyHint', locale) : t('localOfficeMissingHint', locale)}
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            <section>
+              <div className="mb-2 flex items-baseline justify-between">
+                <h2 className="text-[12px] font-semibold">{t('quickConversions', locale)}</h2>
+                <span className="text-[9.5px] text-[var(--text-muted)]">{t('localOnly', locale)}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {conversions.map((tool) => (
+                  <button
+                    key={tool.id}
+                    type="button"
+                    onClick={() => onOpenTool(tool.id)}
+                    className="surface-panel flex min-h-16 items-center gap-2 p-2.5 text-left transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]"
+                  >
+                    <ToolIcon name={tool.icon} size={15} className="shrink-0 text-[var(--accent)]" />
+                    <span className="text-[10.5px] leading-snug">{tool.name[locale]}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          </aside>
+        </div>
+
+        <section className="mt-8">
+          <div className="mb-2.5 flex items-baseline justify-between">
+            <h2 className="text-[12px] font-semibold">{t('pdfToolbox', locale)}</h2>
+            <span className="text-[10px] text-[var(--text-muted)]">{t('pdfToolboxHint', locale)}</span>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {categories.map(({ category, count }) => (
+              <button
+                key={category.id}
+                type="button"
+                onClick={() => setSelectedCategory((current) => current === category.id ? null : category.id)}
+                aria-expanded={selectedCategory === category.id}
+                className={`surface-panel flex items-start gap-3 p-3 text-left transition-colors hover:border-[var(--accent)] ${selectedCategory === category.id ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : ''}`}
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)]"><ToolIcon name={category.icon} size={15} className="text-[var(--accent)]" /></span>
+                <span className="min-w-0">
+                  <span className="flex items-baseline gap-2"><span className="text-[12px] font-medium">{category.name[locale]}</span><span className="font-mono text-[9px] text-[var(--text-muted)]">{count}</span></span>
+                  <span className="mt-0.5 block truncate text-[10px] text-[var(--text-secondary)]">{category.description[locale]}</span>
+                </span>
               </button>
             ))}
           </div>
+
+          {selectedCategory && (
+            <div className="mt-2.5 grid gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-raised)] p-2.5 sm:grid-cols-2 lg:grid-cols-3">
+              {selectedTools.map((tool) => (
+                <button
+                  key={tool.id}
+                  type="button"
+                  onClick={() => onOpenTool(tool.id)}
+                  className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[var(--surface-panel)]"
+                >
+                  <ToolIcon name={tool.icon} size={14} className="shrink-0 text-[var(--accent)]" />
+                  <span className="truncate text-[11px]">{tool.name[locale]}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </section>
+      </div>
+
+      {renaming && (
+        <ConfirmDialog title={t('renameDocument', locale)} onClose={() => setRenaming(null)}>
+          <input
+            autoFocus
+            value={renameValue}
+            onChange={(event) => setRenameValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') void submitRename();
+              if (event.key === 'Escape') setRenaming(null);
+            }}
+            className="field-input"
+          />
+          <p className="mt-2 text-[10.5px] text-[var(--text-muted)]">{t('renameKeepsFormat', locale)}</p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button size="sm" onClick={() => setRenaming(null)}>{t('cancel', locale)}</Button>
+            <Button size="sm" variant="primary" loading={busy.startsWith('rename:')} disabled={!renameValue.trim()} onClick={() => void submitRename()}>{t('renameDocument', locale)}</Button>
+          </div>
+        </ConfirmDialog>
       )}
 
-      <section className="mt-8">
-        <h2 className="mb-2.5 text-[12px] font-semibold tracking-wide text-[var(--text-muted)] uppercase">
-          {t('allTools', locale)}
-        </h2>
-        <div className="grid gap-2 sm:grid-cols-2">
-          {categories.map(({ category, count }) => (
-            <button
-              key={category.id}
-              type="button"
-              onClick={() => onOpenCategory(category.id)}
-              className="surface-panel flex items-start gap-3 p-3.5 text-left transition-colors hover:border-[var(--accent)]"
-            >
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)]">
-                <ToolIcon name={category.icon} size={17} className="text-[var(--accent)]" />
-              </span>
-              <span className="min-w-0">
-                <span className="flex items-baseline gap-2">
-                  <span className="text-[13px] font-medium">{category.name[locale]}</span>
-                  <span className="font-mono text-[10px] text-[var(--text-muted)]">{count}</span>
-                </span>
-                <span className="mt-0.5 block text-[11px] leading-snug text-[var(--text-secondary)]">
-                  {category.description[locale]}
-                </span>
-              </span>
-            </button>
-          ))}
-        </div>
-      </section>
+      {deleting && (
+        <ConfirmDialog title={t('moveToTrash', locale)} onClose={() => setDeleting(null)}>
+          <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">{t('moveToTrashConfirm', locale).replace('{name}', deleting.name)}</p>
+          <p className="mt-2 text-[10.5px] text-[var(--text-muted)]">{t('moveToTrashHint', locale)}</p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button size="sm" onClick={() => setDeleting(null)}>{t('cancel', locale)}</Button>
+            <Button size="sm" variant="danger" loading={busy.startsWith('delete:')} onClick={() => void submitDelete()}>{t('moveToTrash', locale)}</Button>
+          </div>
+        </ConfirmDialog>
+      )}
+
+    </div>
+  );
+}
+
+function formatDate(value: number, locale: 'zh' | 'en'): string {
+  return new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(value);
+}
+
+function RowAction({ label, danger = false, onClick, children }: { label: string; danger?: boolean; onClick(): void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={onClick}
+      className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${danger ? 'text-[var(--text-muted)] hover:bg-[var(--danger-soft)] hover:text-[var(--danger)]' : 'text-[var(--text-muted)] hover:bg-[var(--surface-sunken)] hover:text-[var(--text-primary)]'}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ConfirmDialog({ title, onClose, children }: { title: string; onClose(): void; children: React.ReactNode }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="surface-panel w-full max-w-sm p-4 shadow-2xl" role="dialog" aria-modal="true" aria-label={title}>
+        <h2 className="mb-3 text-[14px] font-semibold">{title}</h2>
+        {children}
+      </div>
     </div>
   );
 }

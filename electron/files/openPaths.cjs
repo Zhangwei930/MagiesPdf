@@ -1,4 +1,5 @@
 const path = require('node:path');
+const { DOCUMENT_EXTENSIONS } = require('../office/formats.cjs');
 
 /**
  * Documents named on the command line.
@@ -10,11 +11,10 @@ const path = require('node:path');
  *
  * argv is attacker-adjacent in the sense that anything can be in it, so this
  * reads rather than trusts: switches are dropped, the executable is never a
- * document, and only extensions the viewer can actually open survive.
+ * document, and only extensions the document workspace can actually open survive.
  */
 
-/** The only thing the viewer knows how to open. */
-const OPENABLE = new Set(['.pdf']);
+const OPENABLE = DOCUMENT_EXTENSIONS;
 
 /**
  * An absolute path if the viewer can open this candidate, or `''` if it cannot.

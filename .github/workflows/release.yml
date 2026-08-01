@@ -54,21 +54,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: mac
-            os: macos-latest
-            script: pack:mac
+          - name: mac-x64
+            os: macos-15-intel
+            script: pack:mac-x64
+          - name: mac-arm64
+            os: macos-15
+            script: pack:mac-arm64
           - name: win-x64
             os: windows-latest
             script: pack:win-x64
           - name: win-arm64
-            os: windows-latest
+            os: windows-11-arm
             script: pack:win-arm64
           - name: linux-x64
             os: ubuntu-latest
             script: pack:linux-x64
-          - name: linux-arm64
-            os: ubuntu-24.04-arm
-            script: pack:linux-arm64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

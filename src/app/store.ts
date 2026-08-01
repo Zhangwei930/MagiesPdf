@@ -93,6 +93,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultOutputDirectory: '',
   onNameCollision: 'rename',
   recentToolIds: [],
+  recentDocuments: [],
   /** Check + auto-download on launch; install still requires a restart click. */
   autoUpdate: true,
   api: {
@@ -104,6 +105,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     tlsKeyPath: '',
   },
   externalConverter: { executable: '', argumentTemplate: '', timeoutMs: 120000 },
+  office: { libreOfficeExecutable: '' },
+  ai: { baseUrl: 'http://127.0.0.1:11434/v1', model: '', maxSteps: 6 },
   pipelinePresets: [],
 };
 

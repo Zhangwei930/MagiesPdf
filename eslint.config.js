@@ -6,7 +6,14 @@ import unusedImports from 'eslint-plugin-unused-imports';
 
 export default [
   {
-    ignores: ['dist/**', 'dist-electron/**', 'release/**', 'coverage/**', 'node_modules/**'],
+    ignores: [
+      'dist/**',
+      'dist-electron/**',
+      'release/**',
+      'coverage/**',
+      'node_modules/**',
+      'vendor/office-runtime/**',
+    ],
   },
   js.configs.recommended,
 
@@ -125,13 +132,13 @@ export default [
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',
-      globals: { console: 'readonly', process: 'readonly', URL: 'readonly' },
+      globals: { Buffer: 'readonly', console: 'readonly', process: 'readonly', URL: 'readonly' },
     },
   },
 
   // Electron main process: CommonJS, Node globals.
   {
-    files: ['electron/**/*.cjs', 'electron-builder.config.cjs'],
+    files: ['electron/**/*.cjs', 'scripts/**/*.cjs', 'electron-builder.config.cjs'],
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'commonjs',

@@ -14,6 +14,7 @@ import {
   Lock,
   Maximize,
   MoveHorizontal,
+  PenLine,
   Redo2,
   RotateCw,
   Search,
@@ -74,7 +75,7 @@ const THUMB_WIDTH = 88;
 /** Beyond 2× the extra pixels cost memory without being visible. */
 const MAX_DPR = 2;
 
-type ViewMode = 'view' | 'redact' | 'stamp' | 'form';
+type ViewMode = 'view' | 'text' | 'redact' | 'stamp' | 'form';
 type FitMode = 'width' | 'page' | null;
 
 /** Shared empty map, so a document with no widgets yet does not remount overlays. */
@@ -129,6 +130,7 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
   const [dragPage, setDragPage] = useState(0);
   const [passwordDraft, setPasswordDraft] = useState('');
   const [mode, setMode] = useState<ViewMode>('view');
+  const [modeEpoch, setModeEpoch] = useState(0);
   /**
    * Form widgets per page, filled in by the pages that have rendered. Tagged
    * with the document they were read from: widget positions belong to one
@@ -552,6 +554,27 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
     [runEdit, sizes, stampImage],
   );
 
+  const addTextAt = useCallback(
+    (pageNumber: number, text: string, at: Point, box: Size) => {
+      const pageSize = sizes[pageNumber - 1];
+      if (!pageSize || text.trim() === '') return;
+      const point = toPdfPoint(at, box, pageSize);
+      void runEdit(
+        'edit.add-text',
+        {
+          text: text.trim(),
+          page: pageNumber,
+          x: point.x,
+          y: point.y,
+          size: 14,
+          color: '#111111',
+        },
+        [pageNumber],
+      );
+    },
+    [runEdit, sizes],
+  );
+
   const onPageFields = useCallback(
     (source: PdfDocumentHandle, pageNumber: number, found: FormFieldBox[]) => {
       setFieldCache((current) => {
@@ -607,6 +630,7 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
     if (!image) return;
     setStampImage(image);
     setMode('stamp');
+    setModeEpoch((current) => current + 1);
   };
 
   const undo = useCallback(() => undoDocument(documentId), [documentId, undoDocument]);
@@ -725,6 +749,7 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
 
   const switchMode = (next: ViewMode) => {
     setMode((current) => (current === next ? 'view' : next));
+    setModeEpoch((current) => current + 1);
     if (next !== 'stamp') setStampImage(null);
   };
 
@@ -883,6 +908,14 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
               Whichever mode is on says so in the banner under the toolbar. */}
           <div className="flex shrink-0 items-center gap-1 border-l border-[var(--border-subtle)] pl-2">
             <ToolbarButton
+              label={t(mode === 'text' ? 'viewerTextExit' : 'viewerTextMode', locale)}
+              active={mode === 'text'}
+              disabled={!doc || busy}
+              onClick={() => switchMode('text')}
+            >
+              <PenLine size={15} />
+            </ToolbarButton>
+            <ToolbarButton
               label={t(mode === 'form' ? 'viewerFormExit' : 'viewerFormMode', locale)}
               active={mode === 'form'}
               disabled={!doc || busy}
@@ -993,6 +1026,12 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
           </Banner>
         )}
 
+        {mode === 'text' && (
+          <Banner tone="accent" icon={<PenLine size={13} className="shrink-0" />}>
+            <span className="min-w-0 flex-1">{t('viewerTextHint', locale)}</span>
+          </Banner>
+        )}
+
         {mode === 'form' && (
           <Banner tone="accent" icon={<FilePenLine size={13} className="shrink-0" />}>
             <span className="min-w-0 flex-1">
@@ -1087,7 +1126,9 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
                     pageNumber={pageNumber}
                     size={size}
                     scale={scale}
+                    locale={locale}
                     mode={mode}
+                    modeEpoch={modeEpoch}
                     busy={busy}
                     panning={spaceHeld}
                     drafts={drafts}
@@ -1102,6 +1143,7 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
                     }
                     onRedact={redactBox}
                     onStamp={stampAt}
+                    onText={addTextAt}
                   />
                 );
               })}
@@ -1202,7 +1244,9 @@ function PageView({
   pageNumber,
   size,
   scale,
+  locale,
   mode,
+  modeEpoch,
   busy,
   panning,
   drafts,
@@ -1215,12 +1259,15 @@ function PageView({
   onDraftChange,
   onRedact,
   onStamp,
+  onText,
 }: {
   doc: PdfDocumentHandle;
   pageNumber: number;
   size: Size;
   scale: number;
+  locale: Locale;
   mode: ViewMode;
+  modeEpoch: number;
   busy: boolean;
   panning: boolean;
   drafts: Record<string, string>;
@@ -1236,6 +1283,7 @@ function PageView({
   onDraftChange(name: string, value: string): void;
   onRedact(pageNumber: number, from: Point, to: Point, box: Size): void;
   onStamp(pageNumber: number, at: Point, box: Size): void;
+  onText(pageNumber: number, text: string, at: Point, box: Size): void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
@@ -1243,6 +1291,11 @@ function PageView({
   const textDivs = useRef<HTMLElement[]>([]);
   const [textVersion, setTextVersion] = useState(0);
   const [marquee, setMarquee] = useState<{ from: Point; to: Point } | null>(null);
+  const [textEditor, setTextEditor] = useState<{
+    at: Point;
+    value: string;
+    epoch: number;
+  } | null>(null);
 
   /**
    * What is currently on the canvas and in the text layer. An edit hands over a
@@ -1330,13 +1383,13 @@ function PageView({
       <div
         className={clsx('relative h-full w-full', interactive && 'cursor-crosshair')}
         onClick={(e) => {
-          if (mode !== 'stamp' || !interactive) return;
+          if (!interactive) return;
           const box = e.currentTarget.getBoundingClientRect();
-          onStamp(
-            pageNumber,
-            { x: e.clientX - box.left, y: e.clientY - box.top },
-            { width: box.width, height: box.height },
-          );
+          const at = { x: e.clientX - box.left, y: e.clientY - box.top };
+          if (mode === 'text') setTextEditor({ at, value: '', epoch: modeEpoch });
+          if (mode === 'stamp') {
+            onStamp(pageNumber, at, { width: box.width, height: box.height });
+          }
         }}
         onPointerDown={(e) => {
           if (mode !== 'redact' || !interactive) return;
@@ -1382,6 +1435,48 @@ function PageView({
               height: Math.abs(marquee.from.y - marquee.to.y),
             }}
           />
+        )}
+
+        {mode === 'text' && textEditor?.epoch === modeEpoch && (
+          <form
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (textEditor.value.trim() === '') return;
+              onText(
+                pageNumber,
+                textEditor.value,
+                textEditor.at,
+                { width: size.width * scale, height: size.height * scale },
+              );
+              setTextEditor(null);
+            }}
+            className="absolute z-10 flex h-9 w-[240px] items-center gap-1 rounded-lg border border-[var(--accent)] bg-[var(--surface-panel)] p-1 shadow-xl"
+            style={{
+              left: Math.max(0, Math.min(textEditor.at.x, size.width * scale - 240)),
+              top: Math.max(0, Math.min(textEditor.at.y, size.height * scale - 36)),
+            }}
+          >
+            <input
+              autoFocus
+              value={textEditor.value}
+              placeholder={t('viewerTextPlaceholder', locale)}
+              onChange={(event) => setTextEditor({ ...textEditor, value: event.target.value })}
+              onKeyDown={(event) => {
+                if (event.key !== 'Escape') return;
+                event.preventDefault();
+                event.stopPropagation();
+                setTextEditor(null);
+              }}
+              className="min-w-0 flex-1 bg-transparent px-1.5 text-[13px] outline-none placeholder:text-[var(--text-muted)]"
+            />
+            <button
+              type="submit"
+              className="h-7 shrink-0 rounded-md bg-[var(--accent)] px-2 text-[11px] font-medium text-white"
+            >
+              {t('viewerTextAdd', locale)}
+            </button>
+          </form>
         )}
 
         {mode === 'form' &&

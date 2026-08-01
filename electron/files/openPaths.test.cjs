@@ -38,8 +38,21 @@ describe('documentPathsFromArgv', () => {
     );
   });
 
-  it('ignores files it cannot open', () => {
-    assert.deepEqual(packaged(['/app', '/docs/notes.txt', '/docs/sheet.xlsx']), []);
+  it('accepts editable Office documents and ignores unsupported files', () => {
+    assert.deepEqual(
+      packaged([
+        '/app',
+        '/docs/notes.txt',
+        '/docs/letter.docx',
+        '/docs/sheet.xlsx',
+        '/docs/deck.pptx',
+      ]),
+      [
+        path.resolve('/docs/letter.docx'),
+        path.resolve('/docs/sheet.xlsx'),
+        path.resolve('/docs/deck.pptx'),
+      ],
+    );
   });
 
   it('matches the extension case-insensitively', () => {
@@ -77,7 +90,10 @@ describe('openableDocumentPath', () => {
     assert.equal(openableDocumentPath('sub/a.pdf', CWD), path.join(CWD, 'sub', 'a.pdf'));
   });
 
-  it('rejects anything the viewer cannot open', () => {
+  it('accepts Office documents and rejects unsupported inputs', () => {
+    assert.equal(openableDocumentPath('/docs/a.docx', CWD), path.resolve('/docs/a.docx'));
+    assert.equal(openableDocumentPath('/docs/a.xlsx', CWD), path.resolve('/docs/a.xlsx'));
+    assert.equal(openableDocumentPath('/docs/a.pptx', CWD), path.resolve('/docs/a.pptx'));
     assert.equal(openableDocumentPath('/docs/a.txt', CWD), '');
     assert.equal(openableDocumentPath('--flag', CWD), '');
     assert.equal(openableDocumentPath('', CWD), '');

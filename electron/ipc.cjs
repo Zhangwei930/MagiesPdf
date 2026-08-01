@@ -3,12 +3,24 @@ const path = require('node:path');
 const { app, dialog, ipcMain, shell } = require('electron');
 const settings = require('./settings.cjs');
 const mainRunner = require('./jobs/mainRunner.cjs');
+const { createJobExecutor } = require('./jobs/executor.cjs');
 const { createHostBridge } = require('./host.cjs');
 const { collectFilePaths } = require('./files/walk.cjs');
 const { InputBudget } = require('./files/inputBudget.cjs');
 const writableTargets = require('./files/writableTargets.cjs');
 const updater = require('./updater/index.cjs');
 const { isTrustedIpcSender, safeFileName } = require('./security.cjs');
+const { createOfficeService } = require('./office/service.cjs');
+const { DOCUMENT_EXTENSIONS } = require('./office/formats.cjs');
+const { createOfficeAutomationProvider } = require('./office/automationProvider.cjs');
+const { runUnoOperation } = require('./office/unoRunner.cjs');
+const { createAiService } = require('./ai/service.cjs');
+const { createAiHistoryStore } = require('./ai/history.cjs');
+const { createAutomationStore } = require('./ai/automationStore.cjs');
+const { createAutomationEngine } = require('./ai/automationEngine.cjs');
+const { getSecretStore } = require('./ai/secrets.cjs');
+const { buildMcpClientConfig } = require('./mcp/config.cjs');
+const { createExternalMcpClientManager } = require('./mcp/clientManager.cjs');
 
 /**
  * IPC handlers. Every one of these is a boundary between untrusted renderer
@@ -104,6 +116,11 @@ function readCatalog() {
 }
 
 function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl }) {
+  const office = createOfficeService();
+  const officeAutomation = createOfficeAutomationProvider({
+    getLibreOfficeExecutable: () => office.status().libreOffice.executable,
+    runUno: runUnoOperation,
+  });
   const handle = (channel, handler) => {
     ipcMain.handle(channel, (event, ...args) => {
       if (!isTrustedIpcSender(event, getWindow(), trustedRendererUrl)) {
@@ -114,6 +131,25 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   };
 
   handle('catalog:get', () => readCatalog().tools);
+
+  handle('office:status', () => office.status());
+  handle('office:pickExecutable', () => office.pickExecutable(getWindow()));
+  handle('office:openDownloadPage', () => office.openDownloadPage());
+  handle('office:pickAndOpen', (_event, { multiple }) =>
+    office.pickAndOpen(getWindow(), multiple === true),
+  );
+  handle('office:createAndOpen', (_event, { kind }) =>
+    office.createAndOpen(getWindow(), kind),
+  );
+  handle('office:openPaths', (_event, { paths }) =>
+    office.openPaths(Array.isArray(paths) ? paths : []),
+  );
+  handle('office:listRecent', () => office.listRecent());
+  handle('office:renameRecent', (_event, { path: target, name }) =>
+    office.renameRecent(target, name),
+  );
+  handle('office:trashRecent', (_event, { path: target }) => office.trashRecent(target));
+  handle('office:forgetRecent', (_event, { path: target }) => office.forgetRecent(target));
 
   handle('files:pick', async (_event, { accept, multiple }) => {
     const extensions = (accept ?? ['.pdf']).map((e) => e.replace(/^\./, ''));
@@ -129,9 +165,21 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     return readMany(result.filePaths);
   });
 
+  handle('files:pickDocumentPaths', async (_event, { multiple }) => {
+    const extensions = [...DOCUMENT_EXTENSIONS].map((extension) => extension.slice(1));
+    const result = await dialog.showOpenDialog(getWindow(), {
+      properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'],
+      filters: [{ name: 'Documents', extensions }],
+    });
+    return result.canceled ? [] : result.filePaths;
+  });
+
   handle('files:read', async (_event, { paths }) => {
     if (!Array.isArray(paths)) return [];
-    return readMany(paths.filter((p) => typeof p === 'string' && p !== ''));
+    const targets = paths.filter((p) => typeof p === 'string' && p !== '');
+    const files = await readMany(targets);
+    office.rememberRecent(targets);
+    return files;
   });
 
   handle('files:pickDirectory', async () => {
@@ -228,8 +276,49 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   });
 
   const hostBridge = createHostBridge();
-  const runtimeOf = (toolId) =>
-    readCatalog().tools.find((tool) => tool.id === toolId)?.runtime ?? 'worker';
+  const secretStore = getSecretStore();
+  const aiHistory = createAiHistoryStore({
+    filePath: path.join(app.getPath('userData'), 'ai-history.json'),
+  });
+  const automationStore = createAutomationStore({
+    filePath: path.join(app.getPath('userData'), 'ai-automations.json'),
+  });
+  const externalMcpManager = createExternalMcpClientManager({
+    secretStore,
+    version: app.getVersion(),
+  });
+  const jobExecutor = createJobExecutor({
+    tools: readCatalog().tools,
+    pool,
+    mainRunner,
+    hostBridge,
+  });
+  const aiService = createAiService({
+    readCatalog,
+    readSettings: settings.read,
+    secretStore,
+    externalToolProvider: externalMcpManager,
+    officeToolProvider: officeAutomation,
+    executeTool: ({ signal, onProgress, ...request }) =>
+      jobExecutor.run(request, onProgress, signal),
+  });
+  const automationState = async () => ({
+    ...automationStore.getState(),
+    tools: (await officeAutomation.listTools())
+      .filter(({ unattended }) => unattended !== false)
+      .map(({ toolId, name }) => ({ toolId, toolName: name })),
+  });
+  const automationEngine = createAutomationEngine({
+    store: automationStore,
+    officeProvider: officeAutomation,
+    aiService,
+    emit: (payload) => {
+      const window = getWindow();
+      if (window && !window.isDestroyed()) {
+        window.webContents.send('ai:automationEvent', payload);
+      }
+    },
+  });
 
   handle('job:run', async (event, request) => {
     const onProgress = (fraction, message) => {
@@ -237,20 +326,57 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
       event.sender.send('job:progress', { jobId: request.jobId, fraction, message });
     };
 
-    // Worker tools go to the thread pool; main tools need the host bridge
-    // (printToPDF, external converter) and therefore run right here.
-    return runtimeOf(request.toolId) === 'main'
-      ? mainRunner.run(request, hostBridge, onProgress)
-      : pool.run(request, onProgress);
+    return jobExecutor.run(request, onProgress);
   });
 
-  handle('job:cancel', (_event, { jobId }) => pool.cancel(jobId) || mainRunner.cancel(jobId));
+  handle('job:cancel', (_event, { jobId }) => jobExecutor.cancel(jobId));
+
+  handle('ai:config', () => aiService.getConfig());
+  handle('ai:setApiKey', (_event, { apiKey }) => aiService.setApiKey(apiKey));
+  handle('ai:runTurn', (event, request) =>
+    aiService.runTurn(request, (payload) => {
+      if (!event.sender.isDestroyed()) event.sender.send('ai:event', payload);
+    }),
+  );
+  handle('ai:cancelTurn', (_event, { requestId }) => aiService.cancelTurn(requestId));
+  handle('ai:approvalResponse', (_event, { requestId, approvalId, approved }) =>
+    aiService.respondApproval(requestId, approvalId, approved),
+  );
+  handle('ai:workspaceStatus', () => officeAutomation.getWorkspaceStatus());
+  handle('ai:pickWorkspace', async () => {
+    const result = await dialog.showOpenDialog(getWindow(), { properties: ['openDirectory'] });
+    if (result.canceled || !result.filePaths[0]) return officeAutomation.getWorkspaceStatus();
+    return officeAutomation.setWorkspaceRoot(result.filePaths[0]);
+  });
+  handle('ai:clearWorkspace', () => officeAutomation.clearWorkspace());
+  handle('ai:historyList', () => aiHistory.list());
+  handle('ai:historyAppend', (_event, entry) => aiHistory.append(entry));
+  handle('ai:historyClear', () => aiHistory.clear());
+  handle('ai:automationState', () => automationState());
+  handle('ai:automationCreate', async (_event, rule) => {
+    automationStore.createRule(rule);
+    return automationState();
+  });
+  handle('ai:automationSetEnabled', async (_event, { ruleId, enabled }) => {
+    automationStore.setRuleEnabled(ruleId, enabled);
+    return automationState();
+  });
+  handle('ai:automationDelete', async (_event, { ruleId }) => {
+    automationStore.deleteRule(ruleId);
+    return automationState();
+  });
+  handle('ai:automationResolvePending', async (_event, { pendingId }) => {
+    automationStore.resolvePending(pendingId);
+    return automationState();
+  });
 
   handle('settings:get', () => settings.read());
   handle('settings:update', (_event, patch) => {
     const next = settings.write(patch);
     // API bind address / token changes need a live server restart.
-    if (patch && Object.prototype.hasOwnProperty.call(patch, 'api')) {
+    if (
+      patch && Object.prototype.hasOwnProperty.call(patch, 'api')
+    ) {
       try {
         onSettingsChanged?.();
       } catch (error) {
@@ -269,6 +395,27 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
 
   const { getApiStatus } = require('./api/server.cjs');
   handle('api:status', () => getApiStatus());
+  handle('mcp:config', () => {
+    const packedServerPath = path.join(__dirname, 'mcp', 'magies-office-mcp-server.cjs');
+    const serverPath = app.isPackaged
+      ? packedServerPath.replace(
+          `${path.sep}app.asar${path.sep}`,
+          `${path.sep}app.asar.unpacked${path.sep}`,
+        )
+      : packedServerPath;
+    return buildMcpClientConfig({
+      execPath: process.execPath,
+      serverPath,
+      apiStatus: getApiStatus(),
+      token: settings.read().api.token,
+    });
+  });
+  handle('mcp:externalStatus', () => externalMcpManager.getStatus());
+  handle('mcp:externalSetConfig', (_event, { config }) =>
+    externalMcpManager.setConfig(config),
+  );
+  handle('mcp:externalRefresh', () => externalMcpManager.refresh());
+  handle('mcp:externalClearConfig', () => externalMcpManager.clearConfig());
 
   handle('app:getVersion', () => app.getVersion());
   handle('app:isPackaged', () => app.isPackaged);
@@ -300,6 +447,15 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     }
   });
   handle('updater:status', () => updater.getLastStatus?.() ?? { state: 'idle' });
+
+  automationEngine.start();
+
+  return {
+    close: () => {
+      automationEngine.stop();
+      return externalMcpManager.close();
+    },
+  };
 }
 
 module.exports = {

@@ -148,7 +148,10 @@ function serializeToolError(cause) {
  *   maxActiveJobs?: number
  * }} deps
  */
-function createHandler({ pool, maxActiveJobs = MAX_ACTIVE_JOBS }) {
+function createHandler({
+  pool,
+  maxActiveJobs = MAX_ACTIVE_JOBS,
+}) {
   // Lazily constructed: host.cjs loads Electron, which node:test does not have.
   let hostBridge = null;
   const host = () => {

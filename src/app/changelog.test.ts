@@ -33,7 +33,7 @@ First public release.
   });
 
   it('supports multiple versions newest first', () => {
-    // Synthetic versions only — product release is still 1.0.2.
+    // Synthetic versions only — keep the fixture independent of the current release.
     const entries = parseChangelog(`
 ## 9.9.0 — 2099-01-02
 

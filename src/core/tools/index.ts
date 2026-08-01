@@ -30,6 +30,7 @@ import { pdfToPptxTool } from './convert/pdfToPptx.ts';
 import { pdfToCsvTool } from './convert/pdfToCsv.ts';
 import { pptxToPdfTool } from './convert/pptxToPdf.ts';
 import { createBlankTool } from './edit/createBlank.ts';
+import { addTextTool } from './edit/addText.ts';
 import { grayscaleTool } from './edit/grayscale.ts';
 import { addHeaderFooterTool } from './edit/headerFooter.ts';
 import { addPageNumbersTool } from './edit/pageNumbers.ts';
@@ -114,6 +115,7 @@ export const ALL_TOOLS: readonly ToolDescriptor[] = [
 
   // Edit
   createBlankTool,
+  addTextTool,
   compressTool,
   repairTool,
   ocrTool,

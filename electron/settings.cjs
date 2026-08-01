@@ -23,6 +23,8 @@ const DEFAULTS = {
    * production, which is the worst possible failure mode.
    */
   recentToolIds: [],
+  /** Documents opened most recently, stored as paths only and never uploaded. */
+  recentDocuments: [],
   /**
    * Check for updates on launch and download in the background when a newer
    * build is found. Installation still always requires an explicit restart
@@ -52,6 +54,17 @@ const DEFAULTS = {
     argumentTemplate: '',
     timeoutMs: 120000,
   },
+  /** Local Office-suite engine. */
+  office: {
+    /** Empty means auto-detect the platform's standard LibreOffice installation. */
+    libreOfficeExecutable: '',
+  },
+  /** OpenAI-compatible model used by the local Agent runtime. API keys live in safeStorage. */
+  ai: {
+    baseUrl: 'http://127.0.0.1:11434/v1',
+    model: '',
+    maxSteps: 6,
+  },
   /**
    * User-saved pipeline definitions for the visual builder.
    * Each entry: { id, name, steps: [{ toolId, params }], updatedAt }.
@@ -61,6 +74,10 @@ const DEFAULTS = {
 
 let cache = null;
 let settingsPath = null;
+
+function preserveLegacyUserDataPath(electronApp = app) {
+  electronApp.setPath('userData', path.join(electronApp.getPath('appData'), 'MagiesPdf'));
+}
 
 function filePath() {
   if (!settingsPath) settingsPath = path.join(app.getPath('userData'), 'settings.json');
@@ -114,4 +131,4 @@ function write(patch) {
   return cache;
 }
 
-module.exports = { DEFAULTS, read, write, merge };
+module.exports = { DEFAULTS, read, write, merge, preserveLegacyUserDataPath };

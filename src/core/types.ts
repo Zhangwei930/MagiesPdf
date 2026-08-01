@@ -154,7 +154,7 @@ export interface HostBridge {
     signal?: AbortSignal,
   ): Promise<ToolOutputFile>;
   /** Whether an external converter is configured and its executable exists. */
-  hasExternalConverter(): boolean;
+  hasExternalConverter(targetExtension: string): boolean;
 }
 
 export interface HtmlToPdfOptions {

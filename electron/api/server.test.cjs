@@ -10,7 +10,7 @@ const { pathToFileURL } = require('node:url');
  */
 
 const settings = require('../settings.cjs');
-const { createHandler, resolveServerMode } = require('./server.cjs');
+const { createHandler, isEnabled, resolveServerMode } = require('./server.cjs');
 const { JobPool } = require('../jobs/pool.cjs');
 
 // settings.cjs needs Electron's app path; in node:test we stub userData.
@@ -214,6 +214,20 @@ describe('REST API handler', () => {
       assert.ok(json.files[0].name.endsWith('.pdf'));
     } finally {
       await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+describe('REST API activation', () => {
+  it('stays disabled when the automation API is disabled', () => {
+    const previous = testSettings;
+    withSettings({
+      api: { enabled: false, token: '' },
+    });
+    try {
+      assert.equal(isEnabled(), false);
+    } finally {
+      testSettings = previous;
     }
   });
 });

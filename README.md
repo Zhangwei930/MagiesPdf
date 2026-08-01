@@ -1,34 +1,70 @@
-# MagiesPdf
+# Magies Office
 
-A cross-platform desktop PDF toolbox. Merge, split, convert, protect and automate —
-**everything runs on your own machine**. No upload, no account, no telemetry.
+Local-first desktop workspace for **Word, Excel, PowerPoint and PDF**.
+Merge, convert, protect and automate — **everything runs on your own machine**.
+No upload, no account, no telemetry.
 
-Built with Electron + React 19 + TypeScript, for macOS, Windows and Linux.
+The app product name is **Magies Office** (`package.json` / installers). The
+source repository remains [Zhangwei930/MagiesPdf](https://github.com/Zhangwei930/MagiesPdf);
+release artefacts keep the `MagiesPdf-…` file prefix for continuity.
 
-**Version 1.0.2** — see [CHANGELOG.md](./CHANGELOG.md) ·
-[Download](https://github.com/Zhangwei930/MagiesPdf/releases/tag/v1.0.2).
+Built with Electron + React 19 + TypeScript. Supported packages:
+
+| Platform | Architectures | Notes |
+| --- | --- | --- |
+| macOS | Intel + Apple Silicon | DMG + zip |
+| Windows | x64 + ARM64 | NSIS, portable, zip |
+| Linux | x64 | AppImage + deb |
+
+Each package **bundles a matching LibreOffice runtime**. You do not need a
+separate Office install. **Linux ARM64 is not published** (no official LO
+desktop runtime for that target).
+
+**Version 2.0.0** — see [CHANGELOG.md](./CHANGELOG.md) ·
+[Releases](https://github.com/Zhangwei930/MagiesPdf/releases).
 
 Installers are **unsigned** (open source), same policy as MagiesTerminal.
 PDF certificate signing is separate: P12/PFX material is processed locally and
-is never saved by MagiesPdf.
+is never saved by Magies Office.
 
-### First-launch notes (unsigned builds)
+---
 
-> **macOS:** Releases are not code-signed or notarized. Gatekeeper will block
-> the first open. After dragging the app into Applications, run:
+## Three ways to work
+
+| Mode | What it is | Where it runs |
+| --- | --- | --- |
+| **PDF workspace** | Open PDFs in tabs; read, redact, stamp, fill forms, run any of the 58 tools, undo | Inside Magies Office |
+| **Manual Office** | Create/open Word, Excel, PowerPoint (and ODF); edit in the bundled editor | Bundled LibreOffice (launched from the app) |
+| **AI automation** | Natural-language tasks on a folder you grant; optional review queue or unattended rules | Local tools + your OpenAI-compatible model |
+
+**AI safety (short version):** tool calls need approval in interactive chat.
+Folder rules can be **review** (queue for you) or **unattended** (only the local
+Office tools you allow). Document macros always need interactive approval, only
+run trusted document-scoped LibreOffice Basic in ODT/ODS/ODP copies, and **never**
+run in unattended rules. Writes save new copies — sources are not overwritten.
+
+Configure the model under **Settings → AI** (OpenAI, DeepSeek, Qwen, Ollama, …).
+Documents stay on disk; the model only receives your prompt, tool summaries, and
+limited plain-text previews you approve.
+
+---
+
+## First launch (unsigned builds)
+
+> **macOS:** Not code-signed or notarized. After dragging into Applications:
 >
 > ```bash
-> xattr -dr com.apple.quarantine /Applications/MagiesPdf.app
+> xattr -dr com.apple.quarantine "/Applications/Magies Office.app"
 > ```
 >
-> Or right-click the app → **Open** → confirm. Intel Macs need the **`mac-x64`**
-> build; Apple Silicon needs **`mac-arm64`**.
+> Or right-click → **Open** → confirm. Use **`mac-x64`** on Intel,
+> **`mac-arm64`** on Apple Silicon.
 
 > **Windows:** SmartScreen may say “Windows protected your PC”. Choose
 > **More info** → **Run anyway**. Prefer `MagiesPdf-*-win-x64.exe` (or arm64
-> on Snapdragon / ARM PCs).
+> on Snapdragon / ARM PCs). Desktop shortcut name is **Magies Office**.
 
-> **Linux (AppImage):** make executable then run:
+> **Linux (AppImage):**
 >
 > ```bash
 > chmod +x MagiesPdf-*-linux-*.AppImage
@@ -37,38 +73,51 @@ is never saved by MagiesPdf.
 >
 > `.deb` installs with your package manager as usual.
 
-### Package artefacts (same family as MagiesTerminal)
+### After open — 60-second checklist
 
-| OS | Artefacts | Your Intel Mac |
+1. Home shows **Built-in Office engine is ready** (green). If missing, reinstall.
+2. **PDF:** New PDF or drop a file → edit in the viewer → `⌘S` / `Ctrl+S`.
+3. **Office:** New Document / Spreadsheet / Presentation → edits open in the bundled editor.
+4. **AI (optional):** Settings → AI → set base URL + model → grant an office folder in the AI panel → approve the first tool call.
+
+---
+
+## Package artefacts
+
+| OS | Artefacts | Build command |
 | --- | --- | --- |
-| macOS | `MagiesPdf-*-mac-x64.dmg` / `.zip`, `*-mac-arm64.*` | Use **`mac-x64`** |
-| Windows | NSIS `*-win-x64.exe`, portable `*-portable-win-x64.exe`, zip | `npm run pack:win-x64` |
-| Linux | AppImage, deb, rpm, pacman | `npm run pack:linux-x64` |
+| macOS | Intel/Apple Silicon DMG and zip | `npm run pack:mac-x64` / `pack:mac-arm64` |
+| Windows | x64/ARM64 NSIS, portable exe and zip | `npm run pack:win-x64` / `pack:win-arm64` |
+| Linux | x64 AppImage and deb | `npm run pack:linux-x64` |
 
 ```bash
 npm run pack:mac-x64    # Intel (x86_64)
 npm run pack:win-x64
 npm run pack:linux-x64
-# or full matrix:
-npm run pack:all
+# Release CI builds the five supported OS/arch targets on native runners.
 ```
 
 ---
 
 ## Why local-only
 
-Most online PDF tools ask you to upload the document first. For a contract, a payslip
-or a scan of your passport that is the wrong trade. MagiesPdf does the same work on
-your desk, with the file never leaving the machine.
+Most online PDF tools ask you to upload the document first. For a contract, a
+payslip or a passport scan that is the wrong trade. Magies Office does the same
+work on your desk; the file never leaves the machine.
 
-Network access is limited to an optional **dual-link** update check and
-user-approved OCR model downloads. Updates use GitHub Releases overseas and the
-Cloudflare mirror `dl.magies.top/magiespdf/stable` in mainland China, with
-automatic fallback. Unsigned packages are never downloaded or installed without
-separate user confirmation. OCR accesses jsDelivr only when a selected language
-model is missing and the user enables the download option.
+Network access is limited to:
 
-## Tools (58)
+- optional **dual-link** update checks (GitHub Releases overseas;
+  `dl.magies.top/magiespdf/stable` in mainland China, with fallback)
+- user-approved OCR language-model downloads
+- optional AI provider calls you configure (prompt + approved previews only)
+
+Unsigned update packages are never downloaded or installed without separate
+confirmation.
+
+---
+
+## PDF tools (58)
 
 ### Organize
 | Tool | What it does |
@@ -91,7 +140,7 @@ model is missing and the user enables the download option.
 | PDF → Text / Markdown / HTML / CSV | Extract structured text |
 | PDF → Word / Excel / PowerPoint | Editable exports; optional external high-fidelity path |
 | Markdown / HTML / Text / CSV → PDF | Chromium `printToPDF` layout |
-| Word / Excel / PowerPoint → PDF | Built-in path + optional external converter |
+| Word / Excel / PowerPoint → PDF | Bundled LibreOffice path + optional external converter |
 
 ### Security
 | Tool | What it does |
@@ -100,7 +149,7 @@ model is missing and the user enables the download option.
 | Watermark | Translucent text, CJK-capable |
 | Add signature | Drawn / image / typed visible signature |
 | Certificate digital signature | Local P12/PFX PKCS#7 signing |
-| Inspect signatures | Check signed-byte integrity and list certificate details; OS trust/revocation is not claimed |
+| Inspect signatures | Signed-byte integrity and certificate details; OS trust/revocation is not claimed |
 | Redact | Permanent keyword blackout |
 | Sanitize / Flatten | Strip risky objects; bake form values |
 | Metadata | Edit or strip |
@@ -138,7 +187,7 @@ all  odd  even  first  last
 
 ---
 
-## Local REST API
+## Local REST API & MCP
 
 Off by default. Enable in **Settings → Local REST API**, set a bearer token, then:
 
@@ -161,6 +210,10 @@ LAN mode requires absolute paths to a PEM certificate and private key and serves
 HTTPS only. Add `?async=true` to a tool POST to receive a job ID; poll
 `GET /v1/jobs/<id>` or cancel with `DELETE /v1/jobs/<id>`.
 
+With the local API enabled you can also expose tools to external agents via
+**Settings → MCP** (stdio config for Codex, Claude Code, …). External MCP
+servers you connect to still require approval per tool call.
+
 ---
 
 ## Development
@@ -177,12 +230,10 @@ npm run test:coverage # core/Electron coverage with enforced thresholds
 ```bash
 npm test
 node --test --import tsx src/core/pageRange.test.ts
-npm run pack:mac / pack:win / pack:linux
+npm run pack:mac-x64 / pack:win-x64 / pack:linux-x64
 ```
 
 ### If binary downloads fail
-
-Set the official Electron environment variables before installing:
 
 ```bash
 ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
@@ -193,8 +244,9 @@ npm install
 ## Architecture
 
 ```
-electron/            main process — window, IPC, worker pool, host (printToPDF), API, updater
-src/core/            isomorphic engine — no DOM, no Electron, no React
+electron/            main process — window, IPC, worker pool, host, API, updater,
+                     bundled LibreOffice launch, AI agent, Office UNO automation
+src/core/            isomorphic PDF engine — no DOM, no Electron, no React
 src/node/            worker + core entry for main-process tools
 src/app/             React renderer — metadata only, never imports mupdf/pdf-lib
 ```
@@ -203,16 +255,22 @@ src/app/             React renderer — metadata only, never imports mupdf/pdf-l
 routes all derive from it.
 
 **The renderer cannot execute tools.** It receives catalogue *data* over IPC so
-MuPDF WASM never lands in the UI bundle (kept under ~300 KB).
+MuPDF WASM never lands in the UI bundle.
 
 **Two PDF engines.** MuPDF for decrypt/encrypt/render/text; pdf-lib for composition
 and drawing. `src/core/pdf/document.ts` bridges them and always copies save buffers
 out of the WASM heap.
 
-**Office conversion.** Built-in HTML → Chromium `printToPDF`. Optional external
-command-line converter in Settings (no third-party product is bundled or named).
+**Office.** Packaged clients ship a verified LibreOffice runtime for create/open/edit
+and high-fidelity convert. Optional external CLI converter in Settings is never
+named or bundled as a third-party suite.
+
+**AI.** OpenAI-compatible client + allow-listed PDF and Office tools; folder rules
+with review vs unattended modes and a hard ban on unattended macros.
 
 ## Licence
 
 AGPL-3.0-or-later. Builds on [MuPDF](https://mupdf.com/) (AGPL-3.0),
-[pdf-lib](https://pdf-lib.js.org/) (MIT) and [PDF.js](https://mozilla.github.io/pdf.js/) (Apache-2.0).
+[pdf-lib](https://pdf-lib.js.org/) (MIT), [PDF.js](https://mozilla.github.io/pdf.js/)
+(Apache-2.0) and a bundled [LibreOffice](https://www.libreoffice.org/) runtime
+(see the installer notice).

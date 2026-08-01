@@ -30,6 +30,7 @@ export interface AppSettings {
   defaultOutputDirectory: string;
   onNameCollision: 'rename' | 'overwrite';
   recentToolIds: string[];
+  recentDocuments: Array<{ path: string; openedAt: number }>;
   /** Default true: check feeds on launch and auto-download; install is manual. */
   autoUpdate: boolean;
   api: {
@@ -41,6 +42,14 @@ export interface AppSettings {
     tlsKeyPath: string;
   };
   externalConverter: { executable: string; argumentTemplate: string; timeoutMs: number };
+  office: {
+    libreOfficeExecutable: string;
+  };
+  ai: {
+    baseUrl: string;
+    model: string;
+    maxSteps: number;
+  };
   pipelinePresets: PipelinePreset[];
 }
 
@@ -62,13 +71,227 @@ export interface UpdaterStatus {
   version?: string;
 }
 
+export type OfficeCreateKind = 'word' | 'sheet' | 'slide';
+
+export interface OfficeStatus {
+  libreOffice: { available: boolean; executable: string };
+}
+
+export interface OfficeOpenResult {
+  opened: string[];
+  canceled: boolean;
+}
+
+export interface RecentDocument {
+  path: string;
+  name: string;
+  kind: 'word' | 'sheet' | 'slide' | 'pdf';
+  openedAt: number;
+  modifiedAt: number;
+}
+
+export type AiConfig = AppSettings['ai'] & { apiKeyConfigured: boolean };
+
+export interface AiWorkspaceStatus {
+  configured: boolean;
+  path: string;
+}
+
+export interface AiArtifact extends ToolOutputFile {
+  id: string;
+}
+
+export interface AiHistoryTool {
+  toolId: string;
+  toolName?: LocalizedText;
+}
+
+export interface AiHistoryEntry {
+  id: string;
+  createdAt: number;
+  prompt: string;
+  response: string;
+  success: boolean;
+  workflow: AiHistoryTool[];
+  tools: Array<AiHistoryTool & { status: 'done' | 'error' }>;
+  artifacts: Array<{ name: string }>;
+}
+
+export type AiHistoryInput = Omit<AiHistoryEntry, 'id' | 'createdAt'>;
+
+export type AiAutomationMode = 'review' | 'unattended';
+
+export type AiAutomationTrigger =
+  | { type: 'daily'; at: string }
+  | { type: 'folder'; extensions: string[] };
+
+export interface AiAutomationRuleInput {
+  name: string;
+  prompt: string;
+  mode: AiAutomationMode;
+  trigger: AiAutomationTrigger;
+  allowedToolIds: string[];
+  maxRunsPerDay: number;
+  retryLimit: number;
+}
+
+export interface AiAutomationRule extends AiAutomationRuleInput {
+  id: string;
+  enabled: boolean;
+  failureCount: number;
+  lastError: string;
+  runDate: string;
+  runCount: number;
+  lastDailyDate: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AiAutomationPending {
+  id: string;
+  ruleId: string;
+  createdAt: number;
+  prompt: string;
+  sourcePath: string;
+}
+
+export interface AiAutomationRun {
+  id: string;
+  ruleId: string;
+  createdAt: number;
+  status: 'queued' | 'success' | 'error';
+  attempts: number;
+  message: string;
+  sourcePath: string;
+}
+
+export interface AiAutomationState {
+  rules: AiAutomationRule[];
+  pending: AiAutomationPending[];
+  runs: AiAutomationRun[];
+  tools: AiHistoryTool[];
+}
+
+export interface AiAutomationEvent {
+  type: 'pending' | 'completed' | 'failed' | 'run_event' | 'engine_error';
+  ruleId?: string;
+  message?: string;
+}
+
+interface AiEventBase {
+  requestId: string;
+}
+
+export type AiEvent =
+  | (AiEventBase & { type: 'model_start'; step: number })
+  | (AiEventBase & { type: 'assistant_delta'; delta: string })
+  | (AiEventBase & { type: 'assistant_done'; content: string })
+  | (AiEventBase & {
+      type: 'workflow_preview';
+      steps: Array<{
+        callId: string;
+        toolId: string;
+        toolName?: LocalizedText;
+        details?: string;
+      }>;
+    })
+  | (AiEventBase & {
+      type: 'tool_start';
+      callId: string;
+      toolId: string;
+      toolName: LocalizedText;
+      inputFileNames: string[];
+      details?: string;
+    })
+  | (AiEventBase & {
+      type: 'tool_progress';
+      callId: string;
+      toolId: string;
+      fraction: number;
+      message?: LocalizedText;
+    })
+  | (AiEventBase & {
+      type: 'tool_result';
+      callId: string;
+      toolId: string;
+      ok: boolean;
+      error?: string;
+      files?: AiArtifact[];
+    })
+  | (AiEventBase & {
+      type: 'approval_required';
+      approvalId: string;
+      toolId: string;
+      toolName: LocalizedText;
+      inputFileNames?: string[];
+      details?: string;
+    })
+  | (AiEventBase & { type: 'approval_cleared'; approvalId: string });
+
+export interface AiTurnRequest {
+  requestId: string;
+  prompt: string;
+  history: Array<{ role: 'user' | 'assistant'; content: string }>;
+  locale: 'zh' | 'en';
+  files: Array<{
+    id: string;
+    name: string;
+    mime: string;
+    bytes: Uint8Array;
+    password?: string;
+  }>;
+}
+
+export interface AiTurnResult {
+  message: string;
+  files: ToolOutputFile[];
+}
+
+export interface McpClientConfig {
+  ready: boolean;
+  reason: string;
+  config: {
+    mcpServers: Record<string, {
+      command: string;
+      args: string[];
+      env: Record<string, string>;
+    }>;
+  };
+}
+
+export type ExternalMcpServerState = 'disabled' | 'disconnected' | 'connecting' | 'connected' | 'error';
+
+export interface ExternalMcpStatus {
+  configured: boolean;
+  servers: Array<{
+    id: string;
+    transport: 'stdio' | 'http' | 'unknown';
+    enabled: boolean;
+    state: ExternalMcpServerState;
+    toolCount: number;
+    error: string;
+  }>;
+}
+
 export interface MagiesPdfBridge {
   platform: string;
   version: string;
   getVersion(): Promise<string>;
   isPackaged(): Promise<boolean>;
   getCatalog(): Promise<ToolMeta[]>;
+  getOfficeStatus(): Promise<OfficeStatus>;
+  pickLibreOfficeExecutable(): Promise<{ canceled: boolean; status: OfficeStatus }>;
+  openLibreOfficeDownload(): Promise<{ opened: boolean }>;
+  pickAndOpenOffice(multiple: boolean): Promise<OfficeOpenResult>;
+  createAndOpenOffice(kind: OfficeCreateKind): Promise<OfficeOpenResult>;
+  openOfficePaths(paths: string[]): Promise<OfficeOpenResult>;
+  listRecentDocuments(): Promise<RecentDocument[]>;
+  renameRecentDocument(path: string, name: string): Promise<{ path: string; name: string }>;
+  trashRecentDocument(path: string): Promise<{ trashed: boolean }>;
+  forgetRecentDocument(path: string): Promise<{ forgotten: boolean }>;
   pickFiles(accept: string[], multiple: boolean): Promise<PickedFile[]>;
+  /** Picks supported documents without copying their contents through IPC. */
+  pickDocumentPaths(multiple: boolean): Promise<string[]>;
   readFiles(paths: string[]): Promise<PickedFile[]>;
   pathForFile(file: File): string;
   saveOutputs(
@@ -83,6 +306,24 @@ export interface MagiesPdfBridge {
   onOpenFiles(callback: (paths: string[]) => void): () => void;
   runJob(request: JobRequest): Promise<JobResult>;
   cancelJob(jobId: string): Promise<boolean>;
+  getAiConfig(): Promise<AiConfig>;
+  setAiApiKey(apiKey: string): Promise<{ apiKeyConfigured: boolean }>;
+  runAiTurn(request: AiTurnRequest): Promise<AiTurnResult>;
+  cancelAiTurn(requestId: string): Promise<boolean>;
+  respondAiApproval(requestId: string, approvalId: string, approved: boolean): Promise<boolean>;
+  getAiWorkspaceStatus(): Promise<AiWorkspaceStatus>;
+  pickAiWorkspace(): Promise<AiWorkspaceStatus>;
+  clearAiWorkspace(): Promise<AiWorkspaceStatus>;
+  getAiHistory(): Promise<AiHistoryEntry[]>;
+  appendAiHistory(entry: AiHistoryInput): Promise<AiHistoryEntry>;
+  clearAiHistory(): Promise<boolean>;
+  getAiAutomationState(): Promise<AiAutomationState>;
+  createAiAutomationRule(rule: AiAutomationRuleInput): Promise<AiAutomationState>;
+  setAiAutomationRuleEnabled(ruleId: string, enabled: boolean): Promise<AiAutomationState>;
+  deleteAiAutomationRule(ruleId: string): Promise<AiAutomationState>;
+  resolveAiAutomationPending(pendingId: string): Promise<AiAutomationState>;
+  onAiEvent(callback: (event: AiEvent) => void): () => void;
+  onAiAutomationEvent(callback: (event: AiAutomationEvent) => void): () => void;
   onJobProgress(callback: (event: ProgressEvent) => void): () => void;
   onUpdaterStatus(callback: (status: UpdaterStatus) => void): () => void;
   getUpdaterStatus(): Promise<UpdaterStatus>;
@@ -92,6 +333,11 @@ export interface MagiesPdfBridge {
   getSettings(): Promise<AppSettings>;
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
   getApiStatus(): Promise<{ running: boolean; address: string; enabled: boolean }>;
+  getMcpConfig(): Promise<McpClientConfig>;
+  getExternalMcpStatus(): Promise<ExternalMcpStatus>;
+  setExternalMcpConfig(config: string): Promise<ExternalMcpStatus>;
+  refreshExternalMcp(): Promise<ExternalMcpStatus>;
+  clearExternalMcpConfig(): Promise<ExternalMcpStatus>;
   pickDirectory(): Promise<string>;
   /** Open a folder picker and load matching files (recursive by default). */
   pickFolderFiles(

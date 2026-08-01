@@ -12,3 +12,4 @@ registerAllTools();
 export { registry } from '../core/tools/index.ts';
 export { executeTool } from '../core/execute.ts';
 export { ToolError, toToolError } from '../core/errors.ts';
+export { createBlankOfficeDocument } from '../core/office/documents.ts';

@@ -32,8 +32,8 @@ export const docxToPdfTool: ToolDescriptor = {
   category: 'convert',
   name: { zh: 'Word 转 PDF', en: 'Word to PDF' },
   description: {
-    zh: '把 .docx 文档转成 PDF。保留标题、表格、图片等内容结构；如在设置里配置了外部转换器，则优先用它获得更高版式保真度。',
-    en: 'Convert .docx to PDF. Headings, tables and images survive; when an external converter is configured in Settings, it is preferred for higher layout fidelity.',
+    zh: '把 .docx 文档转成 PDF。检测到 LibreOffice 时自动使用本地办公引擎获得更高版式保真度。',
+    en: 'Convert .docx to PDF. Automatically uses the local LibreOffice engine for higher layout fidelity when available.',
   },
   icon: 'FileText',
   keywords: ['word', 'docx', 'document', 'office', '文档', '转换'],
@@ -47,14 +47,14 @@ export const docxToPdfTool: ToolDescriptor = {
 
     // The user-configured external converter, when present, produces the most
     // faithful layout — the built-in path is the always-available fallback.
-    if (ctx.host?.hasExternalConverter()) {
+    if (ctx.host?.hasExternalConverter('pdf')) {
       const output = await ctx.host.externalConvert(file, 'pdf', ctx.signal);
       ctx.report(1);
       return {
         files: [pdfOutput(suffixedName(file.name, '', '.pdf'), output.bytes)],
         summary: {
-          zh: `已通过外部转换器转换「${file.name}」`,
-          en: `Converted "${file.name}" via the external converter`,
+          zh: `已通过本地办公引擎转换「${file.name}」`,
+          en: `Converted "${file.name}" via the local Office engine`,
         },
       };
     }

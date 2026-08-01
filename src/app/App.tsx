@@ -1,14 +1,21 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import type { CategoryId, ToolMeta } from '@core/types.ts';
+import type { ToolMeta } from '@core/types.ts';
 import { uiRegistry } from './catalog.ts';
-import { bridge, hasBridge, type PickedFile } from './bridge.ts';
+import {
+  bridge,
+  hasBridge,
+  type OfficeCreateKind,
+  type PickedFile,
+} from './bridge.ts';
 import { t } from './i18n.ts';
-import { AlertCircle, Eye, Loader2, Settings } from './icons.ts';
+import { AlertCircle, Bot, Eye, Loader2, Settings } from './icons.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
 import { activeJobCount, useApp } from './store.ts';
 import { isDirty, type DocumentState } from './documents.ts';
 import { canApplyToDocument } from './toolApply.ts';
+import { partitionDocumentPaths } from './office.ts';
+import { createDefaultBlankPdf } from './pdf/directEdit.ts';
 import { CommandPalette } from './components/CommandPalette.tsx';
 import { ApplyToolPanel } from './components/ApplyToolPanel.tsx';
 import { DocumentTabs } from './components/DocumentTabs.tsx';
@@ -41,6 +48,9 @@ const SettingsPanel = lazy(() =>
 );
 const SignPage = lazy(() =>
   import('./components/SignPage.tsx').then((module) => ({ default: module.SignPage })),
+);
+const AIChatPanel = lazy(() =>
+  import('./components/AIChatPanel.tsx').then((module) => ({ default: module.AIChatPanel })),
 );
 
 /** Shown while one of the screens above is being fetched. */
@@ -77,6 +87,8 @@ export function App() {
   // are scoped to tools that accept a PDF.
   const [paletteForDocument, setPaletteForDocument] = useState(false);
   const [jobsOpen, setJobsOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiMounted, setAiMounted] = useState(false);
   // A tab being closed with unsaved changes, held until the user decides.
   const [closing, setClosing] = useState<DocumentState | null>(null);
   // The tool being run against the open document, if any.
@@ -147,6 +159,10 @@ export function App() {
 
   const openWelcome = useCallback(() => setMain({ name: 'welcome' }), []);
   const openSettings = useCallback(() => setMain({ name: 'settings' }), []);
+  const openAi = useCallback(() => {
+    setAiMounted(true);
+    setAiOpen(true);
+  }, []);
 
   /** Opens a file as a document and shows it. */
   const showDocument = useCallback(
@@ -157,19 +173,33 @@ export function App() {
     [openDocument],
   );
 
-  const openViewerPicker = useCallback(async () => {
-    const [file] = await bridge().pickFiles(['.pdf'], false);
-    if (file) showDocument(file);
-  }, [showDocument]);
-
-  /** Reads paths and opens each as its own tab. */
+  /** Routes PDFs into Magies and Office documents into the local Office host. */
   const openPaths = useCallback(
     async (paths: string[]) => {
       if (paths.length === 0) return;
-      for (const file of await bridge().readFiles(paths)) showDocument(file);
+      const partitioned = partitionDocumentPaths(paths);
+      if (partitioned.office.length > 0) await bridge().openOfficePaths(partitioned.office);
+      for (const file of await bridge().readFiles(partitioned.pdf)) showDocument(file);
+      if (partitioned.unsupported.length > 0) throw new Error(t('dropNotDocument', locale));
     },
-    [showDocument],
+    [locale, showDocument],
   );
+
+  const openDocumentPicker = useCallback(async () => {
+    const paths = await bridge().pickDocumentPaths(false);
+    await openPaths(paths);
+  }, [openPaths]);
+
+  const createOfficeDocument = useCallback(
+    async (kind: OfficeCreateKind) => {
+      await bridge().createAndOpenOffice(kind);
+    },
+    [],
+  );
+
+  const createPdfDocument = useCallback(async () => {
+    showDocument(await createDefaultBlankPdf(bridge()));
+  }, [showDocument]);
 
   const selectTab = useCallback(
     (id: string) => {
@@ -235,7 +265,7 @@ export function App() {
 
       switch (action) {
         case 'open':
-          void openViewerPicker().catch(() => {
+          void openDocumentPicker().catch(() => {
             // The picker only fails if the bridge is gone, which the banner says.
           });
           break;
@@ -265,7 +295,7 @@ export function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeDocumentId, closePalette, view.name, openViewerPicker, openWelcome, requestCloseTab]);
+  }, [activeDocumentId, closePalette, view.name, openDocumentPicker, openWelcome, requestCloseTab]);
 
   if (!ready) {
     return (
@@ -294,7 +324,7 @@ export function App() {
 
   const running = activeJobCount(jobs);
   const tool = view.name === 'tool' ? uiRegistry.tryGet(view.toolId) : undefined;
-  const showRibbon = view.name !== 'settings';
+  const showRibbon = view.name !== 'settings' && view.name !== 'welcome';
 
   return (
     <div
@@ -320,9 +350,9 @@ export function App() {
         // The renderer only ever sees paths; the main process does the reading.
         const paths = Array.from(e.dataTransfer.files)
           .map((dropped) => bridge().pathForFile(dropped))
-          .filter((path) => path.toLowerCase().endsWith('.pdf'));
+          .filter(Boolean);
         if (paths.length === 0) {
-          setDropError(t('dropNotPdf', locale));
+          setDropError(t('dropNotDocument', locale));
           return;
         }
         void openPaths(paths).catch((cause) => {
@@ -338,10 +368,22 @@ export function App() {
           onClick={openWelcome}
           className="no-drag rounded-md px-2 py-1 text-[13px] font-semibold tracking-tight transition-colors hover:bg-[var(--surface-hover)]"
         >
-          MagiesPdf
+          {t('appName', locale)}
         </button>
 
         <div className="flex-1" />
+
+        <button
+          type="button"
+          onClick={() => {
+            setAiMounted(true);
+            setAiOpen((open) => !open);
+          }}
+          className="no-drag flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+        >
+          <Bot size={15} />
+          {t('aiAssistantShort', locale)}
+        </button>
 
         <button
           type="button"
@@ -430,8 +472,11 @@ export function App() {
                 <Home
                   onOpenTool={openTool}
                   onOpenSearch={() => setPaletteOpen(true)}
-                  onOpenCategory={(_categoryId: CategoryId) => openWelcome()}
-                  onOpenPreview={openViewerPicker}
+                  onOpenDocument={openDocumentPicker}
+                  onCreateOffice={createOfficeDocument}
+                  onCreatePdf={createPdfDocument}
+                  onOpenRecent={(path) => openPaths([path])}
+                  onOpenAi={openAi}
                 />
               ))}
 
@@ -439,16 +484,31 @@ export function App() {
               <Home
                 onOpenTool={openTool}
                 onOpenSearch={() => setPaletteOpen(true)}
-                onOpenCategory={(_categoryId: CategoryId) => {
-                  // Categories live in the ribbon; keep welcome and let the user pick there.
-                  openWelcome();
-                }}
-                onOpenPreview={openViewerPicker}
+                onOpenDocument={openDocumentPicker}
+                onCreateOffice={createOfficeDocument}
+                onCreatePdf={createPdfDocument}
+                onOpenRecent={(path) => openPaths([path])}
+                onOpenAi={openAi}
               />
             )}
             </Suspense>
           </main>
         </div>
+        {aiMounted && (
+          <Suspense fallback={null}>
+            <AIChatPanel
+              open={aiOpen}
+              locale={locale}
+              activeDocument={activeDocument}
+              onClose={() => setAiOpen(false)}
+              onOpenSettings={() => {
+                setAiOpen(false);
+                openSettings();
+              }}
+              onPreviewFile={showDocument}
+            />
+          </Suspense>
+        )}
       </div>
 
       {paletteOpen && (

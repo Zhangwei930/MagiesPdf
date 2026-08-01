@@ -12,7 +12,7 @@ export async function externalOfficeExport(
   file: ToolInputFile,
   extension: 'docx' | 'xlsx' | 'pptx',
 ): Promise<ToolResult | null> {
-  if (!ctx.host?.hasExternalConverter()) return null;
+  if (!ctx.host?.hasExternalConverter(extension)) return null;
   const output = await ctx.host.externalConvert(file, extension, ctx.signal);
   ctx.report(1);
   return {
