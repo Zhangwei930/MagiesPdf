@@ -75,6 +75,27 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
     }, ['path', 'find', 'replace']),
   ),
   tool(
+    'office_word_insert_table',
+    { zh: '插入 Word 表格', en: 'Insert Word table' },
+    'Append a table to a Word document and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      values: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 50,
+        items: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 20,
+          items: { type: ['string', 'number', 'boolean', 'null'] },
+        },
+      },
+      has_header: { type: 'boolean', description: 'Bold and shade the first row. Defaults to false.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'values']),
+  ),
+  tool(
     'office_excel_read',
     { zh: '读取 Excel 区域', en: 'Read Excel range' },
     'Read cell values and formulas from an Excel workbook. The returned cells are sent to the AI model after user approval.',
@@ -102,6 +123,38 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
     }, ['path', 'start_cell', 'values']),
   ),
   tool(
+    'office_excel_format_range',
+    { zh: '设置 Excel 格式', en: 'Format Excel range' },
+    'Format an Excel range and save a new non-overwriting copy. At least one format option is required.',
+    schema({
+      path: PATH_PROPERTY,
+      sheet: { type: 'string', maxLength: 128, description: 'Worksheet name. Defaults to the first sheet.' },
+      range: { type: 'string', description: 'A1 range such as A1:F40.' },
+      bold: { type: 'boolean' },
+      background_color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$' },
+      text_color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$' },
+      horizontal_alignment: { type: 'string', enum: ['left', 'center', 'right'] },
+      optimal_width: { type: 'boolean', description: 'Automatically fit the selected columns.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'range']),
+  ),
+  tool(
+    'office_excel_create_chart',
+    { zh: '创建 Excel 图表', en: 'Create Excel chart' },
+    'Create a chart from an Excel data range and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      sheet: { type: 'string', maxLength: 128, description: 'Worksheet name. Defaults to the first sheet.' },
+      data_range: { type: 'string', description: 'A1 range containing chart data, such as A1:B12.' },
+      chart_type: { type: 'string', enum: ['column', 'bar', 'line', 'pie', 'area'] },
+      title: { type: 'string', maxLength: 200 },
+      chart_name: { type: 'string', maxLength: 128 },
+      first_row_labels: { type: 'boolean', description: 'Use the first row as labels. Defaults to true.' },
+      first_column_labels: { type: 'boolean', description: 'Use the first column as labels. Defaults to true.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'data_range', 'chart_type']),
+  ),
+  tool(
     'office_presentation_read',
     { zh: '读取 PPT 内容', en: 'Read presentation content' },
     'Read text grouped by slide from a PowerPoint presentation. The returned text is sent to the AI model after user approval.',
@@ -118,6 +171,28 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
       match_case: { type: 'boolean', description: 'Use case-sensitive matching. Defaults to true.' },
       output_directory: OUTPUT_DIRECTORY_PROPERTY,
     }, ['path', 'find', 'replace']),
+  ),
+  tool(
+    'office_presentation_add_slide',
+    { zh: '新增 PPT 幻灯片', en: 'Add presentation slide' },
+    'Add a title-and-body slide to a PowerPoint presentation and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      after_slide: { type: 'integer', minimum: 0, description: 'Insert after this 1-based slide number. Use 0 for the beginning; omit for the end.' },
+      title: { type: 'string', maxLength: 1000 },
+      body: { type: 'array', maxItems: 20, items: { type: 'string', maxLength: 2000 } },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path']),
+  ),
+  tool(
+    'office_presentation_delete_slide',
+    { zh: '删除 PPT 幻灯片', en: 'Delete presentation slide' },
+    'Delete one PowerPoint slide by its 1-based number and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      slide_number: { type: 'integer', minimum: 1 },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'slide_number']),
   ),
   tool(
     'office_batch_convert_pdf',
@@ -181,6 +256,74 @@ function excelValues(value) {
     cells += row.length;
   }
   if (cells > 5000) throw new Error('At most 5000 Excel cells may be written at once');
+  return value;
+}
+
+function wordTableValues(value) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 50) {
+    throw new Error('values must contain between 1 and 50 table rows');
+  }
+  let width = -1;
+  for (const row of value) {
+    if (!Array.isArray(row) || row.length === 0 || row.length > 20) {
+      throw new Error('Each table row must contain between 1 and 20 cells');
+    }
+    if (width === -1) width = row.length;
+    if (row.length !== width) throw new Error('values must be a rectangular array');
+    for (const cell of row) {
+      if (cell !== null && !['string', 'number', 'boolean'].includes(typeof cell)) {
+        throw new Error('Word table cells may only contain strings, numbers, booleans, or null');
+      }
+    }
+  }
+  return value;
+}
+
+function colorValue(value, label) {
+  if (value === undefined) return '';
+  if (typeof value !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(value)) {
+    throw new Error(`${label} must be a six-digit hex color such as #336699`);
+  }
+  return value.toUpperCase();
+}
+
+function slideBody(value) {
+  if (value === undefined) return [];
+  if (
+    !Array.isArray(value)
+    || value.length > 20
+    || value.some((item) => typeof item !== 'string' || item.length > 2000)
+    || value.reduce((total, item) => total + item.length, 0) > 20000
+  ) {
+    throw new Error('body must contain at most 20 text items and 20000 characters');
+  }
+  return value;
+}
+
+function integerValue(value, label, minimum, { optional = false } = {}) {
+  if (value === undefined && optional) return undefined;
+  if (!Number.isInteger(value) || value < minimum) {
+    throw new Error(`${label} must be an integer of at least ${minimum}`);
+  }
+  return value;
+}
+
+function boundedExcelRange(value, label) {
+  if (!RANGE_REFERENCE.test(value)) throw new Error(`${label} must use A1 notation such as A1:F40`);
+  const [startReference, endReference = startReference] = value.split(':');
+  const position = (reference) => {
+    const [, letters, row] = reference.match(/^([A-Z]{1,3})([1-9]\d*)$/);
+    let column = 0;
+    for (const letter of letters) column = (column * 26) + letter.charCodeAt(0) - 64;
+    return { column, row: Number(row) };
+  };
+  const start = position(startReference);
+  const end = position(endReference);
+  const rows = Math.abs(end.row - start.row) + 1;
+  const columns = Math.abs(end.column - start.column) + 1;
+  if (rows > 200 || columns > 50 || rows * columns > 5000) {
+    throw new Error(`${label} may cover at most 200 rows, 50 columns, and 5000 cells`);
+  }
   return value;
 }
 
@@ -253,6 +396,30 @@ function createOfficeAutomationProvider({
       };
     }
 
+    if (functionName === 'office_word_insert_table') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const values = wordTableValues(args.values);
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, WORD_EXTENSIONS, 'Word');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'word_insert_table',
+        inputPath,
+        outputPath: output.absolutePath,
+        values,
+        hasHeader: args.has_header === true,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        rows: Number(result.rows) || values.length,
+        columns: Number(result.columns) || values[0].length,
+      };
+    }
+
     if (functionName === 'office_excel_read') {
       const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
       const range = stringValue(args.range, 'range', { maxLength: 50 });
@@ -294,6 +461,83 @@ function createOfficeAutomationProvider({
       };
     }
 
+    if (functionName === 'office_excel_format_range') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const range = boundedExcelRange(
+        stringValue(args.range, 'range', { required: true, maxLength: 50 }).toUpperCase(),
+        'range',
+      );
+      const hasFormat = ['bold', 'background_color', 'text_color', 'horizontal_alignment', 'optimal_width']
+        .some((key) => args[key] !== undefined);
+      if (!hasFormat) throw new Error('Excel formatting requires at least one format option');
+      if (args.bold !== undefined && typeof args.bold !== 'boolean') throw new Error('bold must be a boolean');
+      if (args.optimal_width !== undefined && typeof args.optimal_width !== 'boolean') {
+        throw new Error('optimal_width must be a boolean');
+      }
+      const alignment = args.horizontal_alignment;
+      if (alignment !== undefined && !['left', 'center', 'right'].includes(alignment)) {
+        throw new Error('horizontal_alignment must be left, center, or right');
+      }
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, EXCEL_EXTENSIONS, 'Excel');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'excel_format_range',
+        inputPath,
+        outputPath: output.absolutePath,
+        sheet: stringValue(args.sheet, 'sheet', { maxLength: 128 }),
+        range,
+        bold: args.bold,
+        backgroundColor: colorValue(args.background_color, 'background_color'),
+        textColor: colorValue(args.text_color, 'text_color'),
+        horizontalAlignment: alignment,
+        optimalWidth: args.optimal_width,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        formattedRange: String(result.formattedRange || range),
+      };
+    }
+
+    if (functionName === 'office_excel_create_chart') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const dataRange = boundedExcelRange(
+        stringValue(args.data_range, 'data_range', { required: true, maxLength: 50 }).toUpperCase(),
+        'data_range',
+      );
+      const chartType = stringValue(args.chart_type, 'chart_type', { required: true, maxLength: 20 });
+      if (!['column', 'bar', 'line', 'pie', 'area'].includes(chartType)) {
+        throw new Error('chart_type must be column, bar, line, pie, or area');
+      }
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, EXCEL_EXTENSIONS, 'Excel');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'excel_create_chart',
+        inputPath,
+        outputPath: output.absolutePath,
+        sheet: stringValue(args.sheet, 'sheet', { maxLength: 128 }),
+        dataRange,
+        chartType,
+        title: stringValue(args.title, 'title', { maxLength: 200 }),
+        chartName: stringValue(args.chart_name, 'chart_name', { maxLength: 128 }),
+        firstRowLabels: args.first_row_labels !== false,
+        firstColumnLabels: args.first_column_labels !== false,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        chartName: String(result.chartName || args.chart_name || args.title || 'Chart'),
+      };
+    }
+
     if (functionName === 'office_presentation_read') {
       const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
       const inputPath = await workspace.resolveInput(relativePath);
@@ -324,6 +568,57 @@ function createOfficeAutomationProvider({
         source: relativePath,
         written: output.relativePath,
         replacementCount: Number(result.replacementCount) || 0,
+      };
+    }
+
+    if (functionName === 'office_presentation_add_slide') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const title = stringValue(args.title, 'title', { maxLength: 1000 });
+      const body = slideBody(args.body);
+      if (!title && body.length === 0) throw new Error('A new slide requires a title or body text');
+      const afterSlide = integerValue(args.after_slide, 'after_slide', 0, { optional: true });
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, PRESENTATION_EXTENSIONS, 'PowerPoint');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'presentation_add_slide',
+        inputPath,
+        outputPath: output.absolutePath,
+        afterSlide,
+        title,
+        body,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        slideNumber: Number(result.slideNumber) || 0,
+        slidesTotal: Number(result.slidesTotal) || 0,
+      };
+    }
+
+    if (functionName === 'office_presentation_delete_slide') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const slideNumber = integerValue(args.slide_number, 'slide_number', 1);
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, PRESENTATION_EXTENSIONS, 'PowerPoint');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'presentation_delete_slide',
+        inputPath,
+        outputPath: output.absolutePath,
+        slideNumber,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        deletedSlideNumber: Number(result.deletedSlideNumber) || slideNumber,
+        slidesRemaining: Number(result.slidesRemaining) || 0,
       };
     }
 
@@ -380,4 +675,5 @@ module.exports = {
   OFFICE_AUTOMATION_TOOLS,
   createOfficeAutomationProvider,
   excelValues,
+  wordTableValues,
 };
