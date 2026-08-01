@@ -636,6 +636,78 @@ def excel_create_chart(document, request):
     return {'chartName': chart_name}
 
 
+def data_pilot_field(fields, requested_name):
+    available = []
+    for index in range(fields.getCount()):
+        field = fields.getByIndex(index)
+        field_name = str(field.Name)
+        available.append(field_name)
+        if field_name == requested_name:
+            return field
+    raise ValueError(
+        f'Pivot field {requested_name!r} was not found; available fields: '
+        + ', '.join(available)
+    )
+
+
+def unique_pivot_name(tables, requested_name):
+    base = requested_name or 'MagiesPivot'
+    if not tables.hasByName(base):
+        return base
+    suffix = 2
+    while tables.hasByName(f'{base} ({suffix})'):
+        suffix += 1
+    return f'{base} ({suffix})'
+
+
+def excel_create_pivot(document, request):
+    _source_sheet_name, source_sheet = spreadsheet(
+        document, request.get('sourceSheet', '')
+    )
+    source_address = source_sheet.getCellRangeByName(
+        request['sourceRange']
+    ).getRangeAddress()
+    sheets = document.Sheets
+    destination_sheet_name = request.get('destinationSheet', 'Pivot')
+    if not sheets.hasByName(destination_sheet_name):
+        sheets.insertNewByName(destination_sheet_name, sheets.getCount())
+    destination_sheet = sheets.getByName(destination_sheet_name)
+    tables = destination_sheet.getDataPilotTables()
+    descriptor = tables.createDataPilotDescriptor()
+    descriptor.setSourceRange(source_address)
+    fields = descriptor.getDataPilotFields()
+    row_field = data_pilot_field(fields, request['rowField'])
+    row_field.Orientation = uno.Enum(
+        'com.sun.star.sheet.DataPilotFieldOrientation', 'ROW'
+    )
+    column_field_name = request.get('columnField', '')
+    if column_field_name:
+        column_field = data_pilot_field(fields, column_field_name)
+        column_field.Orientation = uno.Enum(
+            'com.sun.star.sheet.DataPilotFieldOrientation', 'COLUMN'
+        )
+    data_field = data_pilot_field(fields, request['dataField'])
+    data_field.Orientation = uno.Enum(
+        'com.sun.star.sheet.DataPilotFieldOrientation', 'DATA'
+    )
+    data_field.Function = uno.Enum(
+        'com.sun.star.sheet.GeneralFunction', request['dataFunction']
+    )
+    output_address = destination_sheet.getCellRangeByName(
+        request['destinationCell']
+    ).getCellAddress()
+    pivot_name = unique_pivot_name(tables, request.get('pivotName', ''))
+    tables.insertNewByName(pivot_name, output_address, descriptor)
+    pivot_table = tables.getByName(pivot_name)
+    output_range = pivot_table.getOutputRange()
+    store_copy(document, request['outputPath'])
+    return {
+        'pivotName': pivot_name,
+        'destinationSheet': destination_sheet_name,
+        'outputRange': range_name(output_range),
+    }
+
+
 def presentation(document):
     if not document.supportsService('com.sun.star.presentation.PresentationDocument'):
         raise ValueError('The selected file is not a PowerPoint presentation')
@@ -1081,6 +1153,7 @@ OPERATIONS = {
     'excel_apply_autofilter': (False, excel_apply_autofilter),
     'excel_format_range': (False, excel_format_range),
     'excel_create_chart': (False, excel_create_chart),
+    'excel_create_pivot': (False, excel_create_pivot),
     'presentation_read': (True, presentation_read),
     'presentation_replace': (False, presentation_replace),
     'presentation_add_slide': (False, presentation_add_slide),

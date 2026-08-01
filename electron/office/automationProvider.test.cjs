@@ -58,6 +58,7 @@ describe('createOfficeAutomationProvider', () => {
         'office_excel_apply_autofilter',
         'office_excel_format_range',
         'office_excel_create_chart',
+        'office_excel_create_pivot',
         'office_presentation_read',
         'office_presentation_replace',
         'office_presentation_add_slide',
@@ -373,6 +374,79 @@ describe('createOfficeAutomationProvider', () => {
     await assert.rejects(() => provider.callTool('office_excel_format_range', {
       path: 'Budget.xlsx', range: 'A1:AZ200', bold: true,
     }), /at most 200 rows, 50 columns, and 5000 cells/);
+  });
+
+  it('creates an Excel pivot table from named fields, including Chinese headers', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, '销售.xlsx'), 'source');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        if (calls.length > 1) return {};
+        return {
+          pivotName: '地区销售汇总',
+          destinationSheet: '数据透视',
+          outputRange: 'A1:C5',
+        };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    assert.deepEqual(await provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx',
+      source_sheet: '销售明细',
+      source_range: 'A1:C20',
+      row_field: '地区',
+      column_field: '产品',
+      data_field: '销售额',
+      function: 'sum',
+      destination_sheet: '数据透视',
+      destination_cell: 'A1',
+      name: '地区销售汇总',
+      output_directory: '分析结果',
+    }), {
+      source: '销售.xlsx',
+      written: '分析结果/销售.xlsx',
+      pivotName: '地区销售汇总',
+      destinationSheet: '数据透视',
+      outputRange: 'A1:C5',
+    });
+    assert.equal(calls[0].operation, 'excel_create_pivot');
+    assert.equal(calls[0].rowField, '地区');
+    assert.equal(calls[0].dataFunction, 'SUM');
+
+    assert.deepEqual(await provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx',
+      source_range: 'A1:B20',
+      row_field: '地区',
+      data_field: '销售额',
+    }), {
+      source: '销售.xlsx',
+      written: 'Magies Office Output/销售.xlsx',
+      pivotName: 'MagiesPivot',
+      destinationSheet: 'Pivot',
+      outputRange: '',
+    });
+    assert.equal(calls[1].columnField, '');
+    assert.equal(calls[1].dataFunction, 'SUM');
+    assert.equal(calls[1].destinationCell, 'A1');
+    assert.equal(calls[1].destinationSheet, 'Pivot');
+
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:C20', row_field: '地区', data_field: '地区',
+    }), /different fields/);
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:C20', row_field: '地区',
+      data_field: '销售额', function: 'median',
+    }), /function/);
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:C20', row_field: '地区',
+      data_field: '销售额', destination_cell: 'invalid',
+    }), /destination_cell/);
   });
 
   it('sorts Excel rows and applies an auto filter to a bounded range', async () => {

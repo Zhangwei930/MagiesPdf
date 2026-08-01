@@ -16,6 +16,7 @@ import {
   type AiChatMessage,
   type AiTurnState,
   type AiToolActivity,
+  type AiWorkflowStep,
 } from '../ai/chatState.ts';
 import { Button, ProgressBar } from './ui.tsx';
 
@@ -94,6 +95,22 @@ function ArtifactActions({
   );
 }
 
+function WorkflowPreview({ steps, locale }: { steps: AiWorkflowStep[]; locale: Locale }) {
+  if (steps.length === 0) return null;
+  return (
+    <div className="mb-2 rounded-lg border border-[var(--accent)] bg-[var(--accent-soft)] px-2.5 py-2">
+      <p className="text-[11px] font-medium">
+        {locale === 'zh' ? '执行计划' : 'Execution plan'}
+      </p>
+      <ol className="mt-1 list-inside list-decimal space-y-0.5 text-[10px] text-[var(--text-secondary)]">
+        {steps.map((step) => (
+          <li key={step.callId}>{localized(step.toolName, locale) || step.toolId}</li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 function ToolActivities({ tools, locale }: { tools: AiToolActivity[]; locale: Locale }) {
   if (tools.length === 0) return null;
   return (
@@ -114,6 +131,16 @@ function ToolActivities({ tools, locale }: { tools: AiToolActivity[]; locale: Lo
             <span className="truncate font-medium">{toolLabel(tool, locale)}</span>
           </div>
           {tool.status === 'running' && <div className="mt-1.5"><ProgressBar value={tool.fraction} /></div>}
+          {tool.details && (
+            <details className="mt-1.5 text-[10px] text-[var(--text-secondary)]">
+              <summary className="cursor-pointer">
+                {locale === 'zh' ? '参数记录' : 'Argument record'}
+              </summary>
+              <pre className="mt-1 max-h-32 overflow-auto font-mono leading-relaxed whitespace-pre-wrap break-all">
+                {tool.details}
+              </pre>
+            </details>
+          )}
           {tool.error && <p className="mt-1 text-[10px] text-[var(--danger)]">{tool.error}</p>}
         </div>
       ))}
@@ -239,6 +266,7 @@ export function AIChatPanel({
           id: crypto.randomUUID(),
           role: 'assistant',
           content: result.message || completed?.assistantText || '',
+          workflow: completed?.workflow,
           tools: completed?.tools,
           artifacts: result.files,
         },
@@ -345,6 +373,7 @@ export function AIChatPanel({
                   ? 'max-w-[88%] rounded-xl rounded-br-sm bg-[var(--accent)] px-3 py-2 text-[13px] whitespace-pre-wrap text-white'
                   : `max-w-full rounded-xl rounded-bl-sm border px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap ${message.error ? 'border-[var(--danger)] bg-[var(--danger-soft)] text-[var(--danger)]' : 'border-[var(--border-subtle)] bg-[var(--surface-raised)]'}`}
               >
+                {message.workflow && <WorkflowPreview steps={message.workflow} locale={locale} />}
                 {message.tools && <ToolActivities tools={message.tools} locale={locale} />}
                 {message.content}
                 {message.artifacts && (
@@ -356,6 +385,7 @@ export function AIChatPanel({
 
           {turn && (
             <div className="rounded-xl rounded-bl-sm border border-[var(--border-subtle)] bg-[var(--surface-raised)] px-3 py-2 text-[13px]">
+              <WorkflowPreview steps={turn.workflow} locale={locale} />
               <ToolActivities tools={turn.tools} locale={locale} />
               {turn.assistantText ? (
                 <p className="leading-relaxed whitespace-pre-wrap">{turn.assistantText}</p>

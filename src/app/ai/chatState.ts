@@ -10,7 +10,15 @@ export interface AiToolActivity {
   inputFileNames: string[];
   status: 'running' | 'done' | 'error';
   fraction: number;
+  details?: string;
   error?: string;
+}
+
+export interface AiWorkflowStep {
+  callId: string;
+  toolId: string;
+  toolName?: LocalizedText;
+  details?: string;
 }
 
 export interface AiApproval {
@@ -24,6 +32,7 @@ export interface AiApproval {
 export interface AiTurnState {
   requestId: string;
   assistantText: string;
+  workflow: AiWorkflowStep[];
   tools: AiToolActivity[];
   approvals: AiApproval[];
   artifacts: AiArtifact[];
@@ -33,13 +42,14 @@ export interface AiChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  workflow?: AiWorkflowStep[];
   tools?: AiToolActivity[];
   artifacts?: ToolOutputFile[];
   error?: boolean;
 }
 
 export function createTurnState(requestId: string): AiTurnState {
-  return { requestId, assistantText: '', tools: [], approvals: [], artifacts: [] };
+  return { requestId, assistantText: '', workflow: [], tools: [], approvals: [], artifacts: [] };
 }
 
 function updateTool(
@@ -58,6 +68,8 @@ export function applyAiEvent(state: AiTurnState, event: AiEvent): AiTurnState {
       return { ...state, assistantText: state.assistantText + event.delta };
     case 'assistant_done':
       return { ...state, assistantText: event.content };
+    case 'workflow_preview':
+      return { ...state, workflow: event.steps };
     case 'tool_start':
       return {
         ...state,
@@ -70,6 +82,7 @@ export function applyAiEvent(state: AiTurnState, event: AiEvent): AiTurnState {
             inputFileNames: event.inputFileNames,
             status: 'running',
             fraction: 0,
+            details: event.details,
           },
         ],
       };

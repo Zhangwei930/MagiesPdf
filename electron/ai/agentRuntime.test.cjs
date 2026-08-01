@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
-const { AgentRuntime } = require('./agentRuntime.cjs');
+const { AgentRuntime, redactToolArguments, toolDetails } = require('./agentRuntime.cjs');
 
 const tools = [
   {
@@ -27,6 +27,21 @@ const tools = [
 ];
 
 describe('Agent runtime', () => {
+  it('redacts nested secrets and bounds retained argument details', () => {
+    assert.deepEqual(redactToolArguments({
+      path: '销售.xlsx',
+      password: 'hidden',
+      nested: [{ api_key: 'hidden-too', value: 3 }, 'plain'],
+      accessToken: 'also-hidden',
+    }), {
+      path: '销售.xlsx',
+      password: '[redacted]',
+      nested: [{ api_key: '[redacted]', value: 3 }, 'plain'],
+      accessToken: '[redacted]',
+    });
+    assert.equal(toolDetails({ text: 'x'.repeat(5000) }).length, 4000);
+  });
+
   it('runs a tool loop, keeps bytes local, and returns output artifacts', async () => {
     const calls = [];
     const events = [];
@@ -306,5 +321,133 @@ describe('Agent runtime', () => {
     const toolMessage = modelCalls[1].messages.at(-1).content;
     assert.match(toolMessage, /"source":"local_office"/);
     assert.match(toolMessage, /"untrusted":true/);
+  });
+
+  it('previews multi-step Office workflows and retains sanitized tool details for audit', async () => {
+    const events = [];
+    const approvals = [];
+    const officeTools = [
+      {
+        functionName: 'office_excel_read',
+        toolId: 'office:excel:read',
+        name: { zh: '读取 Excel 区域', en: 'Read Excel range' },
+      },
+      {
+        functionName: 'office_excel_create_pivot',
+        toolId: 'office:excel:create:pivot',
+        name: { zh: '创建 Excel 数据透视表', en: 'Create Excel pivot table' },
+      },
+    ].map((tool) => ({
+      ...tool,
+      requiresApproval: true,
+      providerTool: {
+        type: 'function',
+        function: {
+          name: tool.functionName,
+          description: tool.name.en,
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+    }));
+    let modelStep = 0;
+    const runtime = new AgentRuntime({
+      tools,
+      model: {
+        async streamMessage() {
+          modelStep += 1;
+          return modelStep === 1
+            ? {
+                content: '',
+                tool_calls: [
+                  {
+                    id: 'read',
+                    type: 'function',
+                    function: {
+                      name: 'office_excel_read',
+                      arguments: '{"path":"销售.xlsx","range":"A1:C20"}',
+                    },
+                  },
+                  {
+                    id: 'pivot',
+                    type: 'function',
+                    function: {
+                      name: 'office_excel_create_pivot',
+                      arguments: '{"path":"销售.xlsx","row_field":"地区","data_field":"销售额","api_key":"private-key"}',
+                    },
+                  },
+                ],
+              }
+            : { content: '数据透视表已创建。', tool_calls: [] };
+        },
+      },
+      executeTool: async () => { throw new Error('catalog tools must not run'); },
+      requestApproval: async (request) => {
+        approvals.push(request.toolId);
+        return true;
+      },
+      officeToolProvider: {
+        listTools: async () => officeTools,
+        callTool: async (functionName) => ({ functionName }),
+      },
+    });
+
+    await runtime.runTurn({
+      prompt: '按地区汇总销售额',
+      history: [],
+      locale: 'zh',
+      files: [],
+      config: { baseUrl: 'http://localhost:11434/v1', apiKey: '', model: 'local', maxSteps: 3 },
+      onEvent: (event) => events.push(event),
+    });
+
+    const previewIndex = events.findIndex((event) => event.type === 'workflow_preview');
+    const firstToolIndex = events.findIndex((event) => event.type === 'tool_start');
+    assert.ok(previewIndex >= 0 && previewIndex < firstToolIndex);
+    assert.equal(events[previewIndex].steps.length, 2);
+    assert.equal(events[previewIndex].steps[1].toolId, 'office:excel:create:pivot');
+    assert.match(events[previewIndex].steps[1].details, /销售额/);
+    assert.doesNotMatch(events[previewIndex].steps[1].details, /private-key/);
+    assert.match(events[previewIndex].steps[1].details, /\[redacted\]/);
+    assert.match(events[firstToolIndex].details, /销售\.xlsx/);
+    assert.deepEqual(approvals, ['office:excel:read', 'office:excel:create:pivot']);
+  });
+
+  it('previews malformed and unknown workflow steps before reporting their errors', async () => {
+    const events = [];
+    let modelStep = 0;
+    const runtime = new AgentRuntime({
+      tools,
+      model: {
+        async streamMessage() {
+          modelStep += 1;
+          return modelStep === 1
+            ? {
+                content: '',
+                tool_calls: [
+                  { type: 'function', function: { name: 'unknown_one', arguments: '{' } },
+                  { id: 'unknown', type: 'function', function: { name: 'unknown_two', arguments: '{}' } },
+                ],
+              }
+            : { content: '无法执行未知步骤。', tool_calls: [] };
+        },
+      },
+      executeTool: async () => { throw new Error('unknown tools must not run'); },
+      requestApproval: async () => { throw new Error('unknown tools must not request approval'); },
+    });
+
+    await runtime.runTurn({
+      prompt: '执行未知流程',
+      history: [],
+      locale: 'zh',
+      files: [],
+      config: { baseUrl: 'http://localhost:11434/v1', apiKey: '', model: 'local', maxSteps: 3 },
+      onEvent: (event) => events.push(event),
+    });
+
+    const preview = events.find((event) => event.type === 'workflow_preview');
+    assert.equal(preview.steps[0].callId, '');
+    assert.equal(preview.steps[0].toolId, 'unknown_one');
+    assert.equal(preview.steps[0].details, 'Invalid tool arguments');
+    assert.equal(events.filter((event) => event.type === 'tool_result' && !event.ok).length, 2);
   });
 });

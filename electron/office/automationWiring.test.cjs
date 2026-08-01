@@ -69,6 +69,17 @@ describe('Office Agent wiring', () => {
     assert.match(workerSource, /table = shape\.Model/);
   });
 
+  it('allow-lists V5 pivot tables using fixed DataPilot services', () => {
+    assert.match(workerSource, /'excel_create_pivot':/);
+    assert.match(workerSource, /getDataPilotTables\(\)/);
+    assert.match(workerSource, /createDataPilotDescriptor\(\)/);
+    assert.match(workerSource, /descriptor\.setSourceRange\(source_address\)/);
+    assert.match(workerSource, /com\.sun\.star\.sheet\.DataPilotFieldOrientation/);
+    assert.match(workerSource, /com\.sun\.star\.sheet\.GeneralFunction/);
+    assert.match(workerSource, /insertNewByName\(pivot_name, output_address, descriptor\)/);
+    assert.match(workerSource, /pivot_table\.getOutputRange\(\)/);
+  });
+
   it('embeds only workspace-resolved images and returns presentation notes', () => {
     assert.match(workerSource, /uno\.systemPathToFileUrl\(request\['imagePath'\]\)/);
     assert.match(

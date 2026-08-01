@@ -220,6 +220,24 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
     }, ['path', 'data_range', 'chart_type']),
   ),
   tool(
+    'office_excel_create_pivot',
+    { zh: '创建 Excel 数据透视表', en: 'Create Excel pivot table' },
+    'Create a pivot table from named Excel header fields and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      source_sheet: { type: 'string', maxLength: 128, description: 'Source worksheet. Defaults to the first sheet.' },
+      source_range: { type: 'string', description: 'Bounded source range with a header row, such as A1:D200.' },
+      row_field: { type: 'string', minLength: 1, maxLength: 128, description: 'Header name used for pivot rows.' },
+      column_field: { type: 'string', minLength: 1, maxLength: 128, description: 'Optional header name used for pivot columns.' },
+      data_field: { type: 'string', minLength: 1, maxLength: 128, description: 'Header name containing values to aggregate.' },
+      function: { type: 'string', enum: ['sum', 'count', 'average', 'min', 'max'], description: 'Aggregation. Defaults to sum.' },
+      destination_sheet: { type: 'string', maxLength: 128, description: 'Existing or new output worksheet. Defaults to Pivot.' },
+      destination_cell: { type: 'string', description: 'Top-left output cell. Defaults to A1.' },
+      name: { type: 'string', maxLength: 128, description: 'Pivot table name. Defaults to MagiesPivot.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'source_range', 'row_field', 'data_field']),
+  ),
+  tool(
     'office_presentation_read',
     { zh: '读取 PPT 内容', en: 'Read presentation content' },
     'Read text grouped by slide from a PowerPoint presentation. The returned text is sent to the AI model after user approval.',
@@ -872,6 +890,64 @@ function createOfficeAutomationProvider({
         source: relativePath,
         written: output.relativePath,
         chartName: String(result.chartName || args.chart_name || args.title || 'Chart'),
+      };
+    }
+
+    if (functionName === 'office_excel_create_pivot') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const sourceRange = boundedExcelRange(
+        stringValue(args.source_range, 'source_range', { required: true, maxLength: 50 }).toUpperCase(),
+        'source_range',
+      );
+      const rowField = stringValue(args.row_field, 'row_field', { required: true, maxLength: 128 });
+      const columnField = stringValue(args.column_field, 'column_field', { maxLength: 128 });
+      const dataField = stringValue(args.data_field, 'data_field', { required: true, maxLength: 128 });
+      const selectedFields = [rowField, columnField, dataField].filter(Boolean);
+      if (new Set(selectedFields).size !== selectedFields.length) {
+        throw new Error('row_field, column_field, and data_field must use different fields');
+      }
+      const functions = {
+        sum: 'SUM',
+        count: 'COUNT',
+        average: 'AVERAGE',
+        min: 'MIN',
+        max: 'MAX',
+      };
+      const requestedFunction = stringValue(args.function, 'function', { maxLength: 20 }) || 'sum';
+      const dataFunction = functions[requestedFunction];
+      if (!dataFunction) throw new Error('function must be sum, count, average, min, or max');
+      const destinationCell = (
+        stringValue(args.destination_cell, 'destination_cell', { maxLength: 20 }) || 'A1'
+      ).toUpperCase();
+      if (!CELL_REFERENCE.test(destinationCell)) {
+        throw new Error('destination_cell must use A1 notation such as A1');
+      }
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, EXCEL_EXTENSIONS, 'Excel');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'excel_create_pivot',
+        inputPath,
+        outputPath: output.absolutePath,
+        sourceSheet: stringValue(args.source_sheet, 'source_sheet', { maxLength: 128 }),
+        sourceRange,
+        rowField,
+        columnField,
+        dataField,
+        dataFunction,
+        destinationSheet: stringValue(args.destination_sheet, 'destination_sheet', { maxLength: 128 }) || 'Pivot',
+        destinationCell,
+        pivotName: stringValue(args.name, 'name', { maxLength: 128 }) || 'MagiesPivot',
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        pivotName: String(result.pivotName || 'MagiesPivot'),
+        destinationSheet: String(result.destinationSheet || 'Pivot'),
+        outputRange: String(result.outputRange || ''),
       };
     }
 

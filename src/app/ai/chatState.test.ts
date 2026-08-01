@@ -49,6 +49,35 @@ describe('AI chat turn state', () => {
     assert.equal(state.artifacts[0]?.name, 'one-compressed.pdf');
   });
 
+  it('keeps a workflow preview and tool argument summary as a turn audit trail', () => {
+    let state = createTurnState('turn-1');
+    state = applyAiEvent(state, {
+      requestId: 'turn-1',
+      type: 'workflow_preview',
+      steps: [
+        {
+          callId: 'pivot',
+          toolId: 'office:excel:create:pivot',
+          toolName: { zh: '创建数据透视表', en: 'Create pivot table' },
+          details: '{"path":"销售.xlsx"}',
+        },
+      ],
+    });
+    state = applyAiEvent(state, {
+      requestId: 'turn-1',
+      type: 'tool_start',
+      callId: 'pivot',
+      toolId: 'office:excel:create:pivot',
+      toolName: { zh: '创建数据透视表', en: 'Create pivot table' },
+      inputFileNames: [],
+      details: '{"path":"销售.xlsx"}',
+    });
+
+    assert.equal(state.workflow.length, 1);
+    assert.equal(state.workflow[0]?.toolId, 'office:excel:create:pivot');
+    assert.match(state.tools[0]?.details ?? '', /销售\.xlsx/);
+  });
+
   it('adds and clears approval requests', () => {
     let state = createTurnState('turn-1');
     state = applyAiEvent(state, {

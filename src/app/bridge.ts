@@ -110,11 +110,21 @@ export type AiEvent =
   | (AiEventBase & { type: 'assistant_delta'; delta: string })
   | (AiEventBase & { type: 'assistant_done'; content: string })
   | (AiEventBase & {
+      type: 'workflow_preview';
+      steps: Array<{
+        callId: string;
+        toolId: string;
+        toolName?: LocalizedText;
+        details?: string;
+      }>;
+    })
+  | (AiEventBase & {
       type: 'tool_start';
       callId: string;
       toolId: string;
       toolName: LocalizedText;
       inputFileNames: string[];
+      details?: string;
     })
   | (AiEventBase & {
       type: 'tool_progress';

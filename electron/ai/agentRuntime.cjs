@@ -69,6 +69,19 @@ function parseArguments(call) {
   }
 }
 
+function redactToolArguments(value) {
+  if (Array.isArray(value)) return value.map(redactToolArguments);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    /password|secret|token|api.?key/i.test(key) ? '[redacted]' : redactToolArguments(item),
+  ]));
+}
+
+function toolDetails(args) {
+  return JSON.stringify(redactToolArguments(args), null, 2).slice(0, 4000);
+}
+
 function resolveInputFiles(tool, args, workspace) {
   const ids = args.input_file_ids === undefined ? [] : args.input_file_ids;
   if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) {
@@ -193,6 +206,29 @@ class AgentRuntime {
         };
       }
 
+      if (toolCalls.length > 1) {
+        const steps = toolCalls.map((call) => {
+          const provided = providedToolMap.get(call.function?.name);
+          const toolId = toolIdForFunctionName(call.function?.name);
+          const catalogTool = toolId ? this.toolMap.get(toolId) : undefined;
+          let details = 'Invalid tool arguments';
+          try {
+            details = toolDetails(parseArguments(call));
+          } catch {
+            // The regular execution path below reports the typed parse error.
+          }
+          return {
+            callId: String(call.id || ''),
+            toolId: provided?.tool.toolId || catalogTool?.id || String(call.function?.name || ''),
+            ...(provided?.tool.name || catalogTool?.name
+              ? { toolName: provided?.tool.name || catalogTool?.name }
+              : {}),
+            details,
+          };
+        });
+        onEvent({ type: 'workflow_preview', steps });
+      }
+
       for (const call of toolCalls) {
         let tool;
         let activityToolId = '';
@@ -202,12 +238,14 @@ class AgentRuntime {
             const providedTool = provided.tool;
             activityToolId = providedTool.toolId;
             const args = parseArguments(call);
+            const details = toolDetails(args);
             onEvent({
               type: 'tool_start',
               callId: call.id,
               toolId: providedTool.toolId,
               toolName: providedTool.name,
               inputFileNames: [],
+              details,
             });
             const approved = providedTool.requiresApproval === false
               ? true
@@ -216,7 +254,7 @@ class AgentRuntime {
                   toolId: providedTool.toolId,
                   toolName: providedTool.name,
                   inputFileNames: [],
-                  details: JSON.stringify(args, null, 2).slice(0, 4000),
+                  details,
                 });
             if (!approved) {
               const denied = new AiError('AI_TOOL_DENIED', `User denied ${providedTool.toolId}`);
@@ -276,6 +314,7 @@ class AgentRuntime {
             toolId: tool.id,
             toolName: tool.name,
             inputFileNames: inputFiles.map((file) => file.name),
+            details: toolDetails(args),
           });
 
           if (tool.output !== 'report') {
@@ -354,7 +393,9 @@ module.exports = {
   AgentRuntime,
   fileContext,
   normalizeHistory,
+  redactToolArguments,
   resolveInputFiles,
   systemPrompt,
   textPreview,
+  toolDetails,
 };

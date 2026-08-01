@@ -44,4 +44,11 @@ describe('AI workspace wiring', () => {
     assert.doesNotMatch(settingsSource, /--warning/);
     assert.match(aiPanelSource, /approval\.details/);
   });
+
+  it('shows workflow previews and retained tool details as an audit trail', () => {
+    assert.match(aiPanelSource, /WorkflowPreview/);
+    assert.match(aiPanelSource, /message\.workflow/);
+    assert.match(aiPanelSource, /completed\?\.workflow/);
+    assert.match(aiPanelSource, /tool\.details/);
+  });
 });
