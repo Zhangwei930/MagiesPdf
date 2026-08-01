@@ -132,7 +132,7 @@ export default [
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',
-      globals: { console: 'readonly', process: 'readonly', URL: 'readonly' },
+      globals: { Buffer: 'readonly', console: 'readonly', process: 'readonly', URL: 'readonly' },
     },
   },
 
