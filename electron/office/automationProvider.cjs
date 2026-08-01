@@ -120,6 +120,21 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
     }, ['path']),
   ),
   tool(
+    'office_word_add_comment',
+    { zh: '添加 Word 批注', en: 'Add Word comment' },
+    'Add a comment to one matching text occurrence in a Word document and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      find: { type: 'string', minLength: 1, maxLength: 2000 },
+      comment: { type: 'string', minLength: 1, maxLength: 20000 },
+      author: { type: 'string', maxLength: 200, description: 'Defaults to Magies Office AI.' },
+      initials: { type: 'string', maxLength: 20, description: 'Defaults to AI.' },
+      occurrence: { type: 'integer', minimum: 1, description: '1-based matching occurrence. Defaults to 1.' },
+      match_case: { type: 'boolean', description: 'Use case-sensitive matching. Defaults to true.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'find', 'comment']),
+  ),
+  tool(
     'office_excel_read',
     { zh: '读取 Excel 区域', en: 'Read Excel range' },
     'Read cell values and formulas from an Excel workbook. The returned cells are sent to the AI model after user approval.',
@@ -145,6 +160,32 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
       },
       output_directory: OUTPUT_DIRECTORY_PROPERTY,
     }, ['path', 'start_cell', 'values']),
+  ),
+  tool(
+    'office_excel_sort_range',
+    { zh: '排序 Excel 区域', en: 'Sort Excel range' },
+    'Sort rows in a bounded Excel range by one relative column and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      sheet: { type: 'string', maxLength: 128, description: 'Worksheet name. Defaults to the first sheet.' },
+      range: { type: 'string', description: 'A1 range such as A1:F40.' },
+      key_column: { type: 'integer', minimum: 1, maximum: 50, description: '1-based column within the selected range.' },
+      ascending: { type: 'boolean', description: 'Sort ascending. Defaults to true.' },
+      has_header: { type: 'boolean', description: 'Keep the first row as a header. Defaults to true.' },
+      match_case: { type: 'boolean', description: 'Use case-sensitive text sorting. Defaults to false.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'range', 'key_column']),
+  ),
+  tool(
+    'office_excel_apply_autofilter',
+    { zh: '应用 Excel 自动筛选', en: 'Apply Excel auto filter' },
+    'Enable an auto filter on a bounded Excel range with a header row and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      sheet: { type: 'string', maxLength: 128, description: 'Worksheet name. Defaults to the first sheet.' },
+      range: { type: 'string', description: 'A1 range with a header row, such as A1:F40.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'range']),
   ),
   tool(
     'office_excel_format_range',
@@ -232,6 +273,32 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
       height_mm: { type: 'number', minimum: 1, maximum: 1000, description: 'Height. Defaults to 70 mm.' },
       output_directory: OUTPUT_DIRECTORY_PROPERTY,
     }, ['path', 'image_path', 'slide_number']),
+  ),
+  tool(
+    'office_presentation_insert_table',
+    { zh: '插入 PPT 表格', en: 'Insert presentation table' },
+    'Insert a bounded table on a PowerPoint slide and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      slide_number: { type: 'integer', minimum: 1 },
+      values: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 20,
+        items: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 10,
+          items: { type: ['string', 'number', 'boolean', 'null'] },
+        },
+      },
+      has_header: { type: 'boolean', description: 'Bold and shade the first row. Defaults to false.' },
+      x_mm: { type: 'number', minimum: 0, maximum: 1000, description: 'Left position. Defaults to 20 mm.' },
+      y_mm: { type: 'number', minimum: 0, maximum: 1000, description: 'Top position. Defaults to 40 mm.' },
+      width_mm: { type: 'number', minimum: 1, maximum: 1000, description: 'Width. Defaults to 180 mm.' },
+      height_mm: { type: 'number', minimum: 1, maximum: 1000, description: 'Height. Defaults to 80 mm.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'slide_number', 'values']),
   ),
   tool(
     'office_presentation_set_notes',
@@ -341,6 +408,29 @@ function wordTableValues(value) {
       }
     }
   }
+  return value;
+}
+
+function presentationTableValues(value) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 20) {
+    throw new Error('values must contain between 1 and 20 table rows');
+  }
+  let width = -1;
+  let characters = 0;
+  for (const row of value) {
+    if (!Array.isArray(row) || row.length === 0 || row.length > 10) {
+      throw new Error('Each presentation table row must contain between 1 and 10 cells');
+    }
+    if (width === -1) width = row.length;
+    if (row.length !== width) throw new Error('values must be a rectangular array');
+    for (const cell of row) {
+      if (cell !== null && !['string', 'number', 'boolean'].includes(typeof cell)) {
+        throw new Error('Presentation table cells may only contain strings, numbers, booleans, or null');
+      }
+      characters += cell === null ? 0 : String(cell).length;
+    }
+  }
+  if (characters > 50000) throw new Error('Presentation table values may contain at most 50000 characters');
   return value;
 }
 
@@ -571,6 +661,41 @@ function createOfficeAutomationProvider({
       };
     }
 
+    if (functionName === 'office_word_add_comment') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const find = stringValue(args.find, 'find', { required: true, maxLength: 2000 });
+      const comment = stringValue(args.comment, 'comment', { required: true, maxLength: 20000 });
+      const occurrence = args.occurrence === undefined
+        ? 1
+        : integerValue(args.occurrence, 'occurrence', 1);
+      const author = stringValue(args.author, 'author', { maxLength: 200 }) || 'Magies Office AI';
+      const initials = stringValue(args.initials, 'initials', { maxLength: 20 }) || 'AI';
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, WORD_EXTENSIONS, 'Word');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'word_add_comment',
+        inputPath,
+        outputPath: output.absolutePath,
+        find,
+        comment,
+        author,
+        initials,
+        occurrence,
+        matchCase: args.match_case !== false,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        commentAdded: result.commentAdded === true,
+        author: String(result.author || author),
+        occurrence: Number(result.occurrence) || occurrence,
+      };
+    }
+
     if (functionName === 'office_excel_read') {
       const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
       const range = stringValue(args.range, 'range', { maxLength: 50 });
@@ -609,6 +734,67 @@ function createOfficeAutomationProvider({
         source: relativePath,
         written: output.relativePath,
         cellsWritten: Number(result.cellsWritten) || 0,
+      };
+    }
+
+    if (functionName === 'office_excel_sort_range') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const range = boundedExcelRange(
+        stringValue(args.range, 'range', { required: true, maxLength: 50 }).toUpperCase(),
+        'range',
+      );
+      const keyColumn = integerValue(args.key_column, 'key_column', 1);
+      if (keyColumn > 50) throw new Error('key_column must be an integer between 1 and 50');
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, EXCEL_EXTENSIONS, 'Excel');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'excel_sort_range',
+        inputPath,
+        outputPath: output.absolutePath,
+        sheet: stringValue(args.sheet, 'sheet', { maxLength: 128 }),
+        range,
+        keyColumn,
+        ascending: args.ascending !== false,
+        containsHeader: args.has_header !== false,
+        caseSensitive: args.match_case === true,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        sortedRange: String(result.sortedRange || range),
+        keyColumn: Number(result.keyColumn) || keyColumn,
+        ascending: result.ascending !== false,
+      };
+    }
+
+    if (functionName === 'office_excel_apply_autofilter') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const range = boundedExcelRange(
+        stringValue(args.range, 'range', { required: true, maxLength: 50 }).toUpperCase(),
+        'range',
+      );
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, EXCEL_EXTENSIONS, 'Excel');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'excel_apply_autofilter',
+        inputPath,
+        outputPath: output.absolutePath,
+        sheet: stringValue(args.sheet, 'sheet', { maxLength: 128 }),
+        range,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        filterRange: String(result.filterRange || range),
+        databaseRange: String(result.databaseRange || ''),
       };
     }
 
@@ -802,6 +988,37 @@ function createOfficeAutomationProvider({
         written: output.relativePath,
         slideNumber,
         imageInserted: result.imageInserted === true,
+      };
+    }
+
+    if (functionName === 'office_presentation_insert_table') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const slideNumber = integerValue(args.slide_number, 'slide_number', 1);
+      const values = presentationTableValues(args.values);
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, PRESENTATION_EXTENSIONS, 'PowerPoint');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'presentation_insert_table',
+        inputPath,
+        outputPath: output.absolutePath,
+        slideNumber,
+        values,
+        hasHeader: args.has_header === true,
+        xMm: numberValue(args.x_mm, 'x_mm', 0, 1000, 20),
+        yMm: numberValue(args.y_mm, 'y_mm', 0, 1000, 40),
+        widthMm: numberValue(args.width_mm, 'width_mm', 1, 1000, 180),
+        heightMm: numberValue(args.height_mm, 'height_mm', 1, 1000, 80),
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        slideNumber,
+        rows: Number(result.rows) || values.length,
+        columns: Number(result.columns) || values[0].length,
       };
     }
 

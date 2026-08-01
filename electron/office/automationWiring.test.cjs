@@ -48,6 +48,27 @@ describe('Office Agent wiring', () => {
     assert.match(workerSource, /'template_fill':/);
   });
 
+  it('allow-lists the V4 comments, sorting, filtering, and presentation table operations', () => {
+    assert.match(workerSource, /'word_add_comment':/);
+    assert.match(workerSource, /'excel_sort_range':/);
+    assert.match(workerSource, /'excel_apply_autofilter':/);
+    assert.match(workerSource, /'presentation_insert_table':/);
+  });
+
+  it('uses fixed UNO document services for the V4 operations', () => {
+    assert.match(workerSource, /com\.sun\.star\.text\.textfield\.Annotation/);
+    assert.match(workerSource, /uno\.createUnoStruct\('com\.sun\.star\.table\.TableSortField'\)/);
+    assert.match(
+      workerSource,
+      /uno\.Any\(\s*'\[\]com\.sun\.star\.table\.TableSortField', \(sort_field,\)\s*\)/,
+    );
+    assert.match(workerSource, /property_value\(\s*'ContainsHeader'/);
+    assert.match(workerSource, /document\.DatabaseRanges/);
+    assert.match(workerSource, /database_range\.AutoFilter = True/);
+    assert.match(workerSource, /com\.sun\.star\.drawing\.TableShape/);
+    assert.match(workerSource, /table = shape\.Model/);
+  });
+
   it('embeds only workspace-resolved images and returns presentation notes', () => {
     assert.match(workerSource, /uno\.systemPathToFileUrl\(request\['imagePath'\]\)/);
     assert.match(

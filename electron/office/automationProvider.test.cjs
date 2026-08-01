@@ -51,8 +51,11 @@ describe('createOfficeAutomationProvider', () => {
         'office_word_insert_table',
         'office_word_insert_image',
         'office_word_set_header_footer',
+        'office_word_add_comment',
         'office_excel_read',
         'office_excel_write',
+        'office_excel_sort_range',
+        'office_excel_apply_autofilter',
         'office_excel_format_range',
         'office_excel_create_chart',
         'office_presentation_read',
@@ -60,6 +63,7 @@ describe('createOfficeAutomationProvider', () => {
         'office_presentation_add_slide',
         'office_presentation_delete_slide',
         'office_presentation_insert_image',
+        'office_presentation_insert_table',
         'office_presentation_set_notes',
         'office_template_fill',
         'office_batch_convert_pdf',
@@ -227,6 +231,49 @@ describe('createOfficeAutomationProvider', () => {
     }), /header or footer/);
   });
 
+  it('adds a Word comment to a selected text occurrence', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Report.docx'), 'source');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { commentAdded: true, author: request.author, occurrence: request.occurrence };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    assert.deepEqual(await provider.callTool('office_word_add_comment', {
+      path: 'Report.docx',
+      find: 'Revenue',
+      comment: 'Verify this figure',
+      author: 'Ada',
+      initials: 'AD',
+      occurrence: 2,
+      match_case: false,
+      output_directory: 'Reviewed',
+    }), {
+      source: 'Report.docx',
+      written: 'Reviewed/Report.docx',
+      commentAdded: true,
+      author: 'Ada',
+      occurrence: 2,
+    });
+    assert.equal(calls[0].operation, 'word_add_comment');
+    assert.equal(calls[0].matchCase, false);
+    assert.equal(calls[0].initials, 'AD');
+
+    await assert.rejects(() => provider.callTool('office_word_add_comment', {
+      path: 'Report.docx', find: 'Revenue', comment: '',
+    }), /comment/);
+    await assert.rejects(() => provider.callTool('office_word_add_comment', {
+      path: 'Report.docx', find: 'Revenue', comment: 'Check', occurrence: 0,
+    }), /occurrence/);
+  });
+
   it('validates and delegates Excel range reads and writes', async () => {
     const root = await temporaryDirectory();
     await fs.writeFile(path.join(root, 'Budget.xlsx'), 'source');
@@ -326,6 +373,64 @@ describe('createOfficeAutomationProvider', () => {
     await assert.rejects(() => provider.callTool('office_excel_format_range', {
       path: 'Budget.xlsx', range: 'A1:AZ200', bold: true,
     }), /at most 200 rows, 50 columns, and 5000 cells/);
+  });
+
+  it('sorts Excel rows and applies an auto filter to a bounded range', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Budget.xlsx'), 'source');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return request.operation === 'excel_sort_range'
+          ? { sortedRange: request.range, keyColumn: request.keyColumn, ascending: request.ascending }
+          : { filterRange: request.range, databaseRange: 'MagiesFilter' };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    assert.deepEqual(await provider.callTool('office_excel_sort_range', {
+      path: 'Budget.xlsx',
+      sheet: 'Sheet1',
+      range: 'A1:C5',
+      key_column: 2,
+      ascending: false,
+      has_header: true,
+      match_case: true,
+      output_directory: 'Edited',
+    }), {
+      source: 'Budget.xlsx',
+      written: 'Edited/Budget.xlsx',
+      sortedRange: 'A1:C5',
+      keyColumn: 2,
+      ascending: false,
+    });
+    assert.equal(calls[0].operation, 'excel_sort_range');
+    assert.equal(calls[0].containsHeader, true);
+    assert.equal(calls[0].caseSensitive, true);
+
+    assert.deepEqual(await provider.callTool('office_excel_apply_autofilter', {
+      path: 'Budget.xlsx', sheet: 'Sheet1', range: 'A1:C5', output_directory: 'Edited',
+    }), {
+      source: 'Budget.xlsx',
+      written: 'Edited/Budget (2).xlsx',
+      filterRange: 'A1:C5',
+      databaseRange: 'MagiesFilter',
+    });
+    assert.equal(calls[1].operation, 'excel_apply_autofilter');
+
+    await assert.rejects(() => provider.callTool('office_excel_sort_range', {
+      path: 'Budget.xlsx', range: 'A1:C5', key_column: 0,
+    }), /key_column/);
+    await assert.rejects(() => provider.callTool('office_excel_sort_range', {
+      path: 'Budget.xlsx', range: 'A1:C5', key_column: 51,
+    }), /key_column/);
+    await assert.rejects(() => provider.callTool('office_excel_apply_autofilter', {
+      path: 'Budget.xlsx', range: 'not-a-range',
+    }), /range/);
   });
 
   it('adds and deletes PowerPoint slides in non-overwriting copies', async () => {
@@ -430,6 +535,85 @@ describe('createOfficeAutomationProvider', () => {
     await assert.rejects(() => provider.callTool('office_presentation_set_notes', {
       path: 'Quarterly.pptx', slide_number: 1, notes: 'x'.repeat(20001),
     }), /notes/);
+  });
+
+  it('inserts a bounded table into a PowerPoint slide', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Quarterly.pptx'), 'source');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { rows: request.values.length, columns: request.values[0].length };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    assert.deepEqual(await provider.callTool('office_presentation_insert_table', {
+      path: 'Quarterly.pptx',
+      slide_number: 1,
+      values: [['Region', 'Revenue'], ['West', 120]],
+      has_header: true,
+      x_mm: 20,
+      y_mm: 40,
+      width_mm: 180,
+      height_mm: 80,
+      output_directory: 'Edited',
+    }), {
+      source: 'Quarterly.pptx',
+      written: 'Edited/Quarterly.pptx',
+      slideNumber: 1,
+      rows: 2,
+      columns: 2,
+    });
+    assert.equal(calls[0].operation, 'presentation_insert_table');
+    assert.equal(calls[0].hasHeader, true);
+    assert.equal(calls[0].widthMm, 180);
+
+    assert.deepEqual(await provider.callTool('office_presentation_insert_table', {
+      path: 'Quarterly.pptx', slide_number: 1, values: [['Flag', null, true]],
+      output_directory: 'Edited',
+    }), {
+      source: 'Quarterly.pptx',
+      written: 'Edited/Quarterly (2).pptx',
+      slideNumber: 1,
+      rows: 1,
+      columns: 3,
+    });
+    assert.equal(calls[1].hasHeader, false);
+    assert.equal(calls[1].xMm, 20);
+    assert.equal(calls[1].heightMm, 80);
+
+    await assert.rejects(() => provider.callTool('office_presentation_insert_table', {
+      path: 'Quarterly.pptx', slide_number: 1, values: [['A', 'B'], ['C']],
+    }), /rectangular/);
+    await assert.rejects(() => provider.callTool('office_presentation_insert_table', {
+      path: 'Quarterly.pptx', slide_number: 0, values: [['A']],
+    }), /slide_number/);
+    await assert.rejects(() => provider.callTool('office_presentation_insert_table', {
+      path: 'Quarterly.pptx', slide_number: 1, values: 'not-an-array',
+    }), /between 1 and 20 table rows/);
+    await assert.rejects(() => provider.callTool('office_presentation_insert_table', {
+      path: 'Quarterly.pptx', slide_number: 1, values: [],
+    }), /between 1 and 20 table rows/);
+    await assert.rejects(() => provider.callTool('office_presentation_insert_table', {
+      path: 'Quarterly.pptx', slide_number: 1, values: Array.from({ length: 21 }, () => ['A']),
+    }), /between 1 and 20 table rows/);
+    await assert.rejects(() => provider.callTool('office_presentation_insert_table', {
+      path: 'Quarterly.pptx', slide_number: 1, values: [[]],
+    }), /between 1 and 10 cells/);
+    await assert.rejects(() => provider.callTool('office_presentation_insert_table', {
+      path: 'Quarterly.pptx', slide_number: 1, values: [Array(11).fill('A')],
+    }), /between 1 and 10 cells/);
+    await assert.rejects(() => provider.callTool('office_presentation_insert_table', {
+      path: 'Quarterly.pptx', slide_number: 1, values: [[Symbol('invalid')]],
+    }), /table cells/);
+    await assert.rejects(() => provider.callTool('office_presentation_insert_table', {
+      path: 'Quarterly.pptx', slide_number: 1, values: [['x'.repeat(50001)]],
+    }), /50000 characters/);
   });
 
   it('fills template variables in Word, Excel, or PowerPoint copies', async () => {

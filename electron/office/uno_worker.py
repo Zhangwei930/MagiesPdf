@@ -112,6 +112,32 @@ def active_word_page_style(document):
     return page_styles.getByName(names[0])
 
 
+def word_comments(document, character_limit):
+    comments = []
+    used_characters = 0
+    truncated = False
+    enumeration = document.TextFields.createEnumeration()
+    while enumeration.hasMoreElements():
+        field = enumeration.nextElement()
+        if not field.supportsService('com.sun.star.text.textfield.Annotation'):
+            continue
+        if len(comments) >= 100:
+            truncated = True
+            break
+        author = str(field.Author)
+        content = str(field.Content)
+        remaining = character_limit - used_characters - len(author)
+        if remaining <= 0:
+            truncated = True
+            break
+        if len(content) > remaining:
+            content = content[:remaining]
+            truncated = True
+        used_characters += len(author) + len(content)
+        comments.append({'author': author, 'content': content})
+    return comments, used_characters, truncated
+
+
 def word_read(document, _request):
     if not document.supportsService('com.sun.star.text.TextDocument'):
         raise ValueError('The selected file is not a Word document')
@@ -170,13 +196,17 @@ def word_read(document, _request):
     page_style = active_word_page_style(document)
     header = str(page_style.HeaderText.String) if page_style.HeaderIsOn else ''
     footer = str(page_style.FooterText.String) if page_style.FooterIsOn else ''
+    comments, _comment_characters, comments_truncated = word_comments(
+        document, max(0, MAX_TEXT_CHARS - used_characters)
+    )
     return {
         'text': text,
         'tables': tables,
+        'comments': comments,
         'imageCount': image_count,
         'header': header,
         'footer': footer,
-        'truncated': truncated,
+        'truncated': truncated or comments_truncated,
     }
 
 
@@ -280,6 +310,34 @@ def word_set_header_footer(document, request):
     }
 
 
+def word_add_comment(document, request):
+    if not document.supportsService('com.sun.star.text.TextDocument'):
+        raise ValueError('The selected file is not a Word document')
+    descriptor = document.createSearchDescriptor()
+    descriptor.SearchString = request['find']
+    descriptor.SearchCaseSensitive = request.get('matchCase', True) is not False
+    matches = document.findAll(descriptor)
+    occurrence = int(request.get('occurrence', 1))
+    match_count = matches.getCount()
+    if occurrence > match_count:
+        raise ValueError(
+            f'Comment occurrence {occurrence} was not found; document has {match_count} matches'
+        )
+    selected = matches.getByIndex(occurrence - 1)
+    annotation = document.createInstance('com.sun.star.text.textfield.Annotation')
+    annotation.Author = request['author']
+    annotation.Initials = request['initials']
+    annotation.Content = request['comment']
+    selected.Text.insertTextContent(selected, annotation, False)
+    store_copy(document, request['outputPath'])
+    return {
+        'commentAdded': True,
+        'author': request['author'],
+        'occurrence': occurrence,
+        'matchCount': match_count,
+    }
+
+
 def spreadsheet(document, requested_name):
     if not document.supportsService('com.sun.star.sheet.SpreadsheetDocument'):
         raise ValueError('The selected file is not an Excel workbook')
@@ -339,6 +397,25 @@ def excel_style_summary(selected):
     }
 
 
+def same_range_address(left, right):
+    return (
+        left.Sheet == right.Sheet
+        and left.StartColumn == right.StartColumn
+        and left.StartRow == right.StartRow
+        and left.EndColumn == right.EndColumn
+        and left.EndRow == right.EndRow
+    )
+
+
+def database_range_for_address(document, address):
+    database_ranges = document.DatabaseRanges
+    for name in database_ranges.getElementNames():
+        database_range = database_ranges.getByName(name)
+        if same_range_address(database_range.getDataArea(), address):
+            return name, database_range
+    return '', None
+
+
 def excel_read(document, request):
     sheet_name, sheet = spreadsheet(document, request.get('sheet', ''))
     requested_range = request.get('range', '')
@@ -363,6 +440,9 @@ def excel_read(document, request):
         for row in raw_formulas
     ]
     style_summary = excel_style_summary(selected)
+    _database_range_name, database_range = database_range_for_address(
+        document, selected_address
+    )
     truncated = end_column < address.EndColumn or end_row < address.EndRow
     return {
         'sheet': sheet_name,
@@ -370,6 +450,7 @@ def excel_read(document, request):
         'values': values,
         'formulas': formulas,
         'styles': style_summary,
+        'autoFilter': bool(database_range.AutoFilter) if database_range else False,
         'truncated': truncated,
     }
 
@@ -398,6 +479,73 @@ def excel_write(document, request):
     document.calculateAll()
     store_copy(document, request['outputPath'])
     return {'cellsWritten': cells_written}
+
+
+def excel_sort_range(document, request):
+    _sheet_name, sheet = spreadsheet(document, request.get('sheet', ''))
+    selected = sheet.getCellRangeByName(request['range'])
+    address = selected.getRangeAddress()
+    key_column = int(request['keyColumn'])
+    column_count = address.EndColumn - address.StartColumn + 1
+    if key_column > column_count:
+        raise ValueError(
+            f'key_column must be between 1 and the selected range width ({column_count})'
+        )
+    sort_field = uno.createUnoStruct('com.sun.star.table.TableSortField')
+    sort_field.Field = key_column - 1
+    sort_field.IsAscending = request.get('ascending', True) is not False
+    sort_field.IsCaseSensitive = request.get('caseSensitive', False) is True
+    sort_field.FieldType = uno.Enum(
+        'com.sun.star.table.TableSortFieldType', 'AUTOMATIC'
+    )
+    descriptor = (
+        property_value(
+            'SortFields',
+            uno.Any(
+                '[]com.sun.star.table.TableSortField', (sort_field,)
+            ),
+        ),
+        property_value(
+            'ContainsHeader', request.get('containsHeader', True) is not False
+        ),
+    )
+    selected.sort(descriptor)
+    document.calculateAll()
+    store_copy(document, request['outputPath'])
+    return {
+        'sortedRange': range_name(address),
+        'keyColumn': key_column,
+        'ascending': sort_field.IsAscending,
+    }
+
+
+def unique_database_range_name(database_ranges):
+    base = 'MagiesFilter'
+    if not database_ranges.hasByName(base):
+        return base
+    suffix = 2
+    while database_ranges.hasByName(f'{base} ({suffix})'):
+        suffix += 1
+    return f'{base} ({suffix})'
+
+
+def excel_apply_autofilter(document, request):
+    _sheet_name, sheet = spreadsheet(document, request.get('sheet', ''))
+    selected = sheet.getCellRangeByName(request['range'])
+    address = selected.getRangeAddress()
+    database_range_name, database_range = database_range_for_address(document, address)
+    if database_range is None:
+        database_ranges = document.DatabaseRanges
+        database_range_name = unique_database_range_name(database_ranges)
+        database_ranges.addNewByName(database_range_name, address)
+        database_range = database_ranges.getByName(database_range_name)
+    database_range.ContainsHeader = True
+    database_range.AutoFilter = True
+    store_copy(document, request['outputPath'])
+    return {
+        'filterRange': range_name(address),
+        'databaseRange': database_range_name,
+    }
 
 
 def color_number(value):
@@ -537,6 +685,44 @@ def slide_image_count(slide):
     return count
 
 
+def slide_tables(slide, character_limit):
+    tables = []
+    used_characters = 0
+    truncated = False
+    for index in range(slide.getCount()):
+        shape = slide.getByIndex(index)
+        if shape.getShapeType() != 'com.sun.star.drawing.TableShape':
+            continue
+        if len(tables) >= 20:
+            truncated = True
+            break
+        table = shape.Model
+        total_rows = table.Rows.getCount()
+        total_columns = table.Columns.getCount()
+        row_count = min(total_rows, 20)
+        column_count = min(total_columns, 10)
+        values = []
+        table_truncated = row_count < total_rows or column_count < total_columns
+        for row_index in range(row_count):
+            row = []
+            for column_index in range(column_count):
+                value = str(table.getCellByPosition(column_index, row_index).String)
+                remaining = character_limit - used_characters
+                if remaining <= 0:
+                    value = ''
+                    table_truncated = True
+                elif len(value) > remaining:
+                    value = value[:remaining]
+                    table_truncated = True
+                used_characters += len(value)
+                row.append(value)
+            values.append(row)
+        tables.append({'values': values, 'truncated': table_truncated})
+        if table_truncated:
+            truncated = True
+    return tables, used_characters, truncated
+
+
 def presentation_read(document, _request):
     pages = presentation(document)
     slides = []
@@ -557,13 +743,20 @@ def presentation_read(document, _request):
         elif len(notes) > remaining - len(text):
             notes = notes[:remaining - len(text)]
             truncated = True
+        tables, table_characters, tables_truncated = slide_tables(
+            slide,
+            max(0, remaining - len(text) - len(notes)),
+        )
+        if tables_truncated:
+            truncated = True
         slides.append({
             'number': index + 1,
             'text': text,
             'notes': notes,
             'imageCount': slide_image_count(slide),
+            'tables': tables,
         })
-        total_characters += len(text) + len(notes)
+        total_characters += len(text) + len(notes) + table_characters
     return {'slides': slides, 'truncated': truncated}
 
 
@@ -675,6 +868,56 @@ def presentation_insert_image(document, request):
     slide.add(shape)
     store_copy(document, request['outputPath'])
     return {'imageInserted': True, 'slideNumber': slide_number}
+
+
+def resize_table(table, row_count, column_count):
+    current_rows = table.Rows.getCount()
+    if row_count > current_rows:
+        table.Rows.insertByIndex(current_rows, row_count - current_rows)
+    elif row_count < current_rows:
+        table.Rows.removeByIndex(row_count, current_rows - row_count)
+    current_columns = table.Columns.getCount()
+    if column_count > current_columns:
+        table.Columns.insertByIndex(current_columns, column_count - current_columns)
+    elif column_count < current_columns:
+        table.Columns.removeByIndex(column_count, current_columns - column_count)
+
+
+def presentation_insert_table(document, request):
+    pages = presentation(document)
+    slide_number = int(request['slideNumber'])
+    slide = presentation_slide_by_number(pages, slide_number)
+    values = request['values']
+    row_count = len(values)
+    column_count = len(values[0])
+    shape = document.createInstance('com.sun.star.drawing.TableShape')
+    position = uno.createUnoStruct('com.sun.star.awt.Point')
+    position.X = int(round(float(request['xMm']) * 100))
+    position.Y = int(round(float(request['yMm']) * 100))
+    dimensions = uno.createUnoStruct('com.sun.star.awt.Size')
+    dimensions.Width = int(round(float(request['widthMm']) * 100))
+    dimensions.Height = int(round(float(request['heightMm']) * 100))
+    shape.Position = position
+    shape.Size = dimensions
+    slide.add(shape)
+    table = shape.Model
+    resize_table(table, row_count, column_count)
+    has_header = request.get('hasHeader', False) is True
+    for row_index, row in enumerate(values):
+        for column_index, value in enumerate(row):
+            cell = table.getCellByPosition(column_index, row_index)
+            cell.String = '' if value is None else str(value)
+            if has_header and row_index == 0:
+                cell.FillColor = 0xD9EAF7
+                cursor = cell.createTextCursor()
+                cursor.gotoEnd(True)
+                cursor.CharWeight = 150.0
+    store_copy(document, request['outputPath'])
+    return {
+        'slideNumber': slide_number,
+        'rows': row_count,
+        'columns': column_count,
+    }
 
 
 def presentation_set_notes(document, request):
@@ -831,8 +1074,11 @@ OPERATIONS = {
     'word_insert_table': (False, word_insert_table),
     'word_insert_image': (False, word_insert_image),
     'word_set_header_footer': (False, word_set_header_footer),
+    'word_add_comment': (False, word_add_comment),
     'excel_read': (True, excel_read),
     'excel_write': (False, excel_write),
+    'excel_sort_range': (False, excel_sort_range),
+    'excel_apply_autofilter': (False, excel_apply_autofilter),
     'excel_format_range': (False, excel_format_range),
     'excel_create_chart': (False, excel_create_chart),
     'presentation_read': (True, presentation_read),
@@ -840,6 +1086,7 @@ OPERATIONS = {
     'presentation_add_slide': (False, presentation_add_slide),
     'presentation_delete_slide': (False, presentation_delete_slide),
     'presentation_insert_image': (False, presentation_insert_image),
+    'presentation_insert_table': (False, presentation_insert_table),
     'presentation_set_notes': (False, presentation_set_notes),
     'template_fill': (False, template_fill),
     'convert_pdf': (True, convert_pdf),
