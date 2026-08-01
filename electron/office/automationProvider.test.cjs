@@ -47,7 +47,9 @@ describe('createOfficeAutomationProvider', () => {
       [
         'office_workspace_list',
         'office_word_read',
+        'office_word_read_changes',
         'office_word_replace',
+        'office_word_replace_tracked',
         'office_word_insert_table',
         'office_word_insert_image',
         'office_word_set_header_footer',
@@ -57,6 +59,7 @@ describe('createOfficeAutomationProvider', () => {
         'office_excel_sort_range',
         'office_excel_apply_autofilter',
         'office_excel_format_range',
+        'office_excel_add_conditional_format',
         'office_excel_create_chart',
         'office_excel_create_pivot',
         'office_presentation_read',
@@ -67,6 +70,7 @@ describe('createOfficeAutomationProvider', () => {
         'office_presentation_insert_table',
         'office_presentation_set_notes',
         'office_template_fill',
+        'office_template_batch_fill',
         'office_batch_convert_pdf',
         'office_workspace_archive',
       ],
@@ -138,6 +142,58 @@ describe('createOfficeAutomationProvider', () => {
       { source: 'Letter.docx', written: 'Edited/Letter (2).docx', replacementCount: 2 },
     );
     assert.equal(calls[1].outputPath, path.join(await fs.realpath(root), 'Edited', 'Letter (2).docx'));
+  });
+
+  it('reads Word revisions and writes replacements with change tracking enabled', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Contract.docx'), 'source');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        if (request.operation === 'word_read_changes') {
+          return {
+            changes: [{ type: 'Insert', author: 'Ada', text: 'updated clause' }],
+            truncated: false,
+          };
+        }
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { replacementCount: 1 };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    assert.deepEqual(await provider.callTool('office_word_read_changes', {
+      path: 'Contract.docx',
+    }), {
+      path: 'Contract.docx',
+      changes: [{ type: 'Insert', author: 'Ada', text: 'updated clause' }],
+      truncated: false,
+    });
+    assert.deepEqual(await provider.callTool('office_word_replace_tracked', {
+      path: 'Contract.docx',
+      find: 'old clause',
+      replace: 'updated clause',
+      match_case: false,
+      output_directory: 'Reviewed',
+    }), {
+      source: 'Contract.docx',
+      written: 'Reviewed/Contract.docx',
+      replacementCount: 1,
+    });
+    assert.equal(calls[0].operation, 'word_read_changes');
+    assert.deepEqual(calls[1], {
+      operation: 'word_replace_tracked',
+      inputPath: path.join(await fs.realpath(root), 'Contract.docx'),
+      outputPath: path.join(await fs.realpath(root), 'Reviewed', 'Contract.docx'),
+      find: 'old clause',
+      replace: 'updated clause',
+      matchCase: false,
+      executable: '/office/soffice',
+      signal: undefined,
+    });
   });
 
   it('inserts a rectangular table into a Word copy', async () => {
@@ -726,6 +782,135 @@ describe('createOfficeAutomationProvider', () => {
     await assert.rejects(() => provider.callTool('office_template_fill', {
       path: 'Template.docx', replacements: { '{{name}}': { unsafe: true } },
     }), /replacement values/);
+  });
+
+  it('fills one Office template from multiple validated records', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Template.docx'), 'source');
+    const calls = [];
+    const progress = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { documentType: 'word', replacementCount: 2 };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    assert.deepEqual(await provider.callTool('office_template_batch_fill', {
+      path: 'Template.docx',
+      records: [
+        { '{{name}}': 'Ada', '{{total}}': 42 },
+        { '{{name}}': '张伟', '{{total}}': 18 },
+      ],
+      output_name_key: '{{name}}',
+      output_directory: 'Generated',
+    }, { onProgress: (value) => progress.push(value) }), {
+      source: 'Template.docx',
+      generated: 2,
+      written: ['Generated/Template - Ada.docx', 'Generated/Template - 张伟.docx'],
+      documentType: 'word',
+      replacementCount: 4,
+    });
+    assert.deepEqual(calls.map((call) => call.operation), ['template_fill', 'template_fill']);
+    assert.deepEqual(calls[0].replacements, { '{{name}}': 'Ada', '{{total}}': '42' });
+    assert.deepEqual(progress, [0.5, 1]);
+
+    await assert.rejects(() => provider.callTool('office_template_batch_fill', {
+      path: 'Template.docx', records: [],
+    }), /records/);
+    await assert.rejects(() => provider.callTool('office_template_batch_fill', {
+      path: 'Template.docx', records: [{ '{{name}}': { unsafe: true } }],
+    }), /replacement values/);
+    await assert.rejects(() => provider.callTool('office_template_batch_fill', {
+      path: 'Template.docx', records: [{ '{{name}}': 'Ada' }], output_name_key: '{{missing}}',
+    }), /output_name_key/);
+    assert.equal(calls.length, 2);
+  });
+
+  it('reports completed template outputs when a later record fails', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Template.docx'), 'source');
+    let callCount = 0;
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        callCount += 1;
+        if (callCount === 2) throw new Error('LibreOffice stopped');
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { documentType: 'word', replacementCount: 1 };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    await assert.rejects(() => provider.callTool('office_template_batch_fill', {
+      path: 'Template.docx',
+      records: [{ '{{name}}': 'Ada' }, { '{{name}}': 'Grace' }],
+      output_directory: 'Generated',
+    }), /failed after 1 files.*Generated\/Template - 1\.docx/);
+    assert.equal(await fs.readFile(path.join(root, 'Generated', 'Template - 1.docx'), 'utf8'), 'source');
+  });
+
+  it('adds bounded Excel conditional formatting with a dedicated cell style', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Budget.xlsx'), 'source');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { formattedRange: 'B2:B20', styleName: 'MagiesConditional' };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    assert.deepEqual(await provider.callTool('office_excel_add_conditional_format', {
+      path: 'Budget.xlsx',
+      sheet: 'Summary',
+      range: 'b2:b20',
+      operator: 'greater_equal',
+      formula1: '100',
+      background_color: '#fff2cc',
+      text_color: '#9c0006',
+      bold: true,
+      output_directory: 'Formatted',
+    }), {
+      source: 'Budget.xlsx',
+      written: 'Formatted/Budget.xlsx',
+      formattedRange: 'B2:B20',
+      styleName: 'MagiesConditional',
+    });
+    assert.deepEqual(calls[0], {
+      operation: 'excel_add_conditional_format',
+      inputPath: path.join(await fs.realpath(root), 'Budget.xlsx'),
+      outputPath: path.join(await fs.realpath(root), 'Formatted', 'Budget.xlsx'),
+      sheet: 'Summary',
+      range: 'B2:B20',
+      operator: 'GREATER_EQUAL',
+      formula1: '100',
+      formula2: '',
+      backgroundColor: '#FFF2CC',
+      textColor: '#9C0006',
+      bold: true,
+      executable: '/office/soffice',
+      signal: undefined,
+    });
+
+    await assert.rejects(() => provider.callTool('office_excel_add_conditional_format', {
+      path: 'Budget.xlsx', range: 'A1:A5', operator: 'between', formula1: '1', background_color: '#FFFFFF',
+    }), /formula2/);
+    await assert.rejects(() => provider.callTool('office_excel_add_conditional_format', {
+      path: 'Budget.xlsx', range: 'A1:A5', operator: 'contains', formula1: '1', background_color: '#FFFFFF',
+    }), /operator/);
+    await assert.rejects(() => provider.callTool('office_excel_add_conditional_format', {
+      path: 'Budget.xlsx', range: 'A1:A5', operator: 'equal', formula1: '1',
+    }), /style option/);
   });
 
   it('rejects invalid structural-editing arguments and supports safe defaults', async () => {

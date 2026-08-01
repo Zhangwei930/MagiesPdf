@@ -64,9 +64,27 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
     schema({ path: PATH_PROPERTY }, ['path']),
   ),
   tool(
+    'office_word_read_changes',
+    { zh: '读取 Word 修订', en: 'Read Word tracked changes' },
+    'Read bounded tracked-change metadata and text from a Word document after user approval.',
+    schema({ path: PATH_PROPERTY }, ['path']),
+  ),
+  tool(
     'office_word_replace',
     { zh: '替换 Word 文本', en: 'Replace Word text' },
     'Replace text in a Word document using LibreOffice and save a new non-overwriting copy.',
+    schema({
+      path: PATH_PROPERTY,
+      find: { type: 'string', minLength: 1, maxLength: 2000 },
+      replace: { type: 'string', maxLength: 20000 },
+      match_case: { type: 'boolean', description: 'Use case-sensitive matching. Defaults to true.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'find', 'replace']),
+  ),
+  tool(
+    'office_word_replace_tracked',
+    { zh: '修订模式替换 Word 文本', en: 'Replace Word text with tracking' },
+    'Replace Word text while recording the edits as tracked changes, then save a new non-overwriting copy.',
     schema({
       path: PATH_PROPERTY,
       find: { type: 'string', minLength: 1, maxLength: 2000 },
@@ -202,6 +220,26 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
       optimal_width: { type: 'boolean', description: 'Automatically fit the selected columns.' },
       output_directory: OUTPUT_DIRECTORY_PROPERTY,
     }, ['path', 'range']),
+  ),
+  tool(
+    'office_excel_add_conditional_format',
+    { zh: '添加 Excel 条件格式', en: 'Add Excel conditional formatting' },
+    'Add one bounded conditional-format rule backed by a dedicated cell style and save a new copy.',
+    schema({
+      path: PATH_PROPERTY,
+      sheet: { type: 'string', maxLength: 128, description: 'Worksheet name. Defaults to the first sheet.' },
+      range: { type: 'string', description: 'A1 range such as B2:B200.' },
+      operator: {
+        type: 'string',
+        enum: ['equal', 'not_equal', 'greater', 'greater_equal', 'less', 'less_equal', 'between', 'not_between', 'formula'],
+      },
+      formula1: { type: 'string', minLength: 1, maxLength: 2000 },
+      formula2: { type: 'string', maxLength: 2000, description: 'Required for between and not_between.' },
+      background_color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$' },
+      text_color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$' },
+      bold: { type: 'boolean' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'range', 'operator', 'formula1']),
   ),
   tool(
     'office_excel_create_chart',
@@ -343,6 +381,31 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
       },
       output_directory: OUTPUT_DIRECTORY_PROPERTY,
     }, ['path', 'replacements']),
+  ),
+  tool(
+    'office_template_batch_fill',
+    { zh: '批量填充 Office 模板', en: 'Batch fill Office template' },
+    'Create up to 50 Word, Excel, or PowerPoint files from one template and validated replacement records.',
+    schema({
+      path: PATH_PROPERTY,
+      records: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 50,
+        items: {
+          type: 'object',
+          minProperties: 1,
+          maxProperties: 100,
+          additionalProperties: { type: ['string', 'number', 'boolean', 'null'] },
+        },
+      },
+      output_name_key: {
+        type: 'string',
+        maxLength: 200,
+        description: 'Optional replacement key whose value becomes each output file suffix. Defaults to record numbers.',
+      },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'records']),
   ),
   tool(
     'office_batch_convert_pdf',
@@ -512,6 +575,25 @@ function replacementMap(value) {
   return Object.fromEntries(normalized);
 }
 
+function replacementRecords(value) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 50) {
+    throw new Error('records must contain between 1 and 50 replacement objects');
+  }
+  return value.map(replacementMap);
+}
+
+function outputNameLabel(value) {
+  const label = [...String(value)]
+    .map((character) => (character.charCodeAt(0) < 32 ? '_' : character))
+    .join('')
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .trim()
+    .replace(/[. ]+$/g, '')
+    .slice(0, 80);
+  if (!label) throw new Error('output_name_key must resolve to a non-empty safe file name for every record');
+  return label;
+}
+
 function boundedExcelRange(value, label) {
   if (!RANGE_REFERENCE.test(value)) throw new Error(`${label} must use A1 notation such as A1:F40`);
   const [startReference, endReference = startReference] = value.split(':');
@@ -575,6 +657,14 @@ function createOfficeAutomationProvider({
       return { path: relativePath, ...result };
     }
 
+    if (functionName === 'office_word_read_changes') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, WORD_EXTENSIONS, 'Word');
+      const result = await callUno({ operation: 'word_read_changes', inputPath }, options);
+      return { path: relativePath, ...result };
+    }
+
     if (functionName === 'office_word_replace') {
       const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
       const find = stringValue(args.find, 'find', { required: true, maxLength: 2000 });
@@ -587,6 +677,31 @@ function createOfficeAutomationProvider({
       );
       const result = await callUno({
         operation: 'word_replace',
+        inputPath,
+        outputPath: output.absolutePath,
+        find,
+        replace,
+        matchCase: args.match_case !== false,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        replacementCount: Number(result.replacementCount) || 0,
+      };
+    }
+
+    if (functionName === 'office_word_replace_tracked') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const find = stringValue(args.find, 'find', { required: true, maxLength: 2000 });
+      const replace = stringValue(args.replace, 'replace', { maxLength: 20000 });
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, WORD_EXTENSIONS, 'Word');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'word_replace_tracked',
         inputPath,
         outputPath: output.absolutePath,
         find,
@@ -855,6 +970,61 @@ function createOfficeAutomationProvider({
         source: relativePath,
         written: output.relativePath,
         formattedRange: String(result.formattedRange || range),
+      };
+    }
+
+    if (functionName === 'office_excel_add_conditional_format') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const range = boundedExcelRange(
+        stringValue(args.range, 'range', { required: true, maxLength: 50 }).toUpperCase(),
+        'range',
+      );
+      const operators = {
+        equal: 'EQUAL',
+        not_equal: 'NOT_EQUAL',
+        greater: 'GREATER',
+        greater_equal: 'GREATER_EQUAL',
+        less: 'LESS',
+        less_equal: 'LESS_EQUAL',
+        between: 'BETWEEN',
+        not_between: 'NOT_BETWEEN',
+        formula: 'FORMULA',
+      };
+      const requestedOperator = stringValue(args.operator, 'operator', { required: true, maxLength: 30 });
+      const operator = operators[requestedOperator];
+      if (!operator) throw new Error('operator is not supported');
+      const formula1 = stringValue(args.formula1, 'formula1', { required: true, maxLength: 2000 });
+      const formula2 = stringValue(args.formula2, 'formula2', { maxLength: 2000 });
+      if (['BETWEEN', 'NOT_BETWEEN'].includes(operator) && !formula2) {
+        throw new Error('formula2 is required for between and not_between');
+      }
+      const hasStyle = ['bold', 'background_color', 'text_color'].some((key) => args[key] !== undefined);
+      if (!hasStyle) throw new Error('Conditional formatting requires at least one style option');
+      if (args.bold !== undefined && typeof args.bold !== 'boolean') throw new Error('bold must be a boolean');
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, EXCEL_EXTENSIONS, 'Excel');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'excel_add_conditional_format',
+        inputPath,
+        outputPath: output.absolutePath,
+        sheet: stringValue(args.sheet, 'sheet', { maxLength: 128 }),
+        range,
+        operator,
+        formula1,
+        formula2,
+        backgroundColor: colorValue(args.background_color, 'background_color'),
+        textColor: colorValue(args.text_color, 'text_color'),
+        bold: args.bold,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        formattedRange: String(result.formattedRange || range),
+        styleName: String(result.styleName || ''),
       };
     }
 
@@ -1144,6 +1314,56 @@ function createOfficeAutomationProvider({
         written: output.relativePath,
         documentType: String(result.documentType || ''),
         replacementCount: Number(result.replacementCount) || 0,
+      };
+    }
+
+    if (functionName === 'office_template_batch_fill') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const records = replacementRecords(args.records);
+      const outputNameKey = stringValue(args.output_name_key, 'output_name_key', { maxLength: 200 });
+      const outputLabels = records.map((record, index) => {
+        if (!outputNameKey) return String(index + 1);
+        if (!Object.hasOwn(record, outputNameKey)) {
+          throw new Error('output_name_key must exist in every replacement record');
+        }
+        return outputNameLabel(record[outputNameKey]);
+      });
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, CONVERTIBLE_EXTENSIONS, 'Office');
+      const outputDirectory = stringValue(args.output_directory, 'output_directory', { maxLength: 1000 })
+        || DEFAULT_OUTPUT_DIRECTORY;
+      const extension = path.extname(inputPath);
+      const stem = path.basename(inputPath, extension);
+      const written = [];
+      let documentType = '';
+      let replacementCount = 0;
+      try {
+        for (let index = 0; index < records.length; index += 1) {
+          const output = await workspace.uniqueOutputPath(
+            outputDirectory,
+            `${stem} - ${outputLabels[index]}${extension}`,
+          );
+          const result = await callUno({
+            operation: 'template_fill',
+            inputPath,
+            outputPath: output.absolutePath,
+            replacements: records[index],
+          }, options);
+          written.push(output.relativePath);
+          documentType ||= String(result.documentType || '');
+          replacementCount += Number(result.replacementCount) || 0;
+          options.onProgress?.((index + 1) / records.length);
+        }
+      } catch (cause) {
+        const completed = written.length ? ` Completed outputs: ${written.join(', ')}.` : '';
+        throw new Error(`Batch template filling failed after ${written.length} files.${completed}`, { cause });
+      }
+      return {
+        source: relativePath,
+        generated: written.length,
+        written,
+        documentType,
+        replacementCount,
       };
     }
 

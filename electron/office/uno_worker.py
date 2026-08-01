@@ -210,6 +210,73 @@ def word_read(document, _request):
     }
 
 
+def redline_property(redline, name):
+    try:
+        return redline.getPropertyValue(name)
+    except Exception:
+        return ''
+
+
+def redline_text(redline):
+    value = redline_property(redline, 'RedlineText')
+    try:
+        return str(value.String)
+    except Exception:
+        return value if isinstance(value, str) else ''
+
+
+def redline_timestamp(redline):
+    value = redline_property(redline, 'RedlineDateTime')
+    try:
+        return (
+            f'{int(value.Year):04d}-{int(value.Month):02d}-{int(value.Day):02d}'
+            f'T{int(value.Hours):02d}:{int(value.Minutes):02d}:{int(value.Seconds):02d}'
+        )
+    except Exception:
+        return ''
+
+
+def word_read_changes(document, _request):
+    if not document.supportsService('com.sun.star.text.TextDocument'):
+        raise ValueError('The selected file is not a Word document')
+    enumeration = document.getRedlines().createEnumeration()
+    changes = []
+    used_characters = 0
+    truncated = False
+    fields = (
+        ('type', 'RedlineType', 100),
+        ('author', 'RedlineAuthor', 500),
+        ('comment', 'RedlineComment', 2000),
+        ('identifier', 'RedlineIdentifier', 500),
+    )
+    while enumeration.hasMoreElements():
+        if len(changes) >= 200 or used_characters >= MAX_TEXT_CHARS:
+            truncated = True
+            break
+        redline = enumeration.nextElement()
+        change = {}
+        for output_name, property_name, limit in fields:
+            value = str(redline_property(redline, property_name))
+            remaining = MAX_TEXT_CHARS - used_characters
+            bounded = value[:min(limit, remaining)]
+            if len(bounded) < len(value):
+                truncated = True
+            change[output_name] = bounded
+            used_characters += len(bounded)
+        for output_name, value, limit in (
+            ('timestamp', redline_timestamp(redline), 32),
+            ('text', redline_text(redline), 2000),
+        ):
+            remaining = MAX_TEXT_CHARS - used_characters
+            bounded = value[:min(limit, remaining)]
+            if len(bounded) < len(value):
+                truncated = True
+            change[output_name] = bounded
+            used_characters += len(bounded)
+        changes.append(change)
+    return {'changes': changes, 'truncated': truncated}
+
+
 def word_replace(document, request):
     if not document.supportsService('com.sun.star.text.TextDocument'):
         raise ValueError('The selected file is not a Word document')
@@ -218,6 +285,23 @@ def word_replace(document, request):
     descriptor.ReplaceString = request.get('replace', '')
     descriptor.SearchCaseSensitive = request.get('matchCase', True) is not False
     replacement_count = int(document.replaceAll(descriptor))
+    store_copy(document, request['outputPath'])
+    return {'replacementCount': replacement_count}
+
+
+def word_replace_tracked(document, request):
+    if not document.supportsService('com.sun.star.text.TextDocument'):
+        raise ValueError('The selected file is not a Word document')
+    descriptor = document.createReplaceDescriptor()
+    descriptor.SearchString = request['find']
+    descriptor.ReplaceString = request.get('replace', '')
+    descriptor.SearchCaseSensitive = request.get('matchCase', True) is not False
+    previous_record_changes = bool(document.RecordChanges)
+    document.RecordChanges = True
+    try:
+        replacement_count = int(document.replaceAll(descriptor))
+    finally:
+        document.RecordChanges = previous_record_changes
     store_copy(document, request['outputPath'])
     return {'replacementCount': replacement_count}
 
@@ -584,6 +668,59 @@ def excel_format_range(document, request):
     formatted_range = range_name(selected.getRangeAddress())
     store_copy(document, request['outputPath'])
     return {'formattedRange': formatted_range}
+
+
+def unique_conditional_style_name(cell_styles):
+    base = 'MagiesConditional'
+    if not cell_styles.hasByName(base):
+        return base
+    suffix = 2
+    while cell_styles.hasByName(f'{base} ({suffix})'):
+        suffix += 1
+    return f'{base} ({suffix})'
+
+
+def excel_add_conditional_format(document, request):
+    _sheet_name, sheet = spreadsheet(document, request.get('sheet', ''))
+    selected = sheet.getCellRangeByName(request['range'])
+    cell_styles = document.StyleFamilies.getByName('CellStyles')
+    style_name = unique_conditional_style_name(cell_styles)
+    style = document.createInstance('com.sun.star.style.CellStyle')
+    cell_styles.insertByName(style_name, style)
+    style = cell_styles.getByName(style_name)
+    background = color_number(request.get('backgroundColor'))
+    if background is not None:
+        style.CellBackColor = background
+    text_color = color_number(request.get('textColor'))
+    if text_color is not None:
+        style.CharColor = text_color
+    if 'bold' in request and request['bold'] is not None:
+        style.CharWeight = 150.0 if request['bold'] else 100.0
+    address = selected.getRangeAddress()
+    source_position = sheet.getCellByPosition(
+        address.StartColumn, address.StartRow
+    ).getCellAddress()
+    properties = [
+        property_value(
+            'Operator',
+            uno.Enum(
+                'com.sun.star.sheet.ConditionOperator', request['operator']
+            ),
+        ),
+        property_value('Formula1', request['formula1']),
+        property_value('SourcePosition', source_position),
+        property_value('StyleName', style_name),
+    ]
+    if request.get('formula2'):
+        properties.append(property_value('Formula2', request['formula2']))
+    conditional_format = selected.ConditionalFormat
+    conditional_format.addNew(tuple(properties))
+    selected.ConditionalFormat = conditional_format
+    store_copy(document, request['outputPath'])
+    return {
+        'formattedRange': range_name(address),
+        'styleName': style_name,
+    }
 
 
 def unique_chart_name(charts, requested_name):
@@ -1142,7 +1279,9 @@ def convert_pdf(document, request):
 
 OPERATIONS = {
     'word_read': (True, word_read),
+    'word_read_changes': (True, word_read_changes),
     'word_replace': (False, word_replace),
+    'word_replace_tracked': (False, word_replace_tracked),
     'word_insert_table': (False, word_insert_table),
     'word_insert_image': (False, word_insert_image),
     'word_set_header_footer': (False, word_set_header_footer),
@@ -1152,6 +1291,7 @@ OPERATIONS = {
     'excel_sort_range': (False, excel_sort_range),
     'excel_apply_autofilter': (False, excel_apply_autofilter),
     'excel_format_range': (False, excel_format_range),
+    'excel_add_conditional_format': (False, excel_add_conditional_format),
     'excel_create_chart': (False, excel_create_chart),
     'excel_create_pivot': (False, excel_create_pivot),
     'presentation_read': (True, presentation_read),

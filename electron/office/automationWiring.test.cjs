@@ -80,6 +80,17 @@ describe('Office Agent wiring', () => {
     assert.match(workerSource, /pivot_table\.getOutputRange\(\)/);
   });
 
+  it('allow-lists V8 tracked Word changes and Excel conditional formatting', () => {
+    assert.match(workerSource, /'word_read_changes':/);
+    assert.match(workerSource, /'word_replace_tracked':/);
+    assert.match(workerSource, /document\.getRedlines\(\)\.createEnumeration\(\)/);
+    assert.match(workerSource, /document\.RecordChanges = True/);
+    assert.match(workerSource, /'excel_add_conditional_format':/);
+    assert.match(workerSource, /com\.sun\.star\.sheet\.ConditionOperator/);
+    assert.match(workerSource, /conditional_format\.addNew/);
+    assert.match(workerSource, /selected\.ConditionalFormat = conditional_format/);
+  });
+
   it('embeds only workspace-resolved images and returns presentation notes', () => {
     assert.match(workerSource, /uno\.systemPathToFileUrl\(request\['imagePath'\]\)/);
     assert.match(
