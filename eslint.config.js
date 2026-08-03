@@ -13,6 +13,9 @@ export default [
       'coverage/**',
       'node_modules/**',
       'vendor/office-runtime/**',
+      // The vendored document engine is upstream AGPL source, ~600 MB of it.
+      // It is not ours to lint, and scanning it makes a lint run take minutes.
+      'vendor/onlyoffice/**',
     ],
   },
   js.configs.recommended,
