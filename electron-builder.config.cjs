@@ -125,6 +125,11 @@ module.exports = {
       from: 'vendor/office-runtime/${os}-${arch}',
       to: 'office-runtime',
     },
+    // The ONLYOFFICE engine is deliberately not shipped. Previews render
+    // through the LibreOffice runtime above, which is already here and needs no
+    // font manifest; bundling a second engine would add ~500 MB and a manifest
+    // that only describes the build machine's fonts. `assertDocumentEngine` and
+    // `electron/office/engine.cjs` stay for the editor work that will need it.
   ],
 
   beforePack: async (context) => {
