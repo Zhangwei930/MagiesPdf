@@ -12,10 +12,27 @@ import type { PickedFile } from './bridge.ts';
  * to say which document an action applies to.
  */
 
+/**
+ * The Office file a document was rendered from.
+ *
+ * A Word, Sheet or Slide file opens as a tab by being rendered to PDF, so what
+ * the tab holds is a *view* of a file it cannot write back. Recording where the
+ * view came from is what keeps the tab honest: it can say which document it is
+ * showing, and it can refuse to save over it.
+ */
+export interface DocumentOrigin {
+  path: string;
+  kind: 'word' | 'sheet' | 'slide';
+}
+
 export interface DocumentState {
   id: string;
   name: string;
-  /** Where ⌘S writes. `''` for a document with no file behind it yet. */
+  /**
+   * Where ⌘S writes. `''` for a document with no file behind it yet — which
+   * includes every rendering, because its bytes are a PDF and its source is
+   * not, and writing one over the other would destroy the user's document.
+   */
   path: string;
   bytes: Uint8Array;
   /** Previous states, oldest first. */
@@ -26,6 +43,8 @@ export interface DocumentState {
   password: string;
   /** True while `bytes` is what is on disk at `path`. */
   saved: boolean;
+  /** Set only while this document is a rendering of an Office file. */
+  origin: DocumentOrigin | null;
 }
 
 /** Undo steps kept, at most. Each one is a whole copy of the document. */
@@ -59,15 +78,19 @@ function trimHistory(past: Uint8Array[]): Uint8Array[] {
 }
 
 export function createDocument(file: PickedFile): DocumentState {
+  const origin = file.origin ?? null;
   return {
     id: crypto.randomUUID(),
     name: file.name,
-    path: file.path,
+    // A rendering never adopts a path: `file.path` would be the .docx, and
+    // these bytes are a PDF.
+    path: origin ? '' : file.path,
     bytes: file.bytes,
     past: [],
     future: [],
     password: '',
     saved: false,
+    origin,
   };
 }
 
@@ -119,9 +142,19 @@ export function redo(doc: DocumentState): DocumentState {
   };
 }
 
-/** Records that the current bytes reached disk, adopting the path if given. */
+/**
+ * Records that the current bytes reached disk, adopting the path if given.
+ *
+ * Saving a rendering writes a PDF the user chose the location of, so from then
+ * on it is that PDF and not a view of the Office file it started as.
+ */
 export function markSaved(doc: DocumentState, path: string): DocumentState {
-  return { ...doc, path: path === '' ? doc.path : path, saved: true };
+  return {
+    ...doc,
+    path: path === '' ? doc.path : path,
+    saved: true,
+    origin: path === '' ? doc.origin : null,
+  };
 }
 
 export function setPassword(doc: DocumentState, password: string): DocumentState {
@@ -132,14 +165,17 @@ export function setPassword(doc: DocumentState, password: string): DocumentState
  * Adds a document, or focuses the tab that already holds that file.
  *
  * Documents with no path are results held in memory, so two of them are two
- * different documents even when they share a name.
+ * different documents even when they share a name. A rendering is the
+ * exception: it has no path but it does name a source file, and opening the
+ * same Office file twice should land on the tab already showing it.
  */
 export function openDocument(
   documents: readonly DocumentState[],
   incoming: DocumentState,
 ): { documents: DocumentState[]; activeId: string } {
-  const existing =
-    incoming.path === ''
+  const existing = incoming.origin
+    ? documents.find((document) => document.origin?.path === incoming.origin?.path)
+    : incoming.path === ''
       ? undefined
       : documents.find((document) => document.path === incoming.path);
 

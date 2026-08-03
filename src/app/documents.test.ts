@@ -191,6 +191,51 @@ describe('openDocument', () => {
   });
 });
 
+describe('documents rendered from an Office file', () => {
+  const preview = (): PickedFile => ({
+    ...picked('报告.pdf', ''),
+    origin: { path: '/docs/报告.docx', kind: 'word' },
+  });
+
+  it('remembers the Office file it was rendered from', () => {
+    const doc = createDocument(preview());
+    assert.deepEqual(doc.origin, { path: '/docs/报告.docx', kind: 'word' });
+  });
+
+  it('is an ordinary document when it came from a real PDF', () => {
+    const doc = createDocument(picked('a.pdf', '/docs/a.pdf'));
+    assert.equal(doc.origin, null);
+  });
+
+  /**
+   * The bytes in this tab are a PDF rendering, and the path it came from is a
+   * .docx. Writing one over the other destroys the user's document, so a
+   * rendered document has no path to save over — Save As is the only route.
+   */
+  it('never carries a path that Save would overwrite', () => {
+    const doc = createDocument(preview());
+    assert.equal(doc.path, '');
+  });
+
+  /** Saving elsewhere produces a normal PDF, no longer tied to the source. */
+  it('stops being a rendering once it is saved somewhere of its own', () => {
+    const saved = markSaved(createDocument(preview()), '/docs/报告.pdf');
+    assert.equal(saved.path, '/docs/报告.pdf');
+    assert.equal(saved.origin, null);
+  });
+
+  /**
+   * Two renderings of the same source are the same tab. Without this they
+   * would stack up, because a rendering has no path to match on.
+   */
+  it('focuses the existing tab when the same Office file is opened again', () => {
+    const first = openDocument([], createDocument(preview()));
+    const second = openDocument(first.documents, createDocument(preview()));
+    assert.equal(second.documents.length, 1);
+    assert.equal(second.activeId, first.documents[0]?.id);
+  });
+});
+
 describe('closeDocument / nextActiveId', () => {
   const a = createDocument(picked('a.pdf', '/docs/a.pdf'));
   const b = createDocument(picked('b.pdf', '/docs/b.pdf'));
