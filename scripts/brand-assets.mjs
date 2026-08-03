@@ -185,6 +185,131 @@ function cutOutRoundedTile(image) {
   return { image, box: { left, top, width: boxWidth, height: boxHeight } };
 }
 
+/**
+ * Builds the app-icon variant: the mark alone, without the wordmark.
+ *
+ * At 32px (Finder lists) and 16px (menus) the "MagiesOffice" lettering is a
+ * smudge, so the icon carries only the M and the full lockup stays for places
+ * with room for it. The wordmark is *found* rather than assumed: inside the
+ * tile the artwork is bands of ink separated by clear rows, and the last band
+ * is the lettering. That keeps working if the artwork is redrawn.
+ */
+function markOnly(image, box) {
+  const { width, pixels } = image;
+  const at = (x, y) => (y * width + x) * 4;
+  // Sampled inside the tile — though barely distinguishable from the page: this
+  // artwork's tile is 253,253,253 against a 255,255,254 background, which is
+  // why the icon is composed below rather than cropped to a tile edge that
+  // cannot reliably be found.
+  const inset = Math.round(box.width * 0.5);
+  const paper = [
+    pixels[at(box.left + inset, box.top + 4)],
+    pixels[at(box.left + inset, box.top + 4) + 1],
+    pixels[at(box.left + inset, box.top + 4) + 2],
+  ];
+  const isInk = (x, y) => {
+    const i = at(x, y);
+    if (pixels[i + 3] === 0) return false;
+    return (
+      Math.abs(pixels[i] - paper[0]) > 24 ||
+      Math.abs(pixels[i + 1] - paper[1]) > 24 ||
+      Math.abs(pixels[i + 2] - paper[2]) > 24
+    );
+  };
+
+  const rowInk = [];
+  for (let y = box.top; y <= box.top + box.height - 1; y += 1) {
+    let count = 0;
+    for (let x = box.left; x <= box.left + box.width - 1; x += 4) if (isInk(x, y)) count += 1;
+    rowInk.push(count);
+  }
+  const peak = Math.max(...rowInk);
+  const rowHasInk = rowInk.map((count) => count > 2);
+
+  const found = [];
+  let start = -1;
+  rowHasInk.forEach((inked, index) => {
+    if (inked && start < 0) start = index;
+    if (!inked && start >= 0) {
+      found.push([start, index - 1]);
+      start = -1;
+    }
+  });
+  if (start >= 0) found.push([start, rowHasInk.length - 1]);
+
+  // The tile's drop shadow smears a faint band below the artwork that is tall
+  // enough to look like content but far too thin in ink. Judge a band by how
+  // dark it gets at its darkest, not by how many rows it spans.
+  const minimumBand = Math.round(box.height * 0.03);
+  const bands = found.filter(([from, to]) => {
+    if (to - from + 1 < minimumBand) return false;
+    return Math.max(...rowInk.slice(from, to + 1)) >= peak * 0.1;
+  });
+  if (bands.length < 2) {
+    console.log('[brand] no separate wordmark band found — icon keeps the whole tile');
+    return image;
+  }
+
+  const markTop = box.top + bands[0][0];
+  const markBottom = box.top + bands[0][1];
+  const wordmark = bands[1];
+  console.log(
+    `[brand] mark rows ${markTop}–${markBottom}; ` +
+    `wordmark rows ${box.top + wordmark[0]}–${box.top + wordmark[1]} dropped from the icon`,
+  );
+
+  // The mark's own width, so it can be centred rather than assumed centred.
+  let markLeft = box.left + box.width;
+  let markRight = box.left;
+  for (let y = markTop; y <= markBottom; y += 1) {
+    for (let x = box.left; x < box.left + box.width; x += 1) {
+      if (!isInk(x, y)) continue;
+      if (x < markLeft) markLeft = x;
+      if (x > markRight) markRight = x;
+    }
+  }
+
+  // Compose a fresh tile instead of cropping to one. A macOS icon grid gives
+  // the glyph roughly 62% of the canvas; matching that is what makes the icon
+  // sit correctly next to other apps in the Dock.
+  const markWidth = markRight - markLeft + 1;
+  const markHeight = markBottom - markTop + 1;
+  const side = Math.round(Math.max(markWidth, markHeight) / 0.62);
+  const out = Buffer.alloc(side * side * 4);
+  const to = (x, y) => (y * side + x) * 4;
+  for (let i = 0; i < out.length; i += 4) {
+    out[i] = paper[0];
+    out[i + 1] = paper[1];
+    out[i + 2] = paper[2];
+    out[i + 3] = 255;
+  }
+  const offsetX = Math.round((side - markWidth) / 2);
+  const offsetY = Math.round((side - markHeight) / 2);
+  for (let y = 0; y < markHeight; y += 1) {
+    for (let x = 0; x < markWidth; x += 1) {
+      const from = at(markLeft + x, markTop + y);
+      if (pixels[from + 3] === 0) continue;
+      const target = to(offsetX + x, offsetY + y);
+      out[target] = pixels[from];
+      out[target + 1] = pixels[from + 1];
+      out[target + 2] = pixels[from + 2];
+      out[target + 3] = 255;
+    }
+  }
+
+  // Round the corners of the tile just composed — its edges are exact, so the
+  // radius is applied directly rather than searched for.
+  const radius = Math.round(side * 0.22);
+  for (let y = 0; y < side; y += 1) {
+    for (let x = 0; x < side; x += 1) {
+      const dx = x < radius ? radius - x : x > side - 1 - radius ? x - (side - 1 - radius) : 0;
+      const dy = y < radius ? radius - y : y > side - 1 - radius ? y - (side - 1 - radius) : 0;
+      if (dx > 0 && dy > 0 && Math.hypot(dx, dy) > radius) out[to(x, y) + 3] = 0;
+    }
+  }
+  return { width: side, height: side, pixels: out };
+}
+
 // ---- outputs ---------------------------------------------------------------
 
 const source = argument('source', path.join(projectRoot, 'build', 'logo-source.png'));
@@ -192,25 +317,31 @@ const decoded = decodePng(fs.readFileSync(source));
 const { box } = cutOutRoundedTile(decoded);
 console.log(`[brand] source ${decoded.width}x${decoded.height}, tile at ${box.left},${box.top} ${box.width}x${box.height}`);
 
-const masterPath = path.join(projectRoot, 'build', 'icon-master.png');
-fs.writeFileSync(masterPath, encodePng(decoded));
+// Two masters: the full lockup where there is room for it, and the mark alone
+// for anywhere the app is shown at icon size.
+const lockupPath = path.join(projectRoot, 'build', 'lockup-master.png');
+const markPath = path.join(projectRoot, 'build', 'mark-master.png');
+fs.writeFileSync(lockupPath, encodePng(decoded));
+fs.writeFileSync(markPath, encodePng(markOnly(decoded, box)));
 
 /** `sips` is on every macOS box and resamples better than anything here. */
-function resize(target, size) {
-  fs.copyFileSync(masterPath, target);
+function resize(master, target, size) {
+  fs.copyFileSync(master, target);
   execFileSync('sips', ['-z', String(size), String(size), target], { stdio: 'ignore' });
 }
 
 const OUTPUTS = [
-  ['build/icon.png', 1024],
-  ['public/logo.png', 512],
-  ['public/logo-192.png', 192],
-  ['public/favicon.png', 64],
+  // The app icon, the tab favicon and the touch icon are all seen small.
+  ['build/icon.png', 1024, markPath],
+  ['public/logo-192.png', 192, markPath],
+  ['public/favicon.png', 64, markPath],
+  // The home header has room for the wordmark.
+  ['public/logo.png', 512, lockupPath],
 ];
-for (const [relative, size] of OUTPUTS) {
+for (const [relative, size, master] of OUTPUTS) {
   const target = path.join(projectRoot, relative);
-  resize(target, size);
-  console.log(`[brand] wrote ${relative} (${size}px)`);
+  resize(master, target, size);
+  console.log(`[brand] wrote ${relative} (${size}px, ${master === markPath ? 'mark' : 'lockup'})`);
 }
 
 const ICONSET = [16, 32, 64, 128, 256, 512, 1024];
@@ -218,11 +349,12 @@ const iconset = path.join(projectRoot, 'build', 'icon.iconset');
 fs.rmSync(iconset, { recursive: true, force: true });
 fs.mkdirSync(iconset, { recursive: true });
 for (const size of ICONSET) {
-  if (size <= 512) resize(path.join(iconset, `icon_${size}x${size}.png`), size);
-  if (size >= 32) resize(path.join(iconset, `icon_${size / 2}x${size / 2}@2x.png`), size);
+  if (size <= 512) resize(markPath, path.join(iconset, `icon_${size}x${size}.png`), size);
+  if (size >= 32) resize(markPath, path.join(iconset, `icon_${size / 2}x${size / 2}@2x.png`), size);
 }
 execFileSync('iconutil', ['-c', 'icns', iconset, '-o', path.join(projectRoot, 'build', 'icon.icns')]);
 console.log('[brand] wrote build/icon.icns');
 
-fs.rmSync(masterPath, { force: true });
+fs.rmSync(lockupPath, { force: true });
+fs.rmSync(markPath, { force: true });
 console.log('[brand] done — build/icon.ico must be regenerated on Windows or with a converter');
