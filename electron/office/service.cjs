@@ -1,14 +1,15 @@
 const fs = require('node:fs/promises');
+const os = require('node:os');
 const path = require('node:path');
+const crypto = require('node:crypto');
+const { execFile } = require('node:child_process');
 const { app, dialog, shell } = require('electron');
 const settings = require('../settings.cjs');
 const mainRunner = require('../jobs/mainRunner.cjs');
 const { DOCUMENT_EXTENSIONS, isOfficeDocumentPath } = require('./formats.cjs');
-const {
-  launchLibreOffice,
-  officeRuntimeRoot,
-  resolveLibreOfficeExecutable,
-} = require('./libreOffice.cjs');
+const { officeRuntimeRoot, resolveLibreOfficeExecutable } = require('./libreOffice.cjs');
+const { createOfficePreview } = require('./preview.cjs');
+const { createLibreOfficeRenderer } = require('./libreOfficeRender.cjs');
 
 const OFFICE_FILTERS = [
   { name: 'Office documents', extensions: ['doc', 'docx', 'odt', 'rtf', 'xls', 'xlsx', 'ods', 'ppt', 'pptx', 'odp'] },
@@ -56,6 +57,15 @@ function normalizeLibreOfficeSelection(candidate, platform = process.platform) {
   return candidate;
 }
 
+/** Runs the renderer without a shell, and never lets a hang become forever. */
+function runProcess(executable, args, { timeout } = {}) {
+  return new Promise((resolve) => {
+    execFile(executable, args, { timeout }, (error, stdout, stderr) => {
+      resolve({ code: error ? (error.code ?? 1) : 0, stdout, stderr });
+    });
+  });
+}
+
 function createOfficeService(deps = {}) {
   const runtime = {
     dialog: deps.dialog ?? dialog,
@@ -64,7 +74,6 @@ function createOfficeService(deps = {}) {
     loadCore: deps.loadCore ?? mainRunner.loadCore,
     now: deps.now ?? Date.now,
     resolveExecutable: deps.resolveExecutable ?? resolveLibreOfficeExecutable,
-    launch: deps.launch ?? launchLibreOffice,
     openExternal: deps.openExternal ?? ((url) => shell.openExternal(url)),
     trash: deps.trash ?? ((target) => shell.trashItem(target)),
     packaged: deps.packaged ?? app?.isPackaged ?? false,
@@ -72,7 +81,9 @@ function createOfficeService(deps = {}) {
     projectRoot: deps.projectRoot ?? path.join(__dirname, '..', '..'),
     platform: deps.platform ?? process.platform,
     arch: deps.arch ?? process.arch,
+    preview: deps.preview ?? null,
   };
+
 
   const officeSettings = () => runtime.settings.read().office ?? {};
   const recentSettings = () => runtime.settings.read().recentDocuments ?? [];
@@ -82,13 +93,30 @@ function createOfficeService(deps = {}) {
     packaged: runtime.packaged,
     platform: runtime.platform,
   });
-  const unavailableMessage = () => runtime.packaged
-    ? 'Bundled Office editor is missing; reinstall Magies Office'
-    : 'LibreOffice is not installed or configured';
   const status = () => {
     const resolved = executable();
     return { libreOffice: { available: resolved !== '', executable: resolved } };
   };
+
+  /**
+   * The preview renderer, resolved per call.
+   *
+   * Rendering runs through the bundled LibreOffice headlessly rather than the
+   * ONLYOFFICE converter: it is already shipped, needs no font manifest, and
+   * produces the same thing here — a PDF for the viewer. Building it per call
+   * rather than once means a renderer located through settings is picked up
+   * without restarting.
+   */
+  const previewService = () => runtime.preview ?? createOfficePreview({
+    x2t: createLibreOfficeRenderer({
+      executable: executable(),
+      tempRoot: path.join(os.tmpdir(), 'magies-office'),
+      fs: runtime.fs,
+      run: runtime.runRenderer ?? runProcess,
+      uniqueId: () => crypto.randomUUID(),
+    }),
+    fs: runtime.fs,
+  });
 
   function writeRecent(recentDocuments) {
     runtime.settings.write({ recentDocuments: recentDocuments.slice(0, RECENT_DOCUMENT_LIMIT) });
@@ -114,8 +142,18 @@ function createOfficeService(deps = {}) {
     return { forgotten };
   }
 
+  /**
+   * Opens Office documents *inside* the app.
+   *
+   * This used to hand the files to a second application, which is what put two
+   * windows on screen. Now each one is rendered to PDF and returned as bytes,
+   * so it lands in the same tab strip as everything else. Nothing here depends
+   * on another application being installed any more.
+   */
   async function openPaths(paths) {
-    if (!Array.isArray(paths) || paths.length === 0) return { opened: [], canceled: false };
+    if (!Array.isArray(paths) || paths.length === 0) {
+      return { opened: [], canceled: false, files: [] };
+    }
     for (const candidate of paths) {
       if (!path.isAbsolute(candidate) || !isOfficeDocumentPath(candidate)) {
         throw new Error('An absolute supported Office document path is required');
@@ -124,11 +162,9 @@ function createOfficeService(deps = {}) {
       if (!stat.isFile()) throw new Error(`Not a file: ${candidate}`);
     }
 
-    const resolved = executable();
-    if (!resolved) throw new Error(unavailableMessage());
-    runtime.launch(resolved, paths);
+    const files = await previewService().render(paths);
     rememberRecent(paths);
-    return { opened: [...paths], canceled: false };
+    return { opened: [...paths], canceled: false, files };
   }
 
   async function create(window, kind) {
@@ -248,14 +284,13 @@ function createOfficeService(deps = {}) {
         properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'],
         filters: OFFICE_FILTERS,
       });
-      if (result.canceled) return { opened: [], canceled: true };
+      if (result.canceled) return { opened: [], canceled: true, files: [] };
       return openPaths(result.filePaths);
     },
 
     async createAndOpen(window, kind) {
-      if (!executable()) throw new Error(unavailableMessage());
       const result = await create(window, kind);
-      if (result.canceled) return { opened: [], canceled: true };
+      if (result.canceled) return { opened: [], canceled: true, files: [] };
       return openPaths([result.created]);
     },
   };

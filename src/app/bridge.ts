@@ -10,6 +10,11 @@ export interface PickedFile {
   size: number;
   mime: string;
   bytes: Uint8Array;
+  /**
+   * Present when these bytes are a PDF rendering of an Office file rather than
+   * a file the user picked. `path` is empty in that case; the source lives here.
+   */
+  origin?: { path: string; kind: 'word' | 'sheet' | 'slide' } | null;
 }
 
 export interface SaveResult {
@@ -80,6 +85,11 @@ export interface OfficeStatus {
 export interface OfficeOpenResult {
   opened: string[];
   canceled: boolean;
+  /**
+   * The opened documents, rendered to PDF for the viewer. Each one carries its
+   * source under `origin` and no path of its own — see `documents.ts`.
+   */
+  files: PickedFile[];
 }
 
 export interface RecentDocument {
