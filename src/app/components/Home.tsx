@@ -228,13 +228,13 @@ export function Home({
       <div className="mx-auto w-full max-w-6xl px-5 py-5 lg:px-8 lg:py-7">
         <header className="flex items-center justify-between gap-5">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="h-12 w-12 shrink-0 overflow-hidden" aria-hidden="true">
+            <span className="h-12 w-12 shrink-0" aria-hidden="true">
               <img
                 src={`${import.meta.env.BASE_URL}logo.png`}
                 alt=""
-                width={88}
-                height={88}
-                className="h-[88px] w-[88px] max-w-none -translate-x-5 -translate-y-2 select-none"
+                width={48}
+                height={48}
+                className="h-12 w-12 select-none"
                 draggable={false}
               />
             </span>
