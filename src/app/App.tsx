@@ -98,6 +98,9 @@ export function App() {
   const dragDepth = useRef(0);
   const [dropping, setDropping] = useState(false);
   const [dropError, setDropError] = useState('');
+  // The Office files being rendered right now. Rendering is seconds of silence
+  // otherwise, which reads as the app having ignored the click.
+  const [opening, setOpening] = useState<string[]>([]);
 
   const activeDocument = documents.find((d) => d.id === activeDocumentId) ?? null;
 
@@ -173,12 +176,26 @@ export function App() {
     [openDocument],
   );
 
-  /** Routes PDFs into Magies and Office documents into the local Office host. */
+  /**
+   * Opens every document in this window.
+   *
+   * PDFs are read as they are; Word, Sheet and Slide files are rendered to PDF
+   * by the main process and arrive as bytes. Both become tabs here, which is
+   * what makes this one application rather than two.
+   */
   const openPaths = useCallback(
     async (paths: string[]) => {
       if (paths.length === 0) return;
       const partitioned = partitionDocumentPaths(paths);
-      if (partitioned.office.length > 0) await bridge().openOfficePaths(partitioned.office);
+      if (partitioned.office.length > 0) {
+        setOpening(partitioned.office);
+        try {
+          const { files } = await bridge().openOfficePaths(partitioned.office);
+          for (const file of files) showDocument(file);
+        } finally {
+          setOpening([]);
+        }
+      }
       for (const file of await bridge().readFiles(partitioned.pdf)) showDocument(file);
       if (partitioned.unsupported.length > 0) throw new Error(t('dropNotDocument', locale));
     },
@@ -192,9 +209,17 @@ export function App() {
 
   const createOfficeDocument = useCallback(
     async (kind: OfficeCreateKind) => {
-      await bridge().createAndOpenOffice(kind);
+      // The blank document is rendered the same way an opened one is, so the
+      // wait — and the reassurance — has to be the same too.
+      setOpening(['']);
+      try {
+        const { files } = await bridge().createAndOpenOffice(kind);
+        for (const file of files) showDocument(file);
+      } finally {
+        setOpening([]);
+      }
     },
-    [],
+    [showDocument],
   );
 
   const createPdfDocument = useCallback(async () => {
@@ -537,6 +562,26 @@ export function App() {
           <div className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-[var(--accent)] px-10 py-8">
             <Eye size={26} className="text-[var(--accent)]" />
             <p className="text-sm font-medium text-[var(--accent)]">{t('dropToOpen', locale)}</p>
+          </div>
+        </div>
+      )}
+
+      {opening.length > 0 && (
+        <div
+          className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-[var(--bg)]/80 backdrop-blur-sm"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex flex-col items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-10 py-8 shadow-lg">
+            <Loader2 size={24} className="animate-spin text-[var(--accent)]" />
+            <p className="max-w-sm truncate text-sm font-medium">
+              {t('openingOffice', locale)}
+              {/* A new document has no path yet — the label stands alone. */}
+              {opening.some((p) => p !== '')
+                ? ` ${opening.filter((p) => p !== '').map((p) => p.split(/[/\\]/).pop()).join('、')}`
+                : '…'}
+            </p>
+            <p className="text-xs text-[var(--text-muted)]">{t('openingOfficeHint', locale)}</p>
           </div>
         </div>
       )}

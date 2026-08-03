@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CATEGORIES } from '@core/registry.ts';
 import type { CategoryId } from '@core/types.ts';
 import {
@@ -20,6 +20,8 @@ import {
   Search,
   Trash2,
   X,
+  ArrowLeftRight,
+  Wrench,
   ToolIcon,
 } from '../icons.ts';
 import { useApp } from '../store.ts';
@@ -56,6 +58,22 @@ const QUICK_CONVERSIONS = [
   'convert.pdf-to-pptx',
 ];
 
+/**
+ * The start centre's left rail.
+ *
+ * Every entry either performs an action or scrolls to a section that is really
+ * on this page — a rail item that leads nowhere is worse than no rail at all,
+ * so there are no placeholders here for folders the app cannot browse.
+ */
+const RAIL = [
+  { id: 'new', labelKey: 'railNew', icon: FilePenLine, action: 'scroll' },
+  { id: 'open', labelKey: 'railOpen', icon: FolderOpen, action: 'open' },
+  { id: 'recent', labelKey: 'railRecent', icon: Check, action: 'scroll' },
+  { id: 'convert', labelKey: 'railConvert', icon: ArrowLeftRight, action: 'scroll' },
+  { id: 'tools', labelKey: 'railTools', icon: Wrench, action: 'scroll' },
+  { id: 'ai', labelKey: 'railAi', icon: Bot, action: 'ai' },
+] as const;
+
 const DOCUMENT_TONES: Record<RecentDocument['kind'], { icon: string; className: string }> = {
   word: { icon: 'FileText', className: 'office-word' },
   sheet: { icon: 'Table', className: 'office-sheet' },
@@ -83,6 +101,13 @@ export function Home({
   const [renaming, setRenaming] = useState<RecentDocument | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [deleting, setDeleting] = useState<RecentDocument | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  /** Scrolls the content column, not the window — the rail must stay put. */
+  const scrollToSection = useCallback((id: string) => {
+    const target = scrollRef.current?.querySelector(`[data-home-section="${id}"]`);
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
 
   const loadWorkspace = useCallback(async () => {
     if (!hasBridge()) return;
@@ -175,8 +200,31 @@ export function Home({
     await run(kind, () => onCreateOffice(kind), true);
   };
 
+  const selectRail = (entry: (typeof RAIL)[number]) => {
+    if (entry.action === 'open') void onOpenDocument();
+    else if (entry.action === 'ai') onOpenAi();
+    else scrollToSection(entry.id);
+  };
+
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="flex h-full">
+      {/* The start centre's left rail, in the shape an office suite user
+          expects: what you can make, and where your files already are. */}
+      <aside className="hidden w-[168px] shrink-0 flex-col gap-0.5 border-r border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-2.5 py-4 md:flex">
+        {RAIL.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            onClick={() => selectRail(entry)}
+            className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-panel)] hover:text-[var(--text)]"
+          >
+            <entry.icon size={15} className="shrink-0 text-[var(--text-muted)]" />
+            <span className="truncate">{t(entry.labelKey, locale)}</span>
+          </button>
+        ))}
+      </aside>
+
+      <div ref={scrollRef} className="h-full flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-6xl px-5 py-5 lg:px-8 lg:py-7">
         <header className="flex items-center justify-between gap-5">
           <div className="flex min-w-0 items-center gap-3">
@@ -239,7 +287,7 @@ export function Home({
           </button>
         </section>
 
-        <section className="mt-6">
+        <section data-home-section="new" className="mt-6">
           <div className="mb-3 flex items-end justify-between gap-3">
             <div>
               <h2 className="text-[15px] font-semibold">{t('newDocument', locale)}</h2>
@@ -304,7 +352,7 @@ export function Home({
         </section>
 
         <div className="mt-7 grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
-          <section className="min-w-0">
+          <section data-home-section="recent" className="min-w-0">
             <div className="mb-2.5 flex items-center justify-between gap-3">
               <h2 className="text-[14px] font-semibold">{t('recentDocuments', locale)}</h2>
               <label className="flex w-full max-w-[220px] items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-2.5 py-1.5 focus-within:border-[var(--accent)]">
@@ -362,7 +410,7 @@ export function Home({
           </section>
 
           <aside className="space-y-4">
-            <section className="surface-panel p-4">
+            <section data-home-section="convert" className="surface-panel p-4">
               <div className="flex items-start gap-2.5">
                 <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${office?.libreOffice.available ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--danger-soft)] text-[var(--danger)]'}`}>
                   {office?.libreOffice.available ? <Check size={13} /> : <AlertCircle size={13} />}
@@ -398,7 +446,7 @@ export function Home({
           </aside>
         </div>
 
-        <section className="mt-8">
+        <section data-home-section="tools" className="mt-8">
           <div className="mb-2.5 flex items-baseline justify-between">
             <h2 className="text-[12px] font-semibold">{t('pdfToolbox', locale)}</h2>
             <span className="text-[10px] text-[var(--text-muted)]">{t('pdfToolboxHint', locale)}</span>
@@ -437,6 +485,7 @@ export function Home({
             </div>
           )}
         </section>
+      </div>
       </div>
 
       {renaming && (

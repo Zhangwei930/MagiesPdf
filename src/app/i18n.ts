@@ -227,6 +227,20 @@ const UI = {
     zh: '请选择 Word、Excel、PowerPoint、LibreOffice 或 PDF 文档。',
     en: 'Choose a Word, Excel, PowerPoint, LibreOffice or PDF document.',
   },
+  // Rendering a Word, Sheet or Slide file takes seconds on a long document,
+  // and the window would otherwise sit silent while it happens.
+  openingOffice: { zh: '正在打开', en: 'Opening' },
+  openingOfficeHint: {
+    zh: '首次打开较大文档需要几秒',
+    en: 'A large document takes a few seconds the first time',
+  },
+  // Left rail of the start centre.
+  railNew: { zh: '新建', en: 'New' },
+  railOpen: { zh: '打开', en: 'Open' },
+  railRecent: { zh: '最近', en: 'Recent' },
+  railConvert: { zh: '转换', en: 'Convert' },
+  railTools: { zh: 'PDF 工具', en: 'PDF tools' },
+  railAi: { zh: 'AI 办公', en: 'AI office' },
   accepts: { zh: '支持格式', en: 'Accepts' },
   fileCount: { zh: '个文件', en: 'files' },
   removeFile: { zh: '移除', en: 'Remove' },
