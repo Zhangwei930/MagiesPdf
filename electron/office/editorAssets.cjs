@@ -191,6 +191,17 @@ function editorPageSource({ documentType, title, fileType, sessionId }) {
     }
   }
 
+  /**
+   * Watched from the moment this page runs, not from when a document opens.
+   *
+   * The engine draws its header as its own page loads, long before it reports
+   * a document ready — hiding the mark then means it has already been seen,
+   * and every document opened flashes it. The watch also survives the frame
+   * navigating, which replaces the document and the stylesheet with it.
+   */
+  setInterval(hideEngineChrome, 40);
+  hideEngineChrome();
+
   config.events = {
     // The shell cannot see inside the engine, so the engine has to say when
     // the document is open and when it has unsaved changes.

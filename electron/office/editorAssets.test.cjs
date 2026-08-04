@@ -257,6 +257,19 @@ describe('the page the frame is pointed at', () => {
   });
 
   /**
+   * Before the document is ready, not after. The engine draws its header as
+   * soon as its own page loads, which is well before it reports a document
+   * open — hiding the mark at that point means it has already been on screen,
+   * and switching documents shows it flash each time.
+   */
+  it('hides them from the moment the frame has a document', () => {
+    const ready = page.indexOf('onDocumentReady');
+    const watcher = page.indexOf('hideEngineChrome');
+    assert.ok(watcher >= 0 && watcher < ready, 'the mark is only hidden once the document is ready');
+    assert.match(page, /setInterval\([^)]*hideEngineChrome|hideEngineChrome\(\);[\s\S]{0,200}setInterval/);
+  });
+
+  /**
    * Saving goes through the engine's own api rather than the download the
    * embedding interface offers.
    *
