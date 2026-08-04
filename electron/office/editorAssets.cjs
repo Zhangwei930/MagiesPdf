@@ -205,6 +205,74 @@ function editorPageSource({ documentType, title, fileType, sessionId }) {
    * and every document opened flashes it. The watch also survives the frame
    * navigating, which replaces the document and the stylesheet with it.
    */
+  /**
+   * Draws the names in the font dropdown.
+   *
+   * Every row of that list is an image cut from a strip of pre-rendered font
+   * names, and the strip is made by a tool that ships only for Linux. The one
+   * generated here is blank: the right size, so the list builds and scrolls,
+   * but every row is empty.
+   *
+   * So each row is drawn on demand instead. Two things about where this goes,
+   * each of which has already been got wrong once: the loader is created *by*
+   * the call being wrapped, so it can only be replaced after that call; and it
+   * keeps getImage on the instance, so replacing it on a prototype replaces a
+   * method nothing calls.
+   *
+   * What this shows is the name, in the interface's own type — not a sample of
+   * the typeface, which is what the real strip would have given.
+   */
+  function drawFontNames(w) {
+    if (w.__magiesNames || !w.Common || !w.Common.UI || !w.Common.UI.ComboBoxFonts) return;
+    w.__magiesNames = true;
+
+    var combo = w.Common.UI.ComboBoxFonts.prototype;
+    var fillFonts = combo.fillFonts;
+
+    combo.fillFonts = function () {
+      var result = fillFonts.apply(this, arguments);
+      var loader = this.spriteThumbs;
+
+      if (loader && !loader.magiesNames) {
+        loader.magiesNames = true;
+        loader.getImage = function (index) {
+          var infos = (w.AscFonts && w.AscFonts.g_font_infos) || [];
+          var name = infos[index] ? infos[index].Name : '';
+
+          // The list sizes its rows in css pixels and expects the canvas to
+          // carry the screen's own resolution behind them.
+          var cssWidth = 300;
+          var cssHeight = (w.Asc && w.Asc.FONT_THUMBNAIL_HEIGHT) || 28;
+          var scale = w.devicePixelRatio || 1;
+
+          var canvas = w.document.createElement('canvas');
+          canvas.width = cssWidth * scale;
+          canvas.height = cssHeight * scale;
+          canvas.style.width = cssWidth + 'px';
+          canvas.style.height = cssHeight + 'px';
+
+          var ctx = canvas.getContext('2d');
+          ctx.scale(scale, scale);
+          ctx.fillStyle = w.getComputedStyle(w.document.body).color || '#000';
+          ctx.font = '13px -apple-system, "Segoe UI", "Noto Sans CJK SC", sans-serif';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(name, 4, cssHeight / 2);
+          return canvas;
+        };
+      }
+      return result;
+    };
+  }
+
+  setInterval(function () {
+    var frames = document.querySelectorAll('iframe');
+    for (var i = 0; i < frames.length; i += 1) {
+      try {
+        if (frames[i].contentWindow) drawFontNames(frames[i].contentWindow);
+      } catch (error) { /* another origin: not the engine's */ }
+    }
+  }, 100);
+
   setInterval(hideEngineChrome, 40);
   hideEngineChrome();
 

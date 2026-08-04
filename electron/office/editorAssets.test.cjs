@@ -258,6 +258,28 @@ describe('the page the frame is pointed at', () => {
   });
 
   /**
+   * Every row of the font dropdown is an image cut from a strip of
+   * pre-rendered font names. The strip generated for this app is blank — the
+   * right size, so the list builds and scrolls, but a list of nothing — so
+   * the rows are drawn here instead.
+   *
+   * The loader that hands out those images is created *by* the call this
+   * wraps, and it keeps `getImage` on the instance rather than on a
+   * prototype. Replacing it before that call finds nothing to replace, and
+   * replacing it on the prototype replaces a method never called; both have
+   * been tried, and both changed nothing.
+   */
+  it('draws the font names, on the loader the call it wraps creates', () => {
+    assert.match(page, /spriteThumbs/, 'the loader is never reached');
+
+    const wrapper = page.indexOf('combo.fillFonts = function');
+    const real = page.indexOf('fillFonts.apply', wrapper);
+    const patch = page.indexOf('getImage = function', wrapper);
+    assert.ok(real > wrapper, 'the wrapper never calls the real fillFonts');
+    assert.ok(patch > real, 'the loader is replaced before the call that creates it');
+  });
+
+  /**
    * The engine's own branding and the account it thinks is signed in.
    *
    * There is no account here — the editor runs on one machine, against one
