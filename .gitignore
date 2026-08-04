@@ -7,6 +7,8 @@ coverage/
 .cache/office-runtime/
 vendor/office-runtime/
 vendor/onlyoffice/
+# Downloaded engine packages, kept so a rebuild does not fetch them again.
+vendor/.cache/
 
 .DS_Store
 Thumbs.db

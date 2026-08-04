@@ -33,6 +33,7 @@
     "test:coverage": "npm run build:node && c8 --all --include=\"src/core/**/*.ts\" --include=\"electron/**/*.cjs\" --exclude=\"**/*.test.*\" --reporter=text --reporter=html --check-coverage --lines=80 --statements=80 --functions=80 --branches=75 npm test",
     "verify": "npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run check:bundle",
     "prepare:office-runtime": "node scripts/prepare-office-runtime.mjs",
+    "prepare:engine": "node scripts/prepareEngine.mjs",
     "verify:office-package": "node scripts/verify-office-package.mjs",
     "pack:dir": "npm run prepare:office-runtime && npm run build && cross-env NODE_OPTIONS=--disable-warning=DEP0190 electron-builder --config electron-builder.config.cjs --dir --publish=never && npm run verify:office-package",
     "pack:mac": "npm run prepare:office-runtime -- --platform=darwin --arch=x64 && npm run prepare:office-runtime -- --platform=darwin --arch=arm64 && npm run build && cross-env NODE_OPTIONS=--disable-warning=DEP0190 electron-builder --config electron-builder.config.cjs --mac --x64 --arm64 --publish=never && npm run verify:office-package -- --platform=darwin --arch=x64 && npm run verify:office-package -- --platform=darwin --arch=arm64",
