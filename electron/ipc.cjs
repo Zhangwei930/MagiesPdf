@@ -164,6 +164,7 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   handle('office:createAndOpen', (_event, { kind }) =>
     office.createAndOpen(getWindow(), kind),
   );
+  handle('office:createBlank', (_event, { kind }) => office.createBlank(getWindow(), kind));
   handle('office:openPaths', (_event, { paths }) =>
     office.openPaths(Array.isArray(paths) ? paths : []),
   );

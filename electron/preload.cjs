@@ -30,6 +30,7 @@ const api = {
   pickAndOpenOffice: (multiple) => ipcRenderer.invoke('office:pickAndOpen', { multiple }),
   createAndOpenOffice: (kind) => ipcRenderer.invoke('office:createAndOpen', { kind }),
   openOfficePaths: (paths) => ipcRenderer.invoke('office:openPaths', { paths }),
+  createBlankOffice: (kind) => ipcRenderer.invoke('office:createBlank', { kind }),
   openInEditor: (paths) => ipcRenderer.invoke('office:editorOpen', { paths }),
   focusEditor: (sessionId) => ipcRenderer.invoke('office:editorFocus', { sessionId }),
   saveEditor: (sessionId, bytes) => ipcRenderer.invoke('office:editorSave', { sessionId, bytes }),

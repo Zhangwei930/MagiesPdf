@@ -216,10 +216,15 @@ export function App() {
     async (kind: OfficeCreateKind) => {
       // The blank document is rendered the same way an opened one is, so the
       // wait — and the reassurance — has to be the same too.
-      setOpening(['']);
+      // The file is created first and then opened the same way any other
+      // document is, so a new document and an existing one cannot end up
+      // being shown by different things.
+      const { created, canceled } = await bridge().createBlankOffice(kind);
+      if (canceled || !created) return;
+
+      setOpening([created]);
       try {
-        const { files } = await bridge().createAndOpenOffice(kind);
-        for (const file of files) showDocument(file);
+        for (const file of await bridge().openInEditor([created])) showDocument(file);
       } finally {
         setOpening([]);
       }

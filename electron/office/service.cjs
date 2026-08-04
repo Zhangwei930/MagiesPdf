@@ -288,6 +288,18 @@ function createOfficeService(deps = {}) {
       return openPaths(result.filePaths);
     },
 
+    /**
+     * Creates a blank document and stops there.
+     *
+     * Opening is the caller's business: a new document goes to the editor by
+     * the same route an existing one does, so the two paths cannot drift into
+     * showing different things for the same file.
+     */
+    async createBlank(window, kind) {
+      const result = await create(window, kind);
+      return { created: result.created, canceled: result.canceled };
+    },
+
     async createAndOpen(window, kind) {
       const result = await create(window, kind);
       if (result.canceled) return { opened: [], canceled: true, files: [] };

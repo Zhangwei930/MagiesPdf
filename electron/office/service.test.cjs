@@ -155,6 +155,35 @@ describe('Office service', () => {
     assert.deepEqual(getStored().recentDocuments, [{ path: '/docs/Letter.docx', openedAt: 2000 }]);
   });
 
+  /**
+   * Creating and opening are separate now: a new document goes to the editor,
+   * the same way an existing one does, and the service's job ends once the file
+   * exists on disk.
+   */
+  it('creates a blank document and reports where it went', async () => {
+    const { deps, calls } = dependencies({
+      dialog: {
+        showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
+        showSaveDialog: async () => ({ canceled: false, filePath: '/docs/Untitled.docx' }),
+      },
+    });
+
+    const result = await createOfficeService(deps).createBlank({}, 'word');
+
+    assert.deepEqual(result, { created: '/docs/Untitled.docx', canceled: false });
+    assert.deepEqual(calls.written, [['/docs/Untitled.docx', [1, 2, 3]]]);
+    assert.deepEqual(calls.rendered, [], 'creating does not render a preview');
+  });
+
+  it('reports a cancelled Save As without writing anything', async () => {
+    const { deps, calls } = dependencies();
+    assert.deepEqual(await createOfficeService(deps).createBlank({}, 'word'), {
+      created: '',
+      canceled: true,
+    });
+    assert.deepEqual(calls.written, []);
+  });
+
   it('does not create or render anything when Save As is cancelled', async () => {
     const { deps, calls } = dependencies();
 

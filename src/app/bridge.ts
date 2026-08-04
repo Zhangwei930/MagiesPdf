@@ -300,6 +300,8 @@ export interface MagiesPdfBridge {
   pickAndOpenOffice(multiple: boolean): Promise<OfficeOpenResult>;
   createAndOpenOffice(kind: OfficeCreateKind): Promise<OfficeOpenResult>;
   openOfficePaths(paths: string[]): Promise<OfficeOpenResult>;
+  /** Creates a blank document on disk. Opening it is a separate step. */
+  createBlankOffice(kind: OfficeCreateKind): Promise<{ created: string; canceled: boolean }>;
   /** Opens Office documents in the embedded editor. Bytes stay in the engine. */
   openInEditor(paths: string[]): Promise<PickedFile[]>;
   focusEditor(sessionId: string): Promise<{ focused: boolean }>;
