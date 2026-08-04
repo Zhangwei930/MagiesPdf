@@ -47,6 +47,30 @@ function obfuscateFont(bytes) {
   return out;
 }
 
+/**
+ * Configuration a document server would hold, which this host does not.
+ *
+ * The editor asks for a theme list and a plugin list every time a document
+ * opens, and registers a service worker to cache itself offline. All three
+ * belong to a server; none of them changes what the editor can do here. They
+ * are answered rather than left to 404 so that a real failure is findable in
+ * the console instead of buried among these.
+ */
+const SERVER_CONFIG = new Map([
+  ['/editors/themes.json', { type: 'application/json; charset=utf-8', body: '{"themes":[]}' }],
+  ['/editors/plugins.json', { type: 'application/json; charset=utf-8', body: '{"pluginsData":[]}' }],
+  ['/editors/document_editor_service_worker.js', {
+    type: 'text/javascript; charset=utf-8',
+    // Registering is what the editor wants; there is nothing here to cache.
+    body: '// Nothing to cache: every asset is served from this machine.\n',
+  }],
+]);
+
+/** The answer for one of those routes, or null if this is not one. */
+function emptyConfig(route) {
+  return SERVER_CONFIG.get(route) ?? null;
+}
+
 /** Whether a route is asking for one of the engine's fonts. */
 function isFontRoute(route) {
   return route.startsWith('/editors/fonts/');
@@ -455,4 +479,12 @@ function socketStubSource({ connect, document }) {
 `;
 }
 
-module.exports = { documentUrls, editorPageSource, isFontRoute, obfuscateFont, resolveAsset, socketStubSource };
+module.exports = {
+  documentUrls,
+  editorPageSource,
+  emptyConfig,
+  isFontRoute,
+  obfuscateFont,
+  resolveAsset,
+  socketStubSource,
+};

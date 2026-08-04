@@ -14,7 +14,11 @@ function requestedArch() {
   return process.env.npm_config_arch || process.env.npm_config_target_arch || process.arch;
 }
 
-const { assertOfficeRuntime } = require('./scripts/officePackaging.cjs');
+const {
+  assertDocumentEngine,
+  assertOfficeRuntime,
+  documentEngineFilter,
+} = require('./scripts/officePackaging.cjs');
 
 function builderArchName(arch) {
   if (typeof arch === 'string') return arch;
@@ -121,23 +125,33 @@ module.exports = {
   ],
 
   extraResources: [
+    // Both licences the app redistributes under. AGPL entitles whoever has the
+    // binary to these, so they ship beside it rather than only in the repo.
+    { from: 'LICENSE', to: 'LICENSE' },
+    { from: 'NOTICE.md', to: 'NOTICE.md' },
     {
       from: 'vendor/office-runtime/${os}-${arch}',
       to: 'office-runtime',
     },
-    // The ONLYOFFICE engine is deliberately not shipped. Previews render
-    // through the LibreOffice runtime above, which is already here and needs no
-    // font manifest; bundling a second engine would add ~500 MB and a manifest
-    // that only describes the build machine's fonts. `assertDocumentEngine` and
-    // `electron/office/engine.cjs` stay for the editor work that will need it.
+    // The document engine, in the two builds it takes: `editors/` is what the
+    // converter runs to render PDFs, `web/` is what the editor is served from.
+    // The filter drops what no document passes through — see
+    // `documentEngineFilter`, and the packaging tests that name what must
+    // survive it.
+    {
+      from: 'vendor/onlyoffice/${os}-${arch}',
+      to: 'onlyoffice',
+      filter: documentEngineFilter(),
+    },
   ],
 
   beforePack: async (context) => {
-    assertOfficeRuntime({
-      projectRoot: __dirname,
-      platform: context.electronPlatformName,
-      arch: builderArchName(context.arch),
-    });
+    const platform = context.electronPlatformName;
+    const arch = builderArchName(context.arch);
+    assertOfficeRuntime({ projectRoot: __dirname, platform, arch });
+    // A build without the engine installs and starts, and fails the first time
+    // anyone opens a document. Refuse here instead.
+    assertDocumentEngine({ projectRoot: __dirname, platform, arch });
   },
 
   mac: {

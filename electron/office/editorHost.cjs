@@ -1,7 +1,14 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { connectMessages, documentMessages } = require('./editorHandshake.cjs');
-const { documentUrls, editorPageSource, isFontRoute, resolveAsset, socketStubSource } = require('./editorAssets.cjs');
+const {
+  documentUrls,
+  editorPageSource,
+  emptyConfig,
+  isFontRoute,
+  resolveAsset,
+  socketStubSource,
+} = require('./editorAssets.cjs');
 const { createUploadBuffer } = require('./editorUpload.cjs');
 
 /**
@@ -120,6 +127,9 @@ function createEditorHost(deps) {
         }),
       };
     }
+
+    const config = emptyConfig(route);
+    if (config) return { status: 200, type: config.type, body: config.body };
 
     const file = resolveAsset(route, roots(), request.session ?? activeSession);
     if (!file) return { status: 404 };

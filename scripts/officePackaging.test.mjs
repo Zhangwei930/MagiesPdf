@@ -8,6 +8,7 @@ const {
   assertOfficeRuntime,
   officeRuntimeSource,
   assertDocumentEngine,
+  documentEngineFilter,
   documentEngineSource,
 } = require('./officePackaging.cjs');
 
@@ -44,11 +45,75 @@ describe('document engine packaging', () => {
     );
   });
 
+  /**
+   * The engine ships as two builds that are not interchangeable: the desktop
+   * one the converter renders PDFs with, and the browser one the editor is
+   * served from. A package with only the first opens documents read-only and
+   * fails the moment anyone edits.
+   */
+  it('fails packaging when the browser build is absent', () => {
+    const noBrowserBuild = (candidate) => !candidate.includes('/web/');
+    assert.throws(
+      () => assertDocumentEngine({ projectRoot: '/repo', platform: 'darwin', arch: 'x64', exists: noBrowserBuild }),
+      /editor/i,
+    );
+  });
+
   it('accepts a complete engine', () => {
     assert.equal(
       assertDocumentEngine({ projectRoot: '/repo', platform: 'linux', arch: 'x64', exists: () => true }),
       '/repo/vendor/onlyoffice/linux-x64',
     );
+  });
+});
+
+/**
+ * The engine as downloaded is 1.8 GB, and most of that is never reached from
+ * this app: help documentation in a dozen languages, the mobile and embedded
+ * builds of each editor, and editors for formats this app does not open. What
+ * is kept is what a document actually goes through.
+ */
+describe('what of the engine is packaged', () => {
+  const filter = documentEngineFilter();
+  const kept = (file) => !filter
+    .filter((rule) => rule.startsWith('!'))
+    .some((rule) => matches(rule.slice(1), file));
+
+  /** A minimal glob matcher, enough for the shapes electron-builder takes. */
+  function matches(pattern, file) {
+    const expression = pattern
+      .split('**').map((part) => part.split('*').map(escape).join('[^/]*')).join('.*');
+    return new RegExp(`^${expression}$`).test(file);
+  }
+  function escape(part) {
+    return part.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  it('keeps what a document is opened, laid out and saved with', () => {
+    for (const file of [
+      'converter/x2t',
+      'web/sdkjs/word/sdk-all-min.js',
+      'web/sdkjs/common/AllFonts.js',
+      'web/fonts/LiberationSerif-Regular.ttf',
+      'web/web-apps/apps/documenteditor/main/index.html',
+      'web/web-apps/apps/api/documents/api.js.tpl',
+      'editors/sdkjs/word/sdk-all.js',
+      'editors/web-apps/vendor/xregexp/xregexp-all-min.js',
+    ]) {
+      assert.ok(kept(file), `${file} is needed to open a document`);
+    }
+  });
+
+  it('leaves out what nothing here reaches', () => {
+    for (const file of [
+      'web/web-apps/apps/spreadsheeteditor/main/resources/help/en/images/big.gif',
+      'web/web-apps/apps/documenteditor/mobile/index.html',
+      'web/web-apps/apps/documenteditor/embed/index.html',
+      'web/web-apps/apps/visioeditor/main/index.html',
+      'editors/web-apps/apps/documenteditor/main/app.js',
+    ]) {
+      assert.ok(!kept(file), `${file} is packaged but never reached`);
+    }
   });
 });
 

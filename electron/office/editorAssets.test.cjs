@@ -1,7 +1,14 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { describe, it } = require('node:test');
-const { documentUrls, editorPageSource, obfuscateFont, resolveAsset, socketStubSource } = require('./editorAssets.cjs');
+const {
+  documentUrls,
+  editorPageSource,
+  emptyConfig,
+  obfuscateFont,
+  resolveAsset,
+  socketStubSource,
+} = require('./editorAssets.cjs');
 
 describe('the document parts handed to the editor', () => {
   it('names the editor binary and every extracted image', () => {
@@ -126,6 +133,39 @@ describe('a font request', () => {
  * a cache against, and the template skips that substitution when it is left
  * alone — so it is served as it is, under the name the page asks for.
  */
+/**
+ * Configuration a document server would serve, which this host does not have.
+ *
+ * The editor asks for a theme list and a plugin list on every open, and
+ * registers a service worker for offline use. All three are a server's
+ * business; none of them changes what the editor can do here. Answering with
+ * nothing rather than letting them 404 keeps the console readable, which
+ * matters — a real failure has to be findable among these.
+ */
+describe('the configuration a server would hold', () => {
+  const roots = { editors: '/engine/editors', sessions: {} };
+
+  it('answers the lists the editor asks for on every open', () => {
+    for (const route of ['/editors/themes.json', '/editors/plugins.json']) {
+      const answer = emptyConfig(route);
+      assert.ok(answer, `${route} is left to 404`);
+      assert.doesNotThrow(() => JSON.parse(answer.body), 'the editor parses these');
+    }
+  });
+
+  /** Offline caching is a server's concern; there is nothing to cache here. */
+  it('answers the service worker with something a browser accepts', () => {
+    const answer = emptyConfig('/editors/document_editor_service_worker.js');
+    assert.ok(answer);
+    assert.match(answer.type, /javascript/);
+  });
+
+  it('leaves everything else to be served from disk', () => {
+    assert.equal(emptyConfig('/editors/sdkjs/word/sdk-all.js'), null);
+    assert.equal(resolveAsset('/editors/sdkjs/word/sdk-all.js', roots), '/engine/editors/sdkjs/word/sdk-all.js');
+  });
+});
+
 describe('the editor api script', () => {
   const roots = { editors: '/engine/editors', sessions: {} };
 
