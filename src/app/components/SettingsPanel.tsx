@@ -784,8 +784,7 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
                   {t('legalNoticesBody', locale)}
                 </p>
                 <p className="mt-2 text-[12px] text-[var(--text-muted)]">
-                  {t('legalNoticesSource', locale)}:{' '}
-                  <span className="select-text font-mono">github.com/Zhangwei930/MagiesPdf</span>
+                  {t('legalNoticesWhere', locale)}
                 </p>
               </Field>
 

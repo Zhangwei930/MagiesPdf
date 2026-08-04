@@ -305,10 +305,13 @@ const UI = {
   jobs: { zh: '任务', en: 'Jobs' },
   legalNotices: { zh: '开源与法律声明', en: 'Open source and legal notices' },
   legalNoticesBody: {
-    zh: 'MagiesOffice 以 GNU Affero 通用公共许可证第 3 版或更新版本发布,不提供任何担保。它内置了以 AGPL-3.0 发布的 ONLYOFFICE Document Server(ONLYOFFICE 是 Ascensio System SIA 的商标,本产品与其无隶属或背书关系)、以 MPL-2.0 发布的 LibreOffice、以 AGPL 发布的 MuPDF,以及各自许可下的开源字体。完整清单与各组件源码地址见随包的 NOTICE.md。',
-    en: 'MagiesOffice is released under the GNU Affero General Public License version 3 or later, with no warranty. It embeds ONLYOFFICE Document Server under AGPL-3.0 (ONLYOFFICE is a trademark of Ascensio System SIA; this product is not affiliated with or endorsed by them), LibreOffice under MPL-2.0, MuPDF under AGPL, and open fonts under their own licences. The full list, and where each component\u2019s source can be obtained, is in NOTICE.md beside the application.',
+    zh: 'MagiesOffice 以 GNU Affero 通用公共许可证第 3 版或更新版本发布,不提供任何担保。它内置了以 AGPL-3.0 发布的 ONLYOFFICE Document Server(ONLYOFFICE 是 Ascensio System SIA 的商标,本产品与其无隶属或背书关系)、以 MPL-2.0 发布的 LibreOffice、以 AGPL 发布的 MuPDF,以及各自许可下的开源字体。完整清单见随包的 NOTICE.md。',
+    en: 'MagiesOffice is released under the GNU Affero General Public License version 3 or later, with no warranty. It embeds ONLYOFFICE Document Server under AGPL-3.0 (ONLYOFFICE is a trademark of Ascensio System SIA; this product is not affiliated with or endorsed by them), LibreOffice under MPL-2.0, MuPDF under AGPL, and open fonts under their own licences. The full list is in NOTICE.md beside the application.',
   },
-  legalNoticesSource: { zh: '本应用源码', en: 'Source for this application' },
+  legalNoticesWhere: {
+    zh: '许可证全文与完整的第三方清单随应用一同分发,见 LICENSE 与 NOTICE.md。',
+    en: 'The full licence text and the complete third-party list are distributed with the application, in LICENSE and NOTICE.md.',
+  },
   noJobs: { zh: '还没有任务', en: 'No jobs yet' },
   clearFinished: { zh: '清除已完成', en: 'Clear finished' },
   retry: { zh: '重试', en: 'Retry' },
