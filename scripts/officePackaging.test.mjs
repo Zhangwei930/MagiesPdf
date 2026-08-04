@@ -34,14 +34,15 @@ describe('document engine packaging', () => {
   });
 
   /**
-   * PDF rendering runs through DoctRenderer, which silently produces nothing
-   * without the font manifest — so its absence must fail the build too.
+   * The converter needs no font manifest for what this app asks of it —
+   * converting between a document and the editor's binary, verified against
+   * the real engine with no manifest at all. Requiring one would fail every
+   * build for a file that is not shipped.
    */
-  it('fails packaging when the font manifest is absent', () => {
-    const missingManifest = (candidate) => !candidate.endsWith('AllFonts.js');
-    assert.throws(
-      () => assertDocumentEngine({ projectRoot: '/repo', platform: 'darwin', arch: 'x64', exists: missingManifest }),
-      /AllFonts/,
+  it('does not require the converter font manifest', () => {
+    const onlyBrowserBuild = (candidate) => !candidate.includes('/editors/');
+    assert.doesNotThrow(
+      () => assertDocumentEngine({ projectRoot: '/repo', platform: 'darwin', arch: 'x64', exists: onlyBrowserBuild }),
     );
   });
 
@@ -106,8 +107,6 @@ describe('what of the engine is packaged', () => {
       'web/fonts/LiberationSerif-Regular.ttf',
       'web/web-apps/apps/documenteditor/main/index.html',
       'web/web-apps/apps/api/documents/api.js.tpl',
-      'editors/sdkjs/word/sdk-all.js',
-      'editors/web-apps/vendor/xregexp/xregexp-all-min.js',
       'web/web-apps/apps/documenteditor/main/locale/zh.json',
       'web/web-apps/apps/documenteditor/main/locale/en.json',
     ]) {
@@ -122,7 +121,14 @@ describe('what of the engine is packaged', () => {
       'web/web-apps/apps/documenteditor/embed/index.html',
       'web/web-apps/apps/visioeditor/main/index.html',
       'converter/templates/JA/Forms/form.pdf',
-      'editors/web-apps/apps/documenteditor/main/app.js',
+      // The desktop build and the font data it needs exist for one thing:
+      // rendering PDFs through the converter, which nothing here does — the
+      // preview goes through the bundled LibreOffice, which needs no font
+      // manifest and works on every platform. Shipping them would also ship
+      // a manifest describing the build machine's fonts.
+      'editors/sdkjs/word/sdk-all.js',
+      'editors/web-apps/vendor/xregexp/xregexp-all-min.js',
+      'fonts/AllFonts.js',
       'web/sdkjs/pdf/pdf.js',
       'web/web-apps/apps/documenteditor/main/locale/fr.json',
       // The locale rule re-includes rather than excludes, and its wildcard

@@ -97,8 +97,13 @@ function documentEngineFilter() {
     '!converter/templates/**',
     // The converter reads one file from the desktop web-apps; the rest of that
     // build is a second copy of an editor nothing points a frame at.
-    '!editors/web-apps/apps/**',
-    '!editors/web-apps/vendor/!(xregexp)/**',
+    // The desktop build, and the font data generated for it. Both exist for
+    // one thing: rendering PDFs through the converter. Nothing here does that
+    // — the preview goes through the bundled LibreOffice, which needs no font
+    // manifest and behaves the same on every platform. Shipping them would
+    // also ship a manifest describing whichever machine built the package.
+    '!editors/**',
+    '!fonts/**',
   ];
 }
 
@@ -109,14 +114,6 @@ function assertDocumentEngine({ projectRoot, platform, arch, exists = defaultExi
     throw new Error(
       `Document engine is missing for ${platform}-${arch}. ` +
       `Run npm run prepare:engine -- --platform=${platform} --arch=${arch}`,
-    );
-  }
-
-  const manifest = path.join(source, 'editors', 'sdkjs', 'common', 'AllFonts.js');
-  if (!exists(manifest)) {
-    throw new Error(
-      `Document engine font manifest (AllFonts.js) is missing for ${platform}-${arch}; ` +
-      'PDF rendering would produce nothing. Re-run npm run prepare:engine.',
     );
   }
 

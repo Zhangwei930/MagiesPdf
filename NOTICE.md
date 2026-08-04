@@ -17,11 +17,16 @@ Source: <https://github.com/ONLYOFFICE/DocumentServer>
 Binaries as redistributed here came from
 <https://download.onlyoffice.com/install/documentserver/linux/onlyoffice-documentserver_amd64.deb>
 
-Two builds of the same engine ship, unmodified, under `resources/onlyoffice`:
+What ships, unmodified, under `resources/onlyoffice`:
 
-- `editors/` — the desktop build, from the ONLYOFFICE Desktop Editors package.
-  The document converter runs it to render PDFs.
-- `web/` — the Document Server build. This is what the embedded editor loads.
+- `converter/` — the document converter, from the ONLYOFFICE Desktop Editors
+  package for the platform being built. This is the only native part.
+- `web/` — the Document Server build of the editor, which the embedded editor
+  loads. Javascript and data, identical on every platform.
+
+The desktop build of the editor is used during development, to render PDFs
+through the converter, and is not shipped: the preview a user sees is rendered
+by the bundled LibreOffice instead.
 
 ### Modifications
 
