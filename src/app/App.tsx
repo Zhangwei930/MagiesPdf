@@ -521,7 +521,6 @@ export function App() {
               ) : (
                 <Home
                   onOpenTool={openTool}
-                  onOpenSearch={() => setPaletteOpen(true)}
                   onOpenDocument={openDocumentPicker}
                   onCreateOffice={createOfficeDocument}
                   onCreatePdf={createPdfDocument}
@@ -533,7 +532,6 @@ export function App() {
             {view.name === 'welcome' && (
               <Home
                 onOpenTool={openTool}
-                onOpenSearch={() => setPaletteOpen(true)}
                 onOpenDocument={openDocumentPicker}
                 onCreateOffice={createOfficeDocument}
                 onCreatePdf={createPdfDocument}

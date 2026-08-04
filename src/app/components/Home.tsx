@@ -26,7 +26,6 @@ import { Button } from './ui.tsx';
 
 interface HomeProps {
   onOpenTool(toolId: string): void;
-  onOpenSearch(): void;
   onOpenDocument(): Promise<void>;
   onCreateOffice(kind: OfficeCreateKind): Promise<void>;
   onCreatePdf(): Promise<void>;
@@ -78,7 +77,6 @@ const DOCUMENT_TONES: Record<RecentDocument['kind'], { icon: string; className: 
 /** WPS-style start centre focused on the customer's files, not engine configuration. */
 export function Home({
   onOpenTool,
-  onOpenSearch,
   onOpenDocument,
   onCreateOffice,
   onCreatePdf,
@@ -276,19 +274,9 @@ export function Home({
 
       <div ref={scrollRef} className="h-full flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-6xl px-5 py-5 lg:px-8 lg:py-7">
-        {/* Only the search: the app is named in the title bar, and this page
-            is about the customer's documents rather than the product. */}
-        <header className="flex justify-end">
-          <button
-            type="button"
-            onClick={onOpenSearch}
-            className="flex w-full max-w-[300px] items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-3 py-2 text-left shadow-sm transition-[border-color,box-shadow] hover:border-[var(--accent)] hover:shadow-[var(--shadow-card)]"
-          >
-            <Search size={15} className="text-[var(--text-muted)]" />
-            <span className="flex-1 text-[12px] text-[var(--text-muted)]">{t('search', locale)}</span>
-            <kbd className="rounded border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">⌘K</kbd>
-          </button>
-        </header>
+        {/* No search here: ⌘K opens it from anywhere, and the documents below
+            have a filter of their own. A second search box on the page competes
+            with the one that belongs to the list under it. */}
 
         {error && (
           <p className="mt-4 flex items-start gap-1.5 rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-[11px] text-[var(--danger)]">
