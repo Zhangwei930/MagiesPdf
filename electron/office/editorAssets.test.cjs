@@ -54,6 +54,67 @@ describe('resolving a request to a file', () => {
   });
 });
 
+/**
+ * The cloud engine fetches fonts over http, concatenating its font base onto
+ * each entry of the font manifest. Those entries are absolute paths to files
+ * on this machine, so the url that arrives has one glued onto the other —
+ * which is a font request, not a request for something under the editors.
+ */
+describe('a font request', () => {
+  const roots = { editors: '/engine/editors', sessions: {} };
+
+  it('resolves to the file the manifest named', () => {
+    assert.equal(
+      resolveAsset('/editors/fonts/System/Library/Fonts/Osaka.ttf', roots),
+      '/System/Library/Fonts/Osaka.ttf',
+    );
+  });
+
+  it('takes the path back out of its url encoding', () => {
+    assert.equal(
+      resolveAsset('/editors/fonts/Users/me/Library/Fonts/My%20Font.otf', roots),
+      '/Users/me/Library/Fonts/My Font.otf',
+    );
+  });
+
+  /** Without this the route reads any file on the machine by absolute path. */
+  it('refuses anything that is not a font', () => {
+    assert.equal(resolveAsset('/editors/fonts/etc/passwd', roots), '');
+    assert.equal(resolveAsset('/editors/fonts/Users/me/.ssh/id_rsa', roots), '');
+  });
+
+  it('still serves the engine itself from under the editors', () => {
+    assert.equal(
+      resolveAsset('/editors/sdkjs/word/sdk-all.js', roots),
+      '/engine/editors/sdkjs/word/sdk-all.js',
+    );
+  });
+});
+
+/**
+ * The engine's entry script ships as a template, because a server normally
+ * renders a build hash into it. There is one version here and nothing to bust
+ * a cache against, and the template skips that substitution when it is left
+ * alone — so it is served as it is, under the name the page asks for.
+ */
+describe('the editor api script', () => {
+  const roots = { editors: '/engine/editors', sessions: {} };
+
+  it('is answered from the template that ships in its place', () => {
+    assert.equal(
+      resolveAsset('/editors/web-apps/apps/api/documents/api.js', roots),
+      '/engine/editors/web-apps/apps/api/documents/api.js.tpl',
+    );
+  });
+
+  it('leaves every other script alone', () => {
+    assert.equal(
+      resolveAsset('/editors/web-apps/apps/documenteditor/main/app.js', roots),
+      '/engine/editors/web-apps/apps/documenteditor/main/app.js',
+    );
+  });
+});
+
 describe('the page the frame is pointed at', () => {
   const page = editorPageSource({ documentType: 'word', title: '报告.docx', fileType: 'docx' });
 

@@ -70,6 +70,7 @@ function listenLoopback(handle) {
         command,
       });
 
+      if (process.env.MAGIES_EDITOR_TRACE) console.log('[editor]', answer.status, url.pathname);
       if (answer.status !== 200) {
         response.writeHead(answer.status).end();
         return;
@@ -83,6 +84,7 @@ function listenLoopback(handle) {
       try {
         stat = fs.statSync(answer.file);
       } catch {
+        if (process.env.MAGIES_EDITOR_TRACE) console.log('[editor] 404', url.pathname, '->', answer.file);
         response.writeHead(404).end();
         return;
       }

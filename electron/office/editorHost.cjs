@@ -1,7 +1,7 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { connectMessages, documentMessages } = require('./editorHandshake.cjs');
-const { documentUrls, editorPageSource, resolveAsset, socketStubSource } = require('./editorAssets.cjs');
+const { documentUrls, editorPageSource, fontFile, resolveAsset, socketStubSource } = require('./editorAssets.cjs');
 const { createUploadBuffer } = require('./editorUpload.cjs');
 
 /**
@@ -13,13 +13,15 @@ const { createUploadBuffer } = require('./editorUpload.cjs');
  * one goes, so an app that never opens an Office file never listens on
  * anything.
  *
- * Fonts do not come through it. The engine's font base is compiled in as
- * `ascdesktop://fonts/`, so those are answered by a protocol handler instead —
- * which is also why the font manifest can stay exactly as the machine wrote it.
+ * Fonts come through it like everything else. The font manifest names files by
+ * absolute path, so the engine's font base resolves them to a route this
+ * serves — which is why the manifest can stay exactly as the machine wrote it.
+ *
+ * `ascdesktop://fonts/` is the same thing under the scheme the desktop build
+ * compiled in, kept because the preview path still loads under it.
  */
 
 const FONT_SCHEME = 'ascdesktop://fonts/';
-const FONT_EXTENSIONS = /\.(ttf|ttc|otf|dfont|pfb)$/i;
 
 /** The file behind a font request, or nothing if it is not asking for a font. */
 function fontFileFromUrl(url) {
@@ -28,8 +30,7 @@ function fontFileFromUrl(url) {
   // begins with a slash — but tolerate its absence rather than resolving a
   // font path relative to nothing.
   const rest = url.slice(FONT_SCHEME.length);
-  const target = decodeURIComponent(rest.startsWith('/') ? rest : `/${rest}`);
-  return FONT_EXTENSIONS.test(target) ? target : '';
+  return fontFile(rest.startsWith('/') ? rest : `/${rest}`);
 }
 
 function createEditorHost(deps) {
