@@ -18,6 +18,9 @@ npm run test:coverage  # c8, gated at 80% lines/statements/functions, 75% branch
 node --test --import tsx src/core/pageRange.test.ts    # single file
 node --test electron/jobs/pool.test.cjs                # needs `npm run build:node` first
 npm run pack:mac / pack:win / pack:linux
+npm run prepare:engine -- --shared              # the editor and its fonts, once
+npm run prepare:engine -- --platform=win32 --arch=arm64   # one target's converter
+npm run fonts:engine   # regenerate the font manifest from the fonts that ship
 ```
 
 ## Layer rules
@@ -114,6 +117,54 @@ password defaulted to the user password makes restrictions meaningless — anyon
 can open the file holds owner rights. See `resolveOwnerPassword`, which generates a
 random owner password when restrictions are set but none was supplied.
 
+## The Office engine
+
+Word, Sheet and Slide documents open in an ONLYOFFICE editor embedded in the
+same window. Two separate things make that work, and they are not
+interchangeable:
+
+- **The converter** (`vendor/onlyoffice/<os>-<arch>/converter`) — native, one
+  per platform. It converts between a document and the editor's own binary
+  format. That is all this app asks of it.
+- **The editor** (`vendor/onlyoffice/shared/web`) — the Document Server build,
+  javascript and fonts, identical everywhere. It is the *only* build that can
+  save: the desktop build's save path is an unconditional call into a native
+  host that is not here, with no cloud branch to fall back on.
+
+A checkout keeps the shared half once and links it into each target, so a
+checkout has the same shape as a packaged app. `npm run prepare:engine --
+--shared` builds it; `-- --platform=win32 --arch=arm64` fetches one target's
+converter. `npm run fonts:engine` regenerates the font manifest.
+
+There is no server. `electron/office/editorHost.cjs` serves the editor over
+loopback and answers what a document server would: the socket is a stand-in
+(`socketStubSource`), the handshake is pushed rather than answered, and
+`themes.json`/`plugins.json` are empty. `MAGIES_EDITOR_TRACE=1` logs every
+request the editor makes, which is how anything here gets diagnosed.
+
+Things that have each cost hours:
+
+- **Fonts must be served obfuscated.** The engine exclusive-ors the first 32
+  bytes of every font it downloads, undoing the ODTTF obfuscation a document
+  server stores them under. Serving a plain font *applies* that instead, and
+  FreeType then opens nothing — which surfaces far away, as a null face while
+  the ribbon's style gallery is drawn.
+- **The font manifest is generated** (`scripts/onlyofficeFonts.mjs`), not
+  shipped. It needs four globals, and the engine fails differently without
+  each: `__fonts_files`, `__fonts_infos`, `g_fonts_selection_bin` — which must
+  be *declared* even when empty, because the check is `!= ""` and undefined
+  passes it — and `__fonts_ranges`. The `ASCW3` row must not be emitted: the
+  engine drops it while building its own list without advancing the index,
+  which shifts every family after it.
+- **Saving is an upload.** `downloadAs` on the engine's own api, with no action
+  type and a callback — not the embedding interface's download, which blocks
+  the editor behind a dialog and ends by fetching the file it produced. The
+  document arrives at `/editors/downloadas/<session>`; the document's `key`
+  must *be* the session, or there is nothing to match the upload to.
+- **PDF previews go through the bundled LibreOffice**, not the converter. The
+  converter's own PDF rendering needs a font manifest describing the machine it
+  runs on, which cannot be shipped.
+
 ## Distribution
 
 Source and release tags live in `Zhangwei930/MagiesPdf`. Dual-link updates
@@ -159,6 +210,8 @@ accident.
 - Conventional Commits, scoped: `feat(organize): add booklet imposition`,
   `fix(pdf): copy save buffer out of the WASM heap`.
 - Branch per change (`feat/…`, `fix/…`). Small, focused PRs.
-- Never bundle, reference or mention any third-party office-suite binary. Office
-  conversion uses Chromium's `printToPDF` plus a user-configurable, unnamed external
-  converter hook.
+- Office documents are opened by a bundled engine, not by another application.
+  This rule used to read "never bundle, reference or mention any third-party
+  office-suite binary"; it stopped being true before it was rewritten — a
+  LibreOffice runtime has been bundled per platform for some time. See
+  **The Office engine** above for what is bundled and why.
