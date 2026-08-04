@@ -84,6 +84,10 @@ function documentEngineFilter() {
     '!web/sdkjs/visio/**',
     // The converter reads one file from the desktop web-apps; the rest of that
     // build is a second copy of an editor nothing points a frame at.
+    // The template gallery, which nothing here opens: it sits under the
+    // converter, which is not served, and the converter itself renders and
+    // converts without it. Creating a blank document uses converter/empty.
+    '!converter/templates/**',
     '!editors/web-apps/apps/**',
     '!editors/web-apps/vendor/!(xregexp)/**',
   ];

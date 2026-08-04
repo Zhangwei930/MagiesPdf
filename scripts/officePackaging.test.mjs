@@ -92,6 +92,7 @@ describe('what of the engine is packaged', () => {
   it('keeps what a document is opened, laid out and saved with', () => {
     for (const file of [
       'converter/x2t',
+      'converter/empty/en-US/new.docx',
       'web/sdkjs/word/sdk-all-min.js',
       'web/sdkjs/common/AllFonts.js',
       'web/fonts/LiberationSerif-Regular.ttf',
@@ -110,6 +111,7 @@ describe('what of the engine is packaged', () => {
       'web/web-apps/apps/documenteditor/mobile/index.html',
       'web/web-apps/apps/documenteditor/embed/index.html',
       'web/web-apps/apps/visioeditor/main/index.html',
+      'converter/templates/JA/Forms/form.pdf',
       'editors/web-apps/apps/documenteditor/main/app.js',
     ]) {
       assert.ok(!kept(file), `${file} is packaged but never reached`);
