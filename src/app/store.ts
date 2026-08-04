@@ -64,6 +64,7 @@ interface AppState {
   setDocumentPassword(id: string, password: string): void;
   /** ⌘S. Writes over the file the document came from, or asks where to put it. */
   saveDocument(id: string): Promise<void>;
+  setEngineModified(id: string, modified: boolean): void;
   saveDocumentAs(id: string): Promise<void>;
   /**
    * Runs a tool over an open document. A single PDF coming back replaces the
@@ -152,13 +153,30 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   closeDocument(id) {
+    // An engine-held document has a session and a work directory behind it;
+    // dropping the tab without telling the engine would leave both running and
+    // a copy of the user's document in temp.
+    const held = get().documents.find((d) => d.id === id)?.editor;
+    if (held) void bridge().closeEditor(held.sessionId).catch(() => {});
+
     set((state) => ({
       documents: docs.closeDocument(state.documents, id),
       activeDocumentId: docs.nextActiveId(state.documents, id, state.activeDocumentId),
     }));
   },
 
+  setEngineModified(id, modified) {
+    set((state) => ({
+      documents: mapDocument(state.documents, id, (d) => docs.setEngineModified(d, modified)),
+    }));
+  },
+
   setActiveDocument(id) {
+    // The engine serves images by the key they had in the open document, with
+    // nothing to say which document that was, so it has to be told which one is
+    // in front.
+    const held = get().documents.find((d) => d.id === id)?.editor;
+    if (held) void bridge().focusEditor(held.sessionId).catch(() => {});
     set({ activeDocumentId: id });
   },
 

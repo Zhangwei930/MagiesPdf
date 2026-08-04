@@ -300,6 +300,12 @@ export interface MagiesPdfBridge {
   pickAndOpenOffice(multiple: boolean): Promise<OfficeOpenResult>;
   createAndOpenOffice(kind: OfficeCreateKind): Promise<OfficeOpenResult>;
   openOfficePaths(paths: string[]): Promise<OfficeOpenResult>;
+  /** Opens Office documents in the embedded editor. Bytes stay in the engine. */
+  openInEditor(paths: string[]): Promise<PickedFile[]>;
+  focusEditor(sessionId: string): Promise<{ focused: boolean }>;
+  /** `bytes` is the engine's own binary, base64 encoded. */
+  saveEditor(sessionId: string, bytes: string): Promise<{ path: string; name: string }>;
+  closeEditor(sessionId: string): Promise<{ closed: string }>;
   listRecentDocuments(): Promise<RecentDocument[]>;
   renameRecentDocument(path: string, name: string): Promise<{ path: string; name: string }>;
   trashRecentDocument(path: string): Promise<{ trashed: boolean }>;

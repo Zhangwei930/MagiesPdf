@@ -49,6 +49,9 @@ const SettingsPanel = lazy(() =>
 const SignPage = lazy(() =>
   import('./components/SignPage.tsx').then((module) => ({ default: module.SignPage })),
 );
+const OfficeEditor = lazy(() =>
+  import('./components/OfficeEditor.tsx').then((module) => ({ default: module.OfficeEditor })),
+);
 const AIChatPanel = lazy(() =>
   import('./components/AIChatPanel.tsx').then((module) => ({ default: module.AIChatPanel })),
 );
@@ -80,6 +83,7 @@ export function App() {
   const closeDocument = useApp((s) => s.closeDocument);
   const setActiveDocument = useApp((s) => s.setActiveDocument);
   const saveDocument = useApp((s) => s.saveDocument);
+  const setEngineModified = useApp((s) => s.setEngineModified);
 
   const [main, setMain] = useState<MainView>({ name: 'welcome' });
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -190,8 +194,9 @@ export function App() {
       if (partitioned.office.length > 0) {
         setOpening(partitioned.office);
         try {
-          const { files } = await bridge().openOfficePaths(partitioned.office);
-          for (const file of files) showDocument(file);
+          // Word, Sheet and Slide documents open in the engine, where they can
+          // be edited. PDFs stay with the viewer below.
+          for (const file of await bridge().openInEditor(partitioned.office)) showDocument(file);
         } finally {
           setOpening([]);
         }
@@ -466,14 +471,23 @@ export function App() {
             {view.name === 'settings' && <SettingsPanel onBack={openWelcome} />}
 
             {view.name === 'document' && activeDocument && (
-              /* Keyed by document id so switching tabs remounts the viewer's
-                 own view state — scroll, zoom, mode — per document, while the
-                 bytes and history stay in the store. */
-              <Viewer
-                key={activeDocument.id}
-                document={activeDocument}
-                onChooseTool={openToolPickerForDocument}
-              />
+              activeDocument.editor ? (
+                /* Held by the engine: the frame is the document. */
+                <OfficeEditor
+                  key={activeDocument.id}
+                  document={activeDocument}
+                  onModifiedChange={(modified) => setEngineModified(activeDocument.id, modified)}
+                />
+              ) : (
+                /* Keyed by document id so switching tabs remounts the viewer's
+                   own view state — scroll, zoom, mode — per document, while the
+                   bytes and history stay in the store. */
+                <Viewer
+                  key={activeDocument.id}
+                  document={activeDocument}
+                  onChooseTool={openToolPickerForDocument}
+                />
+              )
             )}
 
             {view.name === 'tool' &&

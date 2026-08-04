@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { app, dialog, ipcMain, shell } = require('electron');
+const crypto = require('node:crypto');
+const { app, dialog, ipcMain, protocol, shell } = require('electron');
 const settings = require('./settings.cjs');
 const mainRunner = require('./jobs/mainRunner.cjs');
 const { createJobExecutor } = require('./jobs/executor.cjs');
@@ -11,6 +12,10 @@ const writableTargets = require('./files/writableTargets.cjs');
 const updater = require('./updater/index.cjs');
 const { isTrustedIpcSender, safeFileName } = require('./security.cjs');
 const { createOfficeService } = require('./office/service.cjs');
+const { createOfficeSessions } = require('./office/session.cjs');
+const { createEditorService } = require('./office/editorService.cjs');
+const { createEditorRuntime } = require('./office/editorRuntime.cjs');
+const { createEngineX2t } = require('./office/engine.cjs');
 const { DOCUMENT_EXTENSIONS } = require('./office/formats.cjs');
 const { createOfficeAutomationProvider } = require('./office/automationProvider.cjs');
 const { runUnoOperation } = require('./office/unoRunner.cjs');
@@ -117,6 +122,24 @@ function readCatalog() {
 
 function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl }) {
   const office = createOfficeService();
+  const editorX2t = createEngineX2t();
+  const editorSessions = createOfficeSessions({
+    x2t: editorX2t,
+    fs,
+    uniqueId: () => crypto.randomUUID(),
+  });
+  const editor = createEditorService({
+    sessions: editorSessions,
+    host: createEditorRuntime({ electron: { protocol } }),
+    // x2t writes a document's images beside the binary it produced.
+    listMedia: async (workDir) => {
+      try {
+        return await fs.readdir(path.join(workDir, 'media'));
+      } catch {
+        return [];
+      }
+    },
+  });
   const officeAutomation = createOfficeAutomationProvider({
     getLibreOfficeExecutable: () => office.status().libreOffice.executable,
     runUno: runUnoOperation,
@@ -144,6 +167,20 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   handle('office:openPaths', (_event, { paths }) =>
     office.openPaths(Array.isArray(paths) ? paths : []),
   );
+  // The embedded editor. Paths are validated by the session layer, which
+  // refuses anything relative or of a format no editor opens.
+  handle('office:editorOpen', (_event, { paths }) =>
+    editor.open(Array.isArray(paths) ? paths.filter((p) => typeof p === 'string') : []),
+  );
+  handle('office:editorFocus', (_event, { sessionId }) => {
+    editor.focus(String(sessionId));
+    return { focused: true };
+  });
+  handle('office:editorSave', (_event, { sessionId, bytes }) =>
+    editor.save(String(sessionId), String(bytes)),
+  );
+  handle('office:editorClose', (_event, { sessionId }) => editor.close(String(sessionId)));
+
   handle('office:listRecent', () => office.listRecent());
   handle('office:renameRecent', (_event, { path: target, name }) =>
     office.renameRecent(target, name),
