@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const { createEditorHost } = require('./editorHost.cjs');
-const { engineRoot } = require('./engine.cjs');
+const { editorAssetsRoot } = require('./engine.cjs');
 
 /**
  * The Electron side of the embedded editor: a loopback server and the font
@@ -110,52 +110,12 @@ function listenLoopback(handle) {
   });
 }
 
-/**
- * Answers `ascdesktop://fonts/...` off disk.
- *
- * Registered once, at first use. `fontFileFromUrl` is what decides whether a
- * request names a font at all — without that check this handler would be a way
- * to read any file on the machine.
- */
-function registerFontProtocol(electron) {
-  let registered = false;
-  return (fontFileFromUrl) => {
-    if (registered) return;
-    registered = true;
-    electron.protocol.handle('ascdesktop', (request) => {
-      const file = fontFileFromUrl(request.url);
-      if (!file) return new Response('', { status: 403 });
-      try {
-        return new Response(fs.readFileSync(file), {
-          headers: { 'Content-Type': contentType(file) },
-        });
-      } catch {
-        return new Response('', { status: 404 });
-      }
-    });
-  };
-}
-
-/**
- * Must run before the app is ready, so the scheme resolves relative urls and
- * is allowed past the page's content security policy.
- */
-function registerEditorSchemes(electron) {
-  electron.protocol.registerSchemesAsPrivileged([
-    {
-      scheme: 'ascdesktop',
-      privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: true, corsEnabled: true },
-    },
-  ]);
-}
-
-function createEditorRuntime({ electron, projectRoot, onDocumentSaved } = {}) {
+function createEditorRuntime({ projectRoot, onDocumentSaved } = {}) {
   return createEditorHost({
-    editorsRoot: path.join(engineRoot({ projectRoot }), 'editors'),
+    editorsRoot: editorAssetsRoot({ projectRoot }),
     listen: listenLoopback,
-    registerFontProtocol: electron ? registerFontProtocol(electron) : () => {},
     onDocumentSaved,
   });
 }
 
-module.exports = { createEditorRuntime, listenLoopback, registerEditorSchemes, contentType };
+module.exports = { createEditorRuntime, listenLoopback, contentType };

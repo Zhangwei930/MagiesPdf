@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
-const { createEditorHost, fontFileFromUrl } = require('./editorHost.cjs');
+const { createEditorHost } = require('./editorHost.cjs');
 
 function dependencies(overrides = {}) {
   const calls = { listened: [], closed: 0 };
@@ -10,37 +10,10 @@ function dependencies(overrides = {}) {
       calls.listened.push(handler);
       return { port: 51234, close: async () => { calls.closed += 1; } };
     },
-    registerFontProtocol: () => {},
     ...overrides,
   };
   return { calls, deps };
 }
-
-describe('font urls', () => {
-  /**
-   * The engine's font base is compiled into it as `ascdesktop://fonts/`, so the
-   * paths in AllFonts.js arrive with that prefix rather than as plain paths.
-   */
-  it('recovers the file a font request names', () => {
-    assert.equal(
-      fontFileFromUrl('ascdesktop://fonts//System/Library/Fonts/Helvetica.ttc'),
-      '/System/Library/Fonts/Helvetica.ttc',
-    );
-  });
-
-  it('decodes a path with spaces', () => {
-    assert.equal(
-      fontFileFromUrl('ascdesktop://fonts//Library/Fonts/My%20Font.ttf'),
-      '/Library/Fonts/My Font.ttf',
-    );
-  });
-
-  /** Only fonts: this handler must not become a way to read any file. */
-  it('refuses anything that is not a font file', () => {
-    assert.equal(fontFileFromUrl('ascdesktop://fonts//etc/passwd'), '');
-    assert.equal(fontFileFromUrl('ascdesktop://other//System/Library/Fonts/a.ttf'), '');
-  });
-});
 
 describe('the editor host', () => {
   it('is not listening until a document needs it', async () => {

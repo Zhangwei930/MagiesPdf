@@ -31,6 +31,18 @@ function engineRoot({
   return path.join(projectRoot, 'vendor', 'onlyoffice', `${os}-${arch}`);
 }
 
+/**
+ * Where the embedded editor's assets live.
+ *
+ * Not `editors/`. That is the desktop build, which the converter runs to
+ * render PDFs and which cannot save — its save path is a call into a native
+ * host. The browser editor is served the Document Server build, which is kept
+ * separately because the two cannot share a directory.
+ */
+function editorAssetsRoot(options = {}) {
+  return path.join(engineRoot(options), 'web');
+}
+
 function runConverter(executable, args) {
   return new Promise((resolve) => {
     execFile(executable, args, { timeout: CONVERT_TIMEOUT_MS }, (error, stdout, stderr) => {
@@ -63,4 +75,4 @@ function createEngineX2t(options = {}) {
   };
 }
 
-module.exports = { engineRoot, createEngineX2t };
+module.exports = { editorAssetsRoot, engineRoot, createEngineX2t };

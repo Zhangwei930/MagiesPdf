@@ -35,7 +35,6 @@ describe('serving the editor over loopback', () => {
     host = createEditorHost({
       editorsRoot: path.join(root, 'editors'),
       listen: listenLoopback,
-      registerFontProtocol: () => {},
     });
     const published = await host.publish({ id: 'doc1', workDir: work, media: ['image1.png'] });
     base = new URL(published.url).origin;

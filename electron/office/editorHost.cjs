@@ -1,7 +1,7 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { connectMessages, documentMessages } = require('./editorHandshake.cjs');
-const { documentUrls, editorPageSource, fontFile, resolveAsset, socketStubSource } = require('./editorAssets.cjs');
+const { documentUrls, editorPageSource, resolveAsset, socketStubSource } = require('./editorAssets.cjs');
 const { createUploadBuffer } = require('./editorUpload.cjs');
 
 /**
@@ -13,28 +13,13 @@ const { createUploadBuffer } = require('./editorUpload.cjs');
  * one goes, so an app that never opens an Office file never listens on
  * anything.
  *
- * Fonts come through it like everything else. The font manifest names files by
- * absolute path, so the engine's font base resolves them to a route this
- * serves — which is why the manifest can stay exactly as the machine wrote it.
- *
- * `ascdesktop://fonts/` is the same thing under the scheme the desktop build
- * compiled in, kept because the preview path still loads under it.
+ * Fonts come through it like everything else: the manifest names fonts that
+ * ship with the engine, so the engine's font base resolves to a route under
+ * the editors, with the same traversal guard on it as any other asset.
  */
 
-const FONT_SCHEME = 'ascdesktop://fonts/';
-
-/** The file behind a font request, or nothing if it is not asking for a font. */
-function fontFileFromUrl(url) {
-  if (!url.startsWith(FONT_SCHEME)) return '';
-  // The manifest's paths are absolute, so what follows the scheme already
-  // begins with a slash — but tolerate its absence rather than resolving a
-  // font path relative to nothing.
-  const rest = url.slice(FONT_SCHEME.length);
-  return fontFile(rest.startsWith('/') ? rest : `/${rest}`);
-}
-
 function createEditorHost(deps) {
-  const { editorsRoot, listen, registerFontProtocol, onDocumentSaved = async () => {} } = deps;
+  const { editorsRoot, listen, onDocumentSaved = async () => {} } = deps;
   const sessions = new Map();
   let server = null;
   let starting = null;
@@ -118,7 +103,6 @@ function createEditorHost(deps) {
     if (!starting) {
       starting = listen(handle).then((started) => {
         server = started;
-        registerFontProtocol(fontFileFromUrl);
         return started;
       });
     }
@@ -175,4 +159,4 @@ function createEditorHost(deps) {
   };
 }
 
-module.exports = { createEditorHost, fontFileFromUrl };
+module.exports = { createEditorHost };

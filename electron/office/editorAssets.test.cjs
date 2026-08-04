@@ -55,39 +55,24 @@ describe('resolving a request to a file', () => {
 });
 
 /**
- * The cloud engine fetches fonts over http, concatenating its font base onto
- * each entry of the font manifest. Those entries are absolute paths to files
- * on this machine, so the url that arrives has one glued onto the other —
- * which is a font request, not a request for something under the editors.
+ * The engine fetches fonts over http, concatenating its font base onto each
+ * entry of the manifest. Those entries are filenames of fonts that ship with
+ * the engine, so a font request is a request for a file under the editors like
+ * any other — which is what keeps the traversal guard on it.
  */
 describe('a font request', () => {
   const roots = { editors: '/engine/editors', sessions: {} };
 
-  it('resolves to the file the manifest named', () => {
+  it('resolves to the font that ships with the engine', () => {
     assert.equal(
-      resolveAsset('/editors/fonts/System/Library/Fonts/Osaka.ttf', roots),
-      '/System/Library/Fonts/Osaka.ttf',
+      resolveAsset('/editors/fonts/LiberationSerif-Regular.ttf', roots),
+      '/engine/editors/fonts/LiberationSerif-Regular.ttf',
     );
   });
 
-  it('takes the path back out of its url encoding', () => {
-    assert.equal(
-      resolveAsset('/editors/fonts/Users/me/Library/Fonts/My%20Font.otf', roots),
-      '/Users/me/Library/Fonts/My Font.otf',
-    );
-  });
-
-  /** Without this the route reads any file on the machine by absolute path. */
-  it('refuses anything that is not a font', () => {
-    assert.equal(resolveAsset('/editors/fonts/etc/passwd', roots), '');
-    assert.equal(resolveAsset('/editors/fonts/Users/me/.ssh/id_rsa', roots), '');
-  });
-
-  it('still serves the engine itself from under the editors', () => {
-    assert.equal(
-      resolveAsset('/editors/sdkjs/word/sdk-all.js', roots),
-      '/engine/editors/sdkjs/word/sdk-all.js',
-    );
+  /** The manifest is generated, but the route is still reachable by hand. */
+  it('does not reach outside the engine', () => {
+    assert.equal(resolveAsset('/editors/fonts/../../../etc/passwd', roots), '');
   });
 });
 

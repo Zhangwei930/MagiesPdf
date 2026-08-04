@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const os = require('node:os');
 const path = require('node:path');
 const { describe, it } = require('node:test');
-const { engineRoot, createEngineX2t } = require('./engine.cjs');
+const { editorAssetsRoot, engineRoot, createEngineX2t } = require('./engine.cjs');
 
 describe('document engine location', () => {
   it('reads the engine from the app resources once packaged', () => {
@@ -29,6 +29,30 @@ describe('document engine location', () => {
     assert.equal(
       engineRoot({ packaged: false, projectRoot: '/repo', platform: 'linux', arch: 'x64' }),
       path.join('/repo', 'vendor', 'onlyoffice', 'linux-x64'),
+    );
+  });
+});
+
+/**
+ * The engine ships two builds of the same editor, and they are not
+ * interchangeable. The converter renders PDFs by running the desktop build
+ * under `editors/`; the embedded editor is the Document Server build, which is
+ * the only one that can save. Pointing either at the other's directory breaks
+ * it — the converter with a script error, the editor by taking a save path
+ * that ends in a native host that is not there.
+ */
+describe('the editor assets', () => {
+  it('come from the browser build, not the converter\u2019s', () => {
+    assert.equal(
+      editorAssetsRoot({ packaged: true, resourcesPath: '/app/Resources' }),
+      path.join('/app/Resources', 'onlyoffice', 'web'),
+    );
+  });
+
+  it('sit beside the converter in a checkout', () => {
+    assert.equal(
+      editorAssetsRoot({ packaged: false, projectRoot: '/repo', platform: 'darwin', arch: 'x64' }),
+      path.join('/repo', 'vendor', 'onlyoffice', 'mac-x64', 'web'),
     );
   });
 });

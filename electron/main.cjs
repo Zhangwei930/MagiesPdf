@@ -1,6 +1,6 @@
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { BrowserWindow, app, nativeTheme, protocol, shell } = require('electron');
+const { BrowserWindow, app, nativeTheme, shell } = require('electron');
 const { JobPool } = require('./jobs/pool.cjs');
 const { documentPathsFromArgv, openableDocumentPath } = require('./files/openPaths.cjs');
 const { registerIpc } = require('./ipc.cjs');
@@ -8,7 +8,6 @@ const settings = require('./settings.cjs');
 const { startUpdater } = require('./updater/index.cjs');
 const { syncApiServer, stopApiServer } = require('./api/server.cjs');
 const { MAIN_WINDOW_WEB_PREFERENCES, isTrustedRendererUrl } = require('./security.cjs');
-const { registerEditorSchemes } = require('./office/editorRuntime.cjs');
 
 /**
  * MagiesPdf main process.
@@ -142,7 +141,6 @@ function createWindow() {
 
 // The embedded editor's font scheme has to be declared before the app is ready,
 // or it will not resolve relative urls or be allowed past the page's CSP.
-registerEditorSchemes({ protocol });
 
 // A second instance would fight over the settings file and the API port.
 if (!app.requestSingleInstanceLock()) {

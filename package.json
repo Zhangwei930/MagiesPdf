@@ -20,6 +20,7 @@
     "dev:electron": "wait-on http-get://localhost:5273 && cross-env VITE_DEV_SERVER_URL=http://localhost:5273 electron .",
     "watch:node": "vite build --config vite.node.config.ts --watch",
     "build:node": "vite build --config vite.node.config.ts",
+    "fonts:engine": "node scripts/onlyofficeFonts.mjs",
     "build:catalog": "node --import tsx scripts/generate-catalog.mjs",
     "clean": "node -e \"require('node:fs').rmSync('dist-electron',{recursive:true,force:true})\"",
     "build": "npm run clean && npm run build:node && vite build",

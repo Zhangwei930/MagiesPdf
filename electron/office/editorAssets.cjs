@@ -25,32 +25,6 @@ function within(root, relative) {
 }
 
 /**
- * Where the engine asks for fonts.
- *
- * Its font base is a relative url that it concatenates each manifest entry
- * onto, and those entries are absolute paths — so what arrives is the base
- * with a rooted path glued to it, which resolves to here.
- */
-const FONT_ROUTE = '/editors/fonts/';
-const FONT_EXTENSIONS = /\.(ttf|ttc|otf|dfont|pfb)$/i;
-
-/**
- * The file behind a font request, or nothing.
- *
- * The extension check is what stops this route from being a way to read any
- * file on the machine by absolute path, so it is not a formality.
- */
-function fontFile(target) {
-  let decoded;
-  try {
-    decoded = decodeURIComponent(target);
-  } catch {
-    return '';
-  }
-  return FONT_EXTENSIONS.test(decoded) ? decoded : '';
-}
-
-/**
  * The engine's entry script, which ships as a template.
  *
  * A server would render a build hash into it; there is one version here and
@@ -67,9 +41,6 @@ const API_SCRIPT = '/web-apps/apps/api/documents/api.js';
  * key pointed at.
  */
 function resolveAsset(route, roots, activeSession = '') {
-  // Fonts first: this route looks like it is under the editors, but the path
-  // after it is absolute and belongs to the machine, not to them.
-  if (route.startsWith(FONT_ROUTE)) return fontFile(`/${route.slice(FONT_ROUTE.length)}`);
   if (route.startsWith('/editors/')) {
     const rest = route.slice('/editors'.length);
     return within(roots.editors, rest === API_SCRIPT ? `${API_SCRIPT}.tpl` : rest);
@@ -364,4 +335,4 @@ function socketStubSource({ connect, document }) {
 `;
 }
 
-module.exports = { documentUrls, editorPageSource, fontFile, resolveAsset, socketStubSource };
+module.exports = { documentUrls, editorPageSource, resolveAsset, socketStubSource };
