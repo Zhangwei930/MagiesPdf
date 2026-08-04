@@ -8,8 +8,9 @@ const {
   assertOfficeRuntime,
   officeRuntimeSource,
   assertDocumentEngine,
-  documentEngineFilter,
+  converterFilter,
   documentEngineSource,
+  sharedEngineFilter,
 } = require('./officePackaging.cjs');
 
 describe('document engine packaging', () => {
@@ -75,7 +76,10 @@ describe('document engine packaging', () => {
  * is kept is what a document actually goes through.
  */
 describe('what of the engine is packaged', () => {
-  const filter = documentEngineFilter();
+  // Each half is copied from its own root, so each filter's paths are
+  // relative to that root — a rule written for the wrong one silently matches
+  // nothing.
+  const filter = sharedEngineFilter();
   /** Rules apply in order and the last one to match decides, as the builder does. */
   const kept = (file) => filter.reduce((verdict, rule) => {
     const negated = rule.startsWith('!');
@@ -100,8 +104,6 @@ describe('what of the engine is packaged', () => {
 
   it('keeps what a document is opened, laid out and saved with', () => {
     for (const file of [
-      'converter/x2t',
-      'converter/empty/en-US/new.docx',
       'web/sdkjs/word/sdk-all-min.js',
       'web/sdkjs/common/AllFonts.js',
       'web/fonts/LiberationSerif-Regular.ttf',
@@ -120,7 +122,6 @@ describe('what of the engine is packaged', () => {
       'web/web-apps/apps/documenteditor/mobile/index.html',
       'web/web-apps/apps/documenteditor/embed/index.html',
       'web/web-apps/apps/visioeditor/main/index.html',
-      'converter/templates/JA/Forms/form.pdf',
       // The desktop build and the font data it needs exist for one thing:
       // rendering PDFs through the converter, which nothing here does — the
       // preview goes through the bundled LibreOffice, which needs no font
@@ -137,6 +138,26 @@ describe('what of the engine is packaged', () => {
     ]) {
       assert.ok(!kept(file), `${file} is packaged but never reached`);
     }
+  });
+});
+
+/**
+ * The converter is copied from its own directory, so its filter's paths start
+ * inside it. Reusing the shared filter here would match nothing and ship the
+ * 207 MB of templates it is meant to drop.
+ */
+describe('what of the converter is packaged', () => {
+  const filter = converterFilter();
+  const matched = (file) => filter.some((rule) => rule.startsWith('!')
+    && new RegExp(`^${rule.slice(1).replace(/\*\*/g, '.*')}$`).test(file));
+
+  it('drops the template gallery, whose paths start inside the converter', () => {
+    assert.ok(matched('templates/JA/Forms/form.pdf'));
+  });
+
+  it('keeps the converter itself and what a blank document is made from', () => {
+    assert.ok(!matched('x2t'));
+    assert.ok(!matched('empty/en-US/new.docx'));
   });
 });
 

@@ -17,7 +17,8 @@ function requestedArch() {
 const {
   assertDocumentEngine,
   assertOfficeRuntime,
-  documentEngineFilter,
+  converterFilter,
+  sharedEngineFilter,
 } = require('./scripts/officePackaging.cjs');
 
 function builderArchName(arch) {
@@ -133,15 +134,22 @@ module.exports = {
       from: 'vendor/office-runtime/${os}-${arch}',
       to: 'office-runtime',
     },
-    // The document engine, in the two builds it takes: `editors/` is what the
-    // converter runs to render PDFs, `web/` is what the editor is served from.
-    // The filter drops what no document passes through — see
-    // `documentEngineFilter`, and the packaging tests that name what must
-    // survive it.
+    // The document engine, composed from its two halves into the one directory
+    // the runtime reads. A checkout keeps them apart — the javascript once,
+    // the converter per target — and links them together; copying the target
+    // directory whole would copy those links, which lead nowhere in an app.
+    //
+    // The filter drops what no document passes through: see
+    // `documentEngineFilter`, and the packaging tests that name what survives.
     {
-      from: 'vendor/onlyoffice/${os}-${arch}',
+      from: 'vendor/onlyoffice/shared',
       to: 'onlyoffice',
-      filter: documentEngineFilter(),
+      filter: sharedEngineFilter(),
+    },
+    {
+      from: 'vendor/onlyoffice/${os}-${arch}/converter',
+      to: 'onlyoffice/converter',
+      filter: converterFilter(),
     },
   ],
 

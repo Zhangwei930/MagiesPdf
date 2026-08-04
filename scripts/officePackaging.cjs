@@ -73,7 +73,20 @@ function defaultExists(candidate) {
  * Everything listed is something a document does not pass through. Adding a
  * rule means being sure of that; the packaging tests name what must survive.
  */
-function documentEngineFilter() {
+/**
+ * What of the shared half is worth shipping.
+ *
+ * As downloaded the engine is 1.8 GB, and most of it is never reached from
+ * here: help documentation with screen recordings in a dozen languages, the
+ * mobile and embedded builds of every editor, and editors for formats this app
+ * does not open.
+ *
+ * Paths are relative to `vendor/onlyoffice/shared`, which is the directory
+ * this half is copied from. Everything listed is something a document does not
+ * pass through; adding a rule means being sure of that, and the packaging
+ * tests name what must survive.
+ */
+function sharedEngineFilter() {
   return [
     '**/*',
     '!**/resources/help/**',
@@ -91,12 +104,6 @@ function documentEngineFilter() {
     // and its wildcard reaches every editor — including ones meant to be gone.
     // Rules apply in order and the last to match decides.
     '!web/web-apps/apps/visioeditor/**',
-    // The template gallery, which nothing here opens: it sits under the
-    // converter, which is not served, and the converter itself renders and
-    // converts without it. Creating a blank document uses converter/empty.
-    '!converter/templates/**',
-    // The converter reads one file from the desktop web-apps; the rest of that
-    // build is a second copy of an editor nothing points a frame at.
     // The desktop build, and the font data generated for it. Both exist for
     // one thing: rendering PDFs through the converter. Nothing here does that
     // — the preview goes through the bundled LibreOffice, which needs no font
@@ -104,6 +111,24 @@ function documentEngineFilter() {
     // also ship a manifest describing whichever machine built the package.
     '!editors/**',
     '!fonts/**',
+  ];
+}
+
+/**
+ * What of the converter is worth shipping.
+ *
+ * Separate from the shared half because it is copied from its own directory,
+ * so these paths start inside the converter rather than above it. A rule
+ * written against the wrong root matches nothing and quietly ships what it
+ * was meant to drop.
+ */
+function converterFilter() {
+  return [
+    '**/*',
+    // The template gallery, which nothing here opens: it sits under the
+    // converter, which is not served, and the converter itself renders and
+    // converts without it. Creating a blank document uses `empty/`.
+    '!templates/**',
   ];
 }
 
@@ -134,6 +159,7 @@ module.exports = {
   assertOfficeRuntime,
   officeRuntimeSource,
   assertDocumentEngine,
-  documentEngineFilter,
+  converterFilter,
   documentEngineSource,
+  sharedEngineFilter,
 };
