@@ -51,6 +51,18 @@ describe('bundled Office customer experience', () => {
     );
   });
 
+  /**
+   * The toolbox is not on the start centre. Every one of those tools is in the
+   * ribbon of an open PDF, which is where someone is when they want one — a
+   * copy here is a second list to keep in step, and a category to pick before
+   * a document exists to apply it to.
+   */
+  it('does not repeat the toolbox before a document is open', () => {
+    assert.doesNotMatch(homeSource, /pdfToolbox/);
+    assert.doesNotMatch(homeSource, /selectedCategory/);
+    assert.doesNotMatch(homeSource, /railTools/);
+  });
+
   /** Creating something is one button, not a grid competing with the files. */
   it('puts creating a document behind one control', () => {
     assert.match(homeSource, /createOpen/);

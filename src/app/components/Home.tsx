@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CATEGORIES } from '@core/registry.ts';
-import type { CategoryId } from '@core/types.ts';
 import {
   bridge,
   hasBridge,
   type OfficeCreateKind,
-  type OfficeStatus,
   type RecentDocument,
 } from '../bridge.ts';
 import { uiRegistry } from '../catalog.ts';
@@ -22,7 +19,6 @@ import {
   Trash2,
   X,
   ArrowLeftRight,
-  Wrench,
   ToolIcon,
 } from '../icons.ts';
 import { useApp } from '../store.ts';
@@ -69,7 +65,6 @@ const QUICK_CONVERSIONS = [
 const RAIL = [
   { id: 'recent', labelKey: 'railRecent', icon: Check, action: 'scroll' },
   { id: 'convert', labelKey: 'railConvert', icon: ArrowLeftRight, action: 'scroll' },
-  { id: 'tools', labelKey: 'railTools', icon: Wrench, action: 'scroll' },
   { id: 'ai', labelKey: 'railAi', icon: Bot, action: 'ai' },
 ] as const;
 
@@ -91,10 +86,8 @@ export function Home({
   onOpenAi,
 }: HomeProps) {
   const locale = useApp((state) => state.locale);
-  const [office, setOffice] = useState<OfficeStatus | null>(null);
   const [recentDocuments, setRecentDocuments] = useState<RecentDocument[]>([]);
   const [query, setQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<CategoryId | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [renaming, setRenaming] = useState<RecentDocument | null>(null);
@@ -127,22 +120,15 @@ export function Home({
 
   const loadWorkspace = useCallback(async () => {
     if (!hasBridge()) return;
-    const [status, recent] = await Promise.all([
-      bridge().getOfficeStatus(),
-      bridge().listRecentDocuments(),
-    ]);
-    setOffice(status);
-    setRecentDocuments(recent);
+    setRecentDocuments(await bridge().listRecentDocuments());
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     if (!hasBridge()) return;
-    void Promise.all([bridge().getOfficeStatus(), bridge().listRecentDocuments()])
-      .then(([status, recent]) => {
-        if (cancelled) return;
-        setOffice(status);
-        setRecentDocuments(recent);
+    void bridge().listRecentDocuments()
+      .then((recent) => {
+        if (!cancelled) setRecentDocuments(recent);
       })
       .catch((cause) => {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
@@ -165,17 +151,7 @@ export function Home({
     [],
   );
 
-  const categories = useMemo(
-    () =>
-      CATEGORIES.map((category) => ({ category, count: uiRegistry.byCategory(category.id).length }))
-        .filter(({ count }) => count > 0),
-    [],
-  );
 
-  const selectedTools = useMemo(
-    () => (selectedCategory ? uiRegistry.byCategory(selectedCategory).slice(0, 12) : []),
-    [selectedCategory],
-  );
 
   const run = async (key: string, action: () => Promise<void>, refresh = false) => {
     setBusy(key);
@@ -296,11 +272,6 @@ export function Home({
           ))}
         </nav>
 
-        <div className="flex-1" />
-
-        <p className="px-1 text-[10px] leading-relaxed text-[var(--text-muted)]">
-          {office?.libreOffice.available ? t('localOfficeReadyHint', locale) : t('localOfficeMissingHint', locale)}
-        </p>
       </aside>
 
       <div ref={scrollRef} className="h-full flex-1 overflow-y-auto">
@@ -428,46 +399,6 @@ export function Home({
               </div>
             </section>
 
-            <section data-home-section="tools">
-              <div className="mb-2 flex items-baseline justify-between">
-                <h2 className="text-[12px] font-semibold">{t('pdfToolbox', locale)}</h2>
-                <span className="text-[9.5px] text-[var(--text-muted)]">{t('pdfToolboxHint', locale)}</span>
-              </div>
-              <div className="space-y-1.5">
-                {categories.map(({ category, count }) => (
-                  <div key={category.id}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCategory((current) => current === category.id ? null : category.id)}
-                      aria-expanded={selectedCategory === category.id}
-                      className={`surface-panel flex w-full items-center gap-2.5 p-2.5 text-left transition-colors hover:border-[var(--accent)] ${selectedCategory === category.id ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : ''}`}
-                    >
-                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)]">
-                        <ToolIcon name={category.icon} size={14} className="text-[var(--accent)]" />
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium">{category.name[locale]}</span>
-                      <span className="shrink-0 font-mono text-[9px] text-[var(--text-muted)]">{count}</span>
-                    </button>
-
-                    {selectedCategory === category.id && (
-                      <div className="mt-1 grid gap-0.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-raised)] p-1.5">
-                        {selectedTools.map((tool) => (
-                          <button
-                            key={tool.id}
-                            type="button"
-                            onClick={() => onOpenTool(tool.id)}
-                            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--surface-panel)]"
-                          >
-                            <ToolIcon name={tool.icon} size={13} className="shrink-0 text-[var(--accent)]" />
-                            <span className="truncate text-[10.5px]">{tool.name[locale]}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </section>
           </aside>
         </div>
 
