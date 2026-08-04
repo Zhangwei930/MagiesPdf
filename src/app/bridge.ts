@@ -308,6 +308,8 @@ export interface MagiesPdfBridge {
   /** `bytes` is the engine's own binary, base64 encoded. */
   saveEditor(sessionId: string, bytes: string): Promise<{ path: string; name: string }>;
   closeEditor(sessionId: string): Promise<{ closed: string }>;
+  /** Fires once the engine's document has been written back to disk. */
+  onEditorSaved(handler: (payload: { sessionId: string }) => void): () => void;
   listRecentDocuments(): Promise<RecentDocument[]>;
   renameRecentDocument(path: string, name: string): Promise<{ path: string; name: string }>;
   trashRecentDocument(path: string): Promise<{ trashed: boolean }>;

@@ -84,6 +84,8 @@ export function App() {
   const setActiveDocument = useApp((s) => s.setActiveDocument);
   const saveDocument = useApp((s) => s.saveDocument);
   const setEngineModified = useApp((s) => s.setEngineModified);
+  const engineSaveRequest = useApp((s) => s.engineSaveRequest);
+  const engineSaved = useApp((s) => s.engineSaved);
 
   const [main, setMain] = useState<MainView>({ name: 'welcome' });
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -111,6 +113,13 @@ export function App() {
   useEffect(() => {
     void initialize();
   }, [initialize]);
+
+  // The engine writes a document back through the main process, so the shell
+  // learns a save finished from there rather than from the frame.
+  useEffect(() => {
+    if (!hasBridge()) return undefined;
+    return bridge().onEditorSaved(({ sessionId }) => engineSaved(sessionId));
+  }, [engineSaved]);
 
   /**
    * Where picking a tool goes.
@@ -482,6 +491,9 @@ export function App() {
                   key={activeDocument.id}
                   document={activeDocument}
                   onModifiedChange={(modified) => setEngineModified(activeDocument.id, modified)}
+                  saveRequestedAt={
+                    engineSaveRequest?.id === activeDocument.id ? engineSaveRequest.at : 0
+                  }
                 />
               ) : (
                 /* Keyed by document id so switching tabs remounts the viewer's

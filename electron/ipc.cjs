@@ -130,7 +130,14 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   });
   const editor = createEditorService({
     sessions: editorSessions,
-    host: createEditorRuntime({ electron: { protocol } }),
+    host: createEditorRuntime({
+      electron: { protocol },
+      // The engine posts its document back when asked; that is the save.
+      onDocumentSaved: async (sessionId, document) => {
+        await editor.save(sessionId, document.toString('base64'));
+        getWindow()?.webContents.send('office:editorSaved', { sessionId });
+      },
+    }),
     // x2t writes a document's images beside the binary it produced.
     listMedia: async (workDir) => {
       try {

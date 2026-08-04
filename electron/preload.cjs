@@ -35,6 +35,11 @@ const api = {
   focusEditor: (sessionId) => ipcRenderer.invoke('office:editorFocus', { sessionId }),
   saveEditor: (sessionId, bytes) => ipcRenderer.invoke('office:editorSave', { sessionId, bytes }),
   closeEditor: (sessionId) => ipcRenderer.invoke('office:editorClose', { sessionId }),
+  onEditorSaved: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on('office:editorSaved', listener);
+    return () => ipcRenderer.off('office:editorSaved', listener);
+  },
   listRecentDocuments: () => ipcRenderer.invoke('office:listRecent'),
   renameRecentDocument: (target, name) =>
     ipcRenderer.invoke('office:renameRecent', { path: target, name }),

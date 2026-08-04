@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { connectMessages, documentMessages } = require('./editorHandshake.cjs');
 const { documentUrls, editorPageSource, resolveAsset, socketStubSource } = require('./editorAssets.cjs');
+const { createUploadBuffer } = require('./editorUpload.cjs');
 
 /**
  * Serves the embedded editor to the renderer.
@@ -32,7 +33,7 @@ function fontFileFromUrl(url) {
 }
 
 function createEditorHost(deps) {
-  const { editorsRoot, listen, registerFontProtocol } = deps;
+  const { editorsRoot, listen, registerFontProtocol, onDocumentSaved = async () => {} } = deps;
   const sessions = new Map();
   let server = null;
   let starting = null;
@@ -51,8 +52,27 @@ function createEditorHost(deps) {
    */
   let activeSession = '';
 
+  /**
+   * A document the engine is sending back.
+   *
+   * The chunks arrive as ordinary POSTs; the buffer knows when they add up to
+   * a whole document, and only then is anything written.
+   */
+  async function acceptUpload(request) {
+    const session = sessions.get(request.path.slice('/downloadas/'.length));
+    if (!session) return { status: 404 };
+
+    const document = session.upload.accept(request.command ?? {}, request.body ?? Buffer.alloc(0));
+    if (!document) return { status: 200, type: 'application/json', body: '{"status":"ok"}' };
+
+    await onDocumentSaved(session.id, document);
+    return { status: 200, type: 'application/json', body: '{"status":"ok"}' };
+  }
+
   function handle(request) {
     const route = request.path;
+
+    if (route.startsWith('/downloadas/')) return acceptUpload(request);
 
     // The entry point the renderer's frame is pointed at.
     if (route.startsWith('/editor/')) {
@@ -120,6 +140,7 @@ function createEditorHost(deps) {
         documentType,
         fileType,
         urls: documentUrls({ id, media }),
+        upload: createUploadBuffer(),
         frameId: crypto.randomUUID(),
       });
       activeSession = id;

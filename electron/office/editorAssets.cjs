@@ -108,7 +108,32 @@ function editorPageSource({ documentType, title, fileType }) {
       parent.postMessage({ magies: 'error', data: event && event.data }, '*');
     },
   };
-  new DocsAPI.DocEditor('editor', config);
+  var editor = new DocsAPI.DocEditor('editor', config);
+
+  // ⌘S is pressed in the shell, but the document is in here. Asking the engine
+  // to produce it makes it POST itself back to the host, which is where the
+  // save actually happens; this only starts it.
+  function save() {
+    try {
+      editor.downloadAs('bin');
+    } catch (error) {
+      parent.postMessage({ magies: 'saveFailed', reason: String(error) }, '*');
+    }
+  }
+
+  window.addEventListener('message', function (event) {
+    if (event.data && event.data.magies === 'save') save();
+  });
+
+  // ⌘S is pressed while the editor has focus, so the shell never sees it —
+  // its keydown listener is on a window this one is nested inside. Catching it
+  // here is what makes the shortcut work where the user actually presses it.
+  window.addEventListener('keydown', function (event) {
+    if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      save();
+    }
+  }, true);
 })();
 </script>
 </body>

@@ -45,8 +45,8 @@ function createEditorService(deps) {
     },
 
     /**
-     * Writes the engine's bytes into the session, then converts them back to
-     * the document's own format.
+     * Writes the document the engine sent back, then converts it to the format
+     * the file on disk is in.
      *
      * The order matters: converting before the bytes land would save whatever
      * the previous save left behind.

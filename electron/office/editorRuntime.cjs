@@ -39,7 +39,7 @@ function contentType(filePath) {
 /** Serves `handle`'s answers over loopback on a port the OS picks. */
 function listenLoopback(handle) {
   return new Promise((resolve, reject) => {
-    const server = http.createServer((request, response) => {
+    const server = http.createServer(async (request, response) => {
       let url;
       try {
         url = new URL(request.url, 'http://127.0.0.1');
@@ -48,9 +48,26 @@ function listenLoopback(handle) {
         return;
       }
 
-      const answer = handle({
+      // Only an upload has a body, and only it needs the command that says
+      // where in the sequence its chunk falls.
+      let body;
+      let command;
+      if (request.method === 'POST') {
+        const chunks = [];
+        for await (const chunk of request) chunks.push(chunk);
+        body = Buffer.concat(chunks);
+        try {
+          command = JSON.parse(url.searchParams.get('cmd') ?? '{}');
+        } catch {
+          command = {};
+        }
+      }
+
+      const answer = await handle({
         path: url.pathname,
         session: url.searchParams.get('session') ?? undefined,
+        body,
+        command,
       });
 
       if (answer.status !== 200) {
@@ -130,11 +147,12 @@ function registerEditorSchemes(electron) {
   ]);
 }
 
-function createEditorRuntime({ electron, projectRoot } = {}) {
+function createEditorRuntime({ electron, projectRoot, onDocumentSaved } = {}) {
   return createEditorHost({
     editorsRoot: path.join(engineRoot({ projectRoot }), 'editors'),
     listen: listenLoopback,
     registerFontProtocol: electron ? registerFontProtocol(electron) : () => {},
+    onDocumentSaved,
   });
 }
 

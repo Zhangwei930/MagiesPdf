@@ -5,6 +5,8 @@ interface OfficeEditorProps {
   document: DocumentState;
   /** Called when the engine reports the document has unsaved changes. */
   onModifiedChange(modified: boolean): void;
+  /** Bumped when the shell wants this document saved; the engine is asked. */
+  saveRequestedAt: number;
 }
 
 /**
@@ -20,7 +22,7 @@ interface OfficeEditorProps {
  * showing, so the shell keeps every open editor alive and only changes which
  * one is visible.
  */
-export function OfficeEditor({ document: doc, onModifiedChange }: OfficeEditorProps) {
+export function OfficeEditor({ document: doc, onModifiedChange, saveRequestedAt }: OfficeEditorProps) {
   const frame = useRef<HTMLIFrameElement>(null);
   const session = doc.editor;
 
@@ -42,6 +44,13 @@ export function OfficeEditor({ document: doc, onModifiedChange }: OfficeEditorPr
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
   }, [session, onModifiedChange]);
+
+  useEffect(() => {
+    if (!saveRequestedAt) return;
+    // The engine will post the document to the main process itself; nothing
+    // comes back through here.
+    frame.current?.contentWindow?.postMessage({ magies: 'save' }, '*');
+  }, [saveRequestedAt]);
 
   if (!session) return null;
 

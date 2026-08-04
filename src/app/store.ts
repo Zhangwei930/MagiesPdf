@@ -67,6 +67,9 @@ interface AppState {
   setEngineModified(id: string, modified: boolean): void;
   /** ⌘S on an engine-held document. Never a direct write — see documents.ts. */
   requestEngineSave(id: string): Promise<void>;
+  /** Set while a hosted document has been asked for; the frame watches it. */
+  engineSaveRequest: { id: string; at: number } | null;
+  engineSaved(sessionId: string): void;
   saveDocumentAs(id: string): Promise<void>;
   /**
    * Runs a tool over an open document. A single PDF coming back replaces the
@@ -146,6 +149,7 @@ export const useApp = create<AppState>((set, get) => ({
   recentToolIds: [],
   documents: [],
   activeDocumentId: null,
+  engineSaveRequest: null,
 
   openDocument(file) {
     const incoming = docs.createDocument(file);
@@ -227,15 +231,23 @@ export const useApp = create<AppState>((set, get) => ({
   /**
    * ⌘S on an engine-held document.
    *
-   * Not wired yet: the engine holds the bytes and getting them out of the frame
-   * is its own piece of protocol work. What matters here is that this path
-   * exists at all — without it ⌘S fell through to a direct write of this
-   * document's empty byte array, which truncated the user's file.
+   * The bytes are the engine's, so this only asks. The frame passes the request
+   * to the engine, the engine posts its document back to the main process, and
+   * the save happens there — `office:editorSaved` says when it is done.
    */
   async requestEngineSave(id) {
     const document = get().documents.find((d) => d.id === id);
     if (!document?.editor) return;
-    throw new Error('Saving from the editor is not available yet');
+    set({ engineSaveRequest: { id, at: Date.now() } });
+  },
+
+  engineSaved(sessionId) {
+    set((state) => ({
+      documents: state.documents.map((d) =>
+        d.editor?.sessionId === sessionId ? docs.setEngineModified(d, false) : d,
+      ),
+      engineSaveRequest: null,
+    }));
   },
 
   async saveDocumentAs(id) {
