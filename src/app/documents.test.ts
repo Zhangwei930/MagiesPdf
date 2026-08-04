@@ -14,6 +14,7 @@ import {
   openDocument,
   redo,
   saveAsName,
+  setEngineModified,
   undo,
 } from './documents.ts';
 import type { PickedFile } from './bridge.ts';
@@ -234,6 +235,57 @@ describe('documents rendered from an Office file', () => {
     const second = openDocument(first.documents, createDocument(preview()));
     assert.equal(second.documents.length, 1);
     assert.equal(second.activeId, first.documents[0]?.id);
+  });
+});
+
+describe('documents held by the editor engine', () => {
+  const hosted = (): PickedFile => ({
+    ...picked('报告.docx', '/docs/报告.docx', 0),
+    bytes: new Uint8Array(0),
+    editor: { sessionId: 'sess1', url: 'http://127.0.0.1:5000/editor/sess1' },
+  });
+
+  it('remembers the session the engine is holding it in', () => {
+    const doc = createDocument(hosted());
+    assert.deepEqual(doc.editor, {
+      sessionId: 'sess1',
+      url: 'http://127.0.0.1:5000/editor/sess1',
+    });
+  });
+
+  it('is an ordinary document when no engine is involved', () => {
+    assert.equal(createDocument(picked('a.pdf', '/docs/a.pdf')).editor, null);
+  });
+
+  /**
+   * The bytes live in the engine, not here, so this tab's history is the
+   * engine's too. Reporting anything else would offer an Undo that silently
+   * did nothing.
+   */
+  it('has no history of its own', () => {
+    const doc = createDocument(hosted());
+    assert.equal(canUndo(doc), false);
+    assert.equal(canRedo(doc), false);
+    assert.equal(doc.bytes.length, 0);
+  });
+
+  /** Editing happens in the engine, which tells us when it has begun. */
+  it('takes its dirty state from the engine', () => {
+    const doc = createDocument(hosted());
+    assert.equal(isDirty(doc), false);
+    assert.equal(isDirty(setEngineModified(doc, true)), true);
+    assert.equal(isDirty(setEngineModified(doc, false)), false);
+  });
+
+  /** It has a real file behind it, so ⌘S means "write it back", not Save As. */
+  it('keeps the path of the file it was opened from', () => {
+    assert.equal(createDocument(hosted()).path, '/docs/报告.docx');
+  });
+
+  it('is the same tab when the same file is opened again', () => {
+    const first = openDocument([], createDocument(hosted()));
+    const second = openDocument(first.documents, createDocument(hosted()));
+    assert.equal(second.documents.length, 1);
   });
 });
 

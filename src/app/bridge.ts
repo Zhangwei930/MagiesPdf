@@ -15,6 +15,11 @@ export interface PickedFile {
    * a file the user picked. `path` is empty in that case; the source lives here.
    */
   origin?: { path: string; kind: 'word' | 'sheet' | 'slide' } | null;
+  /**
+   * Present when the editor engine is holding this document open. The bytes
+   * then live in that session rather than in `bytes`, which is empty.
+   */
+  editor?: { sessionId: string; url: string } | null;
 }
 
 export interface SaveResult {

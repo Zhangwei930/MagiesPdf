@@ -25,6 +25,18 @@ export interface DocumentOrigin {
   kind: 'word' | 'sheet' | 'slide';
 }
 
+/**
+ * A document the editor engine is holding open.
+ *
+ * Its bytes are not here — they live in the engine, behind a session. So is its
+ * history, and so is the decision that it has unsaved changes. This tab is a
+ * window onto that session rather than a copy of the file.
+ */
+export interface EditorSession {
+  sessionId: string;
+  url: string;
+}
+
 export interface DocumentState {
   id: string;
   name: string;
@@ -45,6 +57,10 @@ export interface DocumentState {
   saved: boolean;
   /** Set only while this document is a rendering of an Office file. */
   origin: DocumentOrigin | null;
+  /** Set only while the editor engine is holding this document open. */
+  editor: EditorSession | null;
+  /** What the engine last said about unsaved changes. Meaningless without one. */
+  engineModified: boolean;
 }
 
 /** Undo steps kept, at most. Each one is a whole copy of the document. */
@@ -91,7 +107,19 @@ export function createDocument(file: PickedFile): DocumentState {
     password: '',
     saved: false,
     origin,
+    editor: file.editor ?? null,
+    engineModified: false,
   };
+}
+
+/**
+ * Records what the engine says about unsaved changes.
+ *
+ * A hosted document's edits happen inside the engine, so this is the only way
+ * the shell can know the tab is dirty.
+ */
+export function setEngineModified(doc: DocumentState, modified: boolean): DocumentState {
+  return { ...doc, engineModified: modified };
 }
 
 export function canUndo(doc: DocumentState): boolean {
@@ -102,8 +130,14 @@ export function canRedo(doc: DocumentState): boolean {
   return doc.future.length > 0;
 }
 
-/** Whether there are changes that are not on disk. */
+/**
+ * Whether there are changes that are not on disk.
+ *
+ * A hosted document is edited inside the engine, which is the only thing that
+ * knows — the shell holds none of its bytes to compare.
+ */
 export function isDirty(doc: DocumentState): boolean {
+  if (doc.editor) return doc.engineModified;
   return doc.path === '' || (doc.past.length > 0 && !doc.saved);
 }
 
