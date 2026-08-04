@@ -80,7 +80,6 @@ function documentEngineFilter() {
     '!web/web-apps/apps/*/mobile/**',
     '!web/web-apps/apps/*/embed/**',
     '!web/web-apps/apps/*/forms/**',
-    '!web/web-apps/apps/visioeditor/**',
     '!web/sdkjs/visio/**',
     // PDFs open in this app's own viewer; the engine's pdf editor is never
     // pointed at one — nothing in web-apps so much as names it.
@@ -88,12 +87,16 @@ function documentEngineFilter() {
     // The editor ships in 46 languages. This app ships in two.
     '!web/web-apps/apps/*/main/locale/*.json',
     'web/web-apps/apps/*/main/locale/{en,zh}.json',
-    // The converter reads one file from the desktop web-apps; the rest of that
-    // build is a second copy of an editor nothing points a frame at.
+    // Whole editors go last: the rule above re-includes rather than excludes,
+    // and its wildcard reaches every editor — including ones meant to be gone.
+    // Rules apply in order and the last to match decides.
+    '!web/web-apps/apps/visioeditor/**',
     // The template gallery, which nothing here opens: it sits under the
     // converter, which is not served, and the converter itself renders and
     // converts without it. Creating a blank document uses converter/empty.
     '!converter/templates/**',
+    // The converter reads one file from the desktop web-apps; the rest of that
+    // build is a second copy of an editor nothing points a frame at.
     '!editors/web-apps/apps/**',
     '!editors/web-apps/vendor/!(xregexp)/**',
   ];

@@ -125,6 +125,9 @@ describe('what of the engine is packaged', () => {
       'editors/web-apps/apps/documenteditor/main/app.js',
       'web/sdkjs/pdf/pdf.js',
       'web/web-apps/apps/documenteditor/main/locale/fr.json',
+      // The locale rule re-includes rather than excludes, and its wildcard
+      // reaches editors that are meant to be gone entirely.
+      'web/web-apps/apps/visioeditor/main/locale/en.json',
     ]) {
       assert.ok(!kept(file), `${file} is packaged but never reached`);
     }
