@@ -585,7 +585,7 @@ function main() {
   const images = path.join(root, 'sdkjs', 'common', 'Images');
   fs.mkdirSync(images, { recursive: true });
   for (const name of thumbnailSpriteNames()) {
-    const scale = Number((name.match(/@([\d.]+)x/) ?? [, '1'])[1]);
+    const scale = Number(name.match(/@([\d.]+)x/)?.[1] ?? 1);
     fs.writeFileSync(path.join(images, name), thumbnailSprite({
       width: Math.round(THUMBNAIL_WIDTH * scale),
       rowHeight: Math.round(THUMBNAIL_ROW_HEIGHT * scale),
