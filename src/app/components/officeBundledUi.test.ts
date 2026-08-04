@@ -70,6 +70,17 @@ describe('bundled Office customer experience', () => {
 });
 
 describe('the title bar', () => {
+  /**
+   * The mark belongs where the app is named, which is the title bar. The start
+   * centre used to name the app again above the customer's files — a second
+   * title on a page whose subject is their documents, not the product.
+   */
+  it('carries the mark beside the name', () => {
+    assert.match(appSource, /logo\.png/);
+    assert.doesNotMatch(homeSource, /logo\.png/);
+    assert.doesNotMatch(homeSource, /officeTagline/);
+  });
+
   /** Jobs were a panel of their own; the work they showed now speaks for itself. */
   it('does not offer a jobs panel', () => {
     assert.doesNotMatch(appSource, /setJobsOpen/);

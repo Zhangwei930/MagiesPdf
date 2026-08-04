@@ -276,26 +276,9 @@ export function Home({
 
       <div ref={scrollRef} className="h-full flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-6xl px-5 py-5 lg:px-8 lg:py-7">
-        <header className="flex items-center justify-between gap-5">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="h-12 w-12 shrink-0" aria-hidden="true">
-              <img
-                src={`${import.meta.env.BASE_URL}logo.png`}
-                alt=""
-                width={48}
-                height={48}
-                className="h-12 w-12 select-none"
-                draggable={false}
-              />
-            </span>
-            <div className="min-w-0">
-              <h1 className="truncate text-[22px] font-semibold tracking-tight">{t('appName', locale)}</h1>
-              <p className="mt-0.5 truncate text-[12px] text-[var(--text-secondary)]">
-                {t('officeTagline', locale)}
-              </p>
-            </div>
-          </div>
-
+        {/* Only the search: the app is named in the title bar, and this page
+            is about the customer's documents rather than the product. */}
+        <header className="flex justify-end">
           <button
             type="button"
             onClick={onOpenSearch}

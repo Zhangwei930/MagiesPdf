@@ -405,8 +405,16 @@ export function App() {
         <button
           type="button"
           onClick={openWelcome}
-          className="no-drag rounded-md px-2 py-1 text-[13px] font-semibold tracking-tight transition-colors hover:bg-[var(--surface-hover)]"
+          className="no-drag flex items-center gap-2 rounded-md px-2 py-1 text-[13px] font-semibold tracking-tight transition-colors hover:bg-[var(--surface-hover)]"
         >
+          <img
+            src={`${import.meta.env.BASE_URL}logo.png`}
+            alt=""
+            width={18}
+            height={18}
+            className="h-[18px] w-[18px] select-none"
+            draggable={false}
+          />
           {t('appName', locale)}
         </button>
 
