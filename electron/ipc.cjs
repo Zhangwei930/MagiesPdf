@@ -128,13 +128,23 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     fs,
     uniqueId: () => crypto.randomUUID(),
   });
+  /** Where the next document out of a session goes, when it is a save-as. */
+  const pendingSaveAs = new Map();
+
   const editor = createEditorService({
     sessions: editorSessions,
     host: createEditorRuntime({
       electron: { protocol },
       // The engine posts its document back when asked; that is the save.
       onDocumentSaved: async (sessionId, document) => {
-        await editor.save(sessionId, document.toString('base64'));
+        // A save-as asked where it should go before triggering this; taking
+        // the target here is what keeps the original untouched.
+        const target = pendingSaveAs.get(sessionId);
+        pendingSaveAs.delete(sessionId);
+
+        if (target) await editor.saveAs(sessionId, document.toString('base64'), target);
+        else await editor.save(sessionId, document.toString('base64'));
+
         getWindow()?.webContents.send('office:editorSaved', { sessionId });
       },
     }),
@@ -187,6 +197,26 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   handle('office:editorSave', (_event, { sessionId, bytes }) =>
     editor.save(String(sessionId), String(bytes)),
   );
+  /**
+   * The file menu's "save as".
+   *
+   * The renderer has none of the document — it is in the engine — so this
+   * only asks where it should go and remembers that. The save that follows
+   * takes the ordinary path out of the engine, and lands there instead of
+   * over the original. The extension the user typed decides the format, so
+   * one dialog covers saving a copy and exporting to PDF or another format.
+   */
+  handle('office:editorSaveAsTarget', async (_event, { sessionId, name }) => {
+    const result = await dialog.showSaveDialog(getWindow(), {
+      defaultPath: safeFileName(String(name || '')),
+    });
+    if (result.canceled || !result.filePath) return null;
+
+    pendingSaveAs.set(String(sessionId), result.filePath);
+    writableTargets.remember(result.filePath);
+    return { path: result.filePath };
+  });
+
   handle('office:editorClose', (_event, { sessionId }) => editor.close(String(sessionId)));
 
   handle('office:listRecent', () => office.listRecent());

@@ -132,4 +132,28 @@ describe('saving from the editor', () => {
     assert.deepEqual(order, ['write', 'save'], 'the bytes must land before they are converted');
     assert.equal(result.path, '/docs/a.docx');
   });
+
+  /**
+   * Saving under another name is the file menu's "save as", and it is two
+   * steps: the document has to come out of the engine before it can be
+   * written anywhere. Writing first would save whatever the last save left
+   * behind — the edits since would be missing, silently.
+   */
+  it('takes the document out of the engine before writing it elsewhere', async () => {
+    const order = [];
+    const service = createEditorService({
+      sessions: {
+        writeEditorBin: async () => { order.push('write'); },
+        saveAs: async (id, target) => { order.push(`saveAs:${target}`); return { path: target }; },
+        save: async () => ({}),
+        open: async () => ({}),
+        close: async () => ({}),
+      },
+      host: { publish: async () => ({ url: '' }), withdraw: () => {} },
+      listMedia: async () => [],
+    });
+
+    await service.saveAs('abc', 'ZG9j', '/tmp/copy.pdf');
+    assert.deepEqual(order, ['write', 'saveAs:/tmp/copy.pdf']);
+  });
 });

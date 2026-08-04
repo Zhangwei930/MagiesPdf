@@ -7,6 +7,11 @@ interface OfficeEditorProps {
   onModifiedChange(modified: boolean): void;
   /** Bumped when the shell wants this document saved; the engine is asked. */
   saveRequestedAt: number;
+  /**
+   * What the engine's file menu asks the host for. The engine only asks —
+   * what a new document, a picker or another name mean belongs to the shell.
+   */
+  onRequest(what: 'createNew' | 'open' | 'saveAs'): void;
 }
 
 /**
@@ -22,7 +27,7 @@ interface OfficeEditorProps {
  * showing, so the shell keeps every open editor alive and only changes which
  * one is visible.
  */
-export function OfficeEditor({ document: doc, onModifiedChange, saveRequestedAt }: OfficeEditorProps) {
+export function OfficeEditor({ document: doc, onModifiedChange, onRequest, saveRequestedAt }: OfficeEditorProps) {
   const frame = useRef<HTMLIFrameElement>(null);
   const session = doc.editor;
 
@@ -37,13 +42,20 @@ export function OfficeEditor({ document: doc, onModifiedChange, saveRequestedAt 
     const onMessage = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow) return;
       const data = event.data as { magies?: string; modified?: boolean } | null;
-      if (!data || data.magies !== 'modified') return;
-      onModifiedChange(Boolean(data.modified));
+      if (!data) return;
+
+      if (data.magies === 'modified') {
+        onModifiedChange(Boolean(data.modified));
+        return;
+      }
+      if (data.magies === 'requestCreateNew') onRequest('createNew');
+      else if (data.magies === 'requestOpen') onRequest('open');
+      else if (data.magies === 'requestSaveAs') onRequest('saveAs');
     };
 
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [session, onModifiedChange]);
+  }, [session, onModifiedChange, onRequest]);
 
   useEffect(() => {
     if (!saveRequestedAt) return;

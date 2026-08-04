@@ -307,6 +307,11 @@ export interface MagiesPdfBridge {
   focusEditor(sessionId: string): Promise<{ focused: boolean }>;
   /** `bytes` is the engine's own binary, base64 encoded. */
   saveEditor(sessionId: string, bytes: string): Promise<{ path: string; name: string }>;
+  /**
+   * Asks where a save-as should land and remembers it; the save that follows
+   * goes there instead of over the original. The extension decides the format.
+   */
+  pickEditorSaveAsTarget(sessionId: string, name: string): Promise<{ path: string } | null>;
   closeEditor(sessionId: string): Promise<{ closed: string }>;
   /** Fires once the engine's document has been written back to disk. */
   onEditorSaved(handler: (payload: { sessionId: string }) => void): () => void;

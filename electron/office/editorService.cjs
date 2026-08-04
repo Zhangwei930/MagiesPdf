@@ -57,6 +57,18 @@ function createEditorService(deps) {
     },
 
     /**
+     * Saves under another name, converting by the target's extension.
+     *
+     * The same order as `save`, and for the same reason: the document has to
+     * come out of the engine before anything is written, or what lands is
+     * whatever the last save left behind, missing every edit since.
+     */
+    async saveAs(sessionId, base64, targetPath) {
+      await sessions.writeEditorBin(sessionId, base64);
+      return sessions.saveAs(sessionId, targetPath);
+    },
+
+    /**
      * Stops serving the document before removing it.
      *
      * A closing editor can still have a request in flight; withdrawing first

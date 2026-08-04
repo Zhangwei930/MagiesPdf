@@ -34,6 +34,8 @@ const api = {
   openInEditor: (paths) => ipcRenderer.invoke('office:editorOpen', { paths }),
   focusEditor: (sessionId) => ipcRenderer.invoke('office:editorFocus', { sessionId }),
   saveEditor: (sessionId, bytes) => ipcRenderer.invoke('office:editorSave', { sessionId, bytes }),
+  pickEditorSaveAsTarget: (sessionId, name) =>
+    ipcRenderer.invoke('office:editorSaveAsTarget', { sessionId, name }),
   closeEditor: (sessionId) => ipcRenderer.invoke('office:editorClose', { sessionId }),
   onEditorSaved: (handler) => {
     const listener = (_event, payload) => handler(payload);

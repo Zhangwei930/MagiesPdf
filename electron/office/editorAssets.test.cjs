@@ -243,6 +243,21 @@ describe('the page the frame is pointed at', () => {
   });
 
   /**
+   * The file menu is the engine's, and it hides what the host has not said it
+   * can do. Creating, opening and saving under another name are all things
+   * this app can do — they are asked for through the engine's own request
+   * events rather than by reaching into its menu.
+   */
+  it('lets the file menu ask the host to create, open and save as', () => {
+    assert.match(page, /"canRequestCreateNew":true/);
+    assert.match(page, /"canRequestOpen":true/);
+    assert.match(page, /"canRequestSaveAs":true/);
+    for (const event of ['onRequestCreateNew', 'onRequestOpen', 'onRequestSaveAs']) {
+      assert.match(page, new RegExp(event), `${event} is never answered`);
+    }
+  });
+
+  /**
    * The engine's own branding and the account it thinks is signed in.
    *
    * There is no account here — the editor runs on one machine, against one

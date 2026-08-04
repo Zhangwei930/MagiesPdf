@@ -362,6 +362,22 @@ export function App() {
     );
   }
 
+  /**
+   * What the engine's file menu asks for. The engine only asks; creating,
+   * picking a file and choosing where a copy goes are all the shell's.
+   */
+  const handleEditorRequest = async (document: DocumentState, what: 'createNew' | 'open' | 'saveAs') => {
+    if (what === 'open') return openDocumentPicker();
+    // A new document of the kind the one in front of you is.
+    if (what === 'createNew') return createOfficeDocument(document.origin?.kind ?? 'word');
+
+    // Where it goes is settled first; the save that follows lands there
+    // rather than over the original.
+    const target = await bridge().pickEditorSaveAsTarget(document.editor?.sessionId ?? '', document.name);
+    if (target) await useApp.getState().requestEngineSave(document.id);
+    return undefined;
+  };
+
   const tool = view.name === 'tool' ? uiRegistry.tryGet(view.toolId) : undefined;
   // The PDF ribbon belongs to a PDF. An Office document has the engine's own
   // toolbar right below it, and none of these tools apply to what is open —
@@ -492,6 +508,7 @@ export function App() {
                   saveRequestedAt={
                     engineSaveRequest?.id === activeDocument.id ? engineSaveRequest.at : 0
                   }
+                  onRequest={(what) => void handleEditorRequest(activeDocument, what)}
                 />
               ) : (
                 /* Keyed by document id so switching tabs remounts the viewer's

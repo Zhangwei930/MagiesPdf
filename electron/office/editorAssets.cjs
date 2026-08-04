@@ -139,6 +139,12 @@ function editorPageSource({ documentType, title, fileType, sessionId }) {
       permissions: { edit: true, download: true, print: true },
     },
     editorConfig: {
+      // What the file menu may ask this app to do. Each one hides its menu
+      // entry unless the host says it can answer, and each is answered by an
+      // event rather than by reaching into the engine's own menu.
+      canRequestCreateNew: true,
+      canRequestOpen: true,
+      canRequestSaveAs: true,
       mode: 'edit',
       lang: 'zh',
       user: { id: 'local', name: 'Magies' },
@@ -216,6 +222,19 @@ function editorPageSource({ documentType, title, fileType, sessionId }) {
     // Saving finishes by the engine offering the file it produced. The
     // document has already been written by the host at that point, so this
     // exists to take the offer and drop it — unhandled, it becomes a download.
+    onDownloadAs: function () {},
+
+    // Everything the file menu hands back to the host. The engine only asks;
+    // what a new document, a picker or a target path mean is the shell's.
+    onRequestCreateNew: function () {
+      parent.postMessage({ magies: 'requestCreateNew' }, '*');
+    },
+    onRequestOpen: function () {
+      parent.postMessage({ magies: 'requestOpen' }, '*');
+    },
+    onRequestSaveAs: function () {
+      parent.postMessage({ magies: 'requestSaveAs' }, '*');
+    },
 
     onError: function (event) {
       parent.postMessage({ magies: 'error', data: event && event.data }, '*');
