@@ -203,12 +203,40 @@ describe('the page the frame is pointed at', () => {
   });
 
   /**
-   * Finishing a save makes the engine offer the file it produced. It is
-   * already on disk by then, so the offer is taken and dropped — left
-   * unhandled it is a download the user did not ask for.
+   * Saving goes through the engine's own api rather than the download the
+   * embedding interface offers.
+   *
+   * That download blocks the editor behind a progress dialog for the length
+   * of the operation and ends by fetching the file it produced — which here
+   * is a document already written to disk, so fetching it is a download the
+   * user did not ask for, on top of an editor they cannot use meanwhile.
+   * Asking the engine directly, with no action type and a callback, does
+   * neither.
    */
-  it('takes the file the engine offers rather than downloading it', () => {
-    assert.match(page, /onDownloadAs/);
+  it('saves without the download the embedding interface would run', () => {
+    assert.match(page, /downloadAs\(null,/, 'an action type puts up the progress dialog');
+    assert.match(page, /callback/, 'nothing tells the shell the save finished');
+    assert.doesNotMatch(page, /downloadAs\('/, 'the embedding interface takes a format and runs the download');
+  });
+
+  /**
+   * One save at a time.
+   *
+   * The shortcut is bound in more than one place and the shell asks for a
+   * save of its own, so a single keystroke reaches this more than once. Each
+   * one is the whole document serialised, uploaded and converted, so without
+   * a guard a keypress costs several of them and the editor crawls.
+   */
+  it('ignores a save while one is already running', () => {
+    assert.match(page, /saving/, 'nothing tracks a save in flight');
+    assert.match(page, /if \(saving\) return;/);
+  });
+
+  /** The engine's own format: converting to docx is the host's job, and fast. */
+  it('asks for the format the engine already holds', () => {
+    assert.match(page, /0x1001/, 'word documents come back as the editor binary');
+    assert.match(page, /0x1002/);
+    assert.match(page, /0x1003/);
   });
 
   it('reports back when the engine says the document changed', () => {

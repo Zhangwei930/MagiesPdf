@@ -153,7 +153,7 @@ function editorPageSource({ documentType, title, fileType, sessionId }) {
     // Saving finishes by the engine offering the file it produced. The
     // document has already been written by the host at that point, so this
     // exists to take the offer and drop it — unhandled, it becomes a download.
-    onDownloadAs: function () {},
+
     onError: function (event) {
       parent.postMessage({ magies: 'error', data: event && event.data }, '*');
     },
@@ -173,10 +173,64 @@ function editorPageSource({ documentType, title, fileType, sessionId }) {
    * far more than saving, and every call it makes is one this page would have
    * to answer for.
    */
+  /**
+   * The format the engine already holds a document in.
+   *
+   * Asking for docx would make the engine build one in the browser; asking
+   * for its own binary makes it hand over what it has, and the host converts
+   * with the native converter it already ships — which takes a fifth of a
+   * second on a document this size.
+   */
+  var ENGINE_FORMAT = { word: 0x1001, cell: 0x1002, slide: 0x1003 };
+
+  /** The frame the engine runs in, which is not this page. */
+  function engineWindow() {
+    var frames = document.querySelectorAll('iframe');
+    for (var i = 0; i < frames.length; i += 1) {
+      try {
+        var w = frames[i].contentWindow;
+        if (w && w.Asc && w.Asc.editor) return w;
+      } catch (error) { /* another origin: not ours */ }
+    }
+    return null;
+  }
+
+  /**
+   * Saving.
+   *
+   * Not the download the embedding interface offers: that blocks the editor
+   * behind a progress dialog for the length of the operation, and finishes by
+   * fetching the file it produced — which is a document already written to
+   * disk, so fetching it is a download nobody asked for. Asking the engine
+   * itself, with no action type and a callback, does neither.
+   *
+   * The document reaches the host as an upload while this runs; the callback
+   * only says the engine has finished handing it over.
+   */
+  var saving = false;
+
   function save() {
+    // The shortcut is bound in more than one window and the shell asks for a
+    // save of its own, so one keystroke arrives here several times. Each is
+    // the whole document serialised, uploaded and converted.
+    if (saving) return;
+
+    var w = engineWindow();
+    if (!w) {
+      parent.postMessage({ magies: 'saveFailed', reason: 'the engine is not ready' }, '*');
+      return;
+    }
     try {
-      editor.downloadAs('bin');
+      var format = ENGINE_FORMAT[${JSON.stringify(documentType)}] || ENGINE_FORMAT.word;
+      var options = new w.Asc.asc_CDownloadOptions(format, false);
+      options.callback = function () {
+        saving = false;
+        parent.postMessage({ magies: 'saved' }, '*');
+      };
+      saving = true;
+      w.Asc.editor.downloadAs(null, options);
     } catch (error) {
+      saving = false;
       parent.postMessage({ magies: 'saveFailed', reason: String(error) }, '*');
     }
   }

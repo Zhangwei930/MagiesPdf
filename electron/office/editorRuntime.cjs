@@ -71,7 +71,10 @@ function listenLoopback(handle) {
         command,
       });
 
-      if (process.env.MAGIES_EDITOR_TRACE) console.log('[editor]', answer.status, url.pathname);
+      if (process.env.MAGIES_EDITOR_TRACE) {
+        const size = body ? ` ${body.length} bytes` : '';
+        console.log('[editor]', answer.status, url.pathname + size);
+      }
       if (answer.status !== 200) {
         response.writeHead(answer.status).end();
         return;
