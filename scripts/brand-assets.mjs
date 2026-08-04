@@ -355,6 +355,49 @@ for (const size of ICONSET) {
 execFileSync('iconutil', ['-c', 'icns', iconset, '-o', path.join(projectRoot, 'build', 'icon.icns')]);
 console.log('[brand] wrote build/icon.icns');
 
+/**
+ * Writes a Windows .ico.
+ *
+ * An .ico is a directory of images, and since Vista each entry may simply be a
+ * PNG — so this needs no image tooling beyond what is already here, and the
+ * Windows icon no longer has to be produced on a different machine.
+ */
+function writeIco(target, sizes) {
+  const images = sizes.map((size) => {
+    const scratch = path.join(projectRoot, 'build', `.ico-${size}.png`);
+    resize(markPath, scratch, size);
+    const data = fs.readFileSync(scratch);
+    fs.rmSync(scratch, { force: true });
+    return { size, data };
+  });
+
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0);
+  header.writeUInt16LE(1, 2); // 1 = icon
+  header.writeUInt16LE(images.length, 4);
+
+  let offset = 6 + images.length * 16;
+  const entries = images.map(({ size, data }) => {
+    const entry = Buffer.alloc(16);
+    // 256 is stored as 0; anything larger has no representation here.
+    entry[0] = size >= 256 ? 0 : size;
+    entry[1] = size >= 256 ? 0 : size;
+    entry[2] = 0; // palette colours
+    entry[3] = 0; // reserved
+    entry.writeUInt16LE(1, 4); // colour planes
+    entry.writeUInt16LE(32, 6); // bits per pixel
+    entry.writeUInt32LE(data.length, 8);
+    entry.writeUInt32LE(offset, 12);
+    offset += data.length;
+    return entry;
+  });
+
+  fs.writeFileSync(target, Buffer.concat([header, ...entries, ...images.map((i) => i.data)]));
+}
+
+writeIco(path.join(projectRoot, 'build', 'icon.ico'), [16, 24, 32, 48, 64, 128, 256]);
+console.log('[brand] wrote build/icon.ico');
+
 fs.rmSync(lockupPath, { force: true });
 fs.rmSync(markPath, { force: true });
-console.log('[brand] done — build/icon.ico must be regenerated on Windows or with a converter');
+console.log('[brand] done');
