@@ -65,6 +65,8 @@ interface AppState {
   /** ⌘S. Writes over the file the document came from, or asks where to put it. */
   saveDocument(id: string): Promise<void>;
   setEngineModified(id: string, modified: boolean): void;
+  /** ⌘S on an engine-held document. Never a direct write — see documents.ts. */
+  requestEngineSave(id: string): Promise<void>;
   saveDocumentAs(id: string): Promise<void>;
   /**
    * Runs a tool over an open document. A single PDF coming back replaces the
@@ -202,15 +204,38 @@ export const useApp = create<AppState>((set, get) => ({
     const document = get().documents.find((d) => d.id === id);
     if (!document) return;
 
-    // Nothing on disk to write over — a tool result held in memory — so this
-    // can only mean Save As.
-    if (document.path === '') {
-      await get().saveDocumentAs(id);
-      return;
-    }
+    switch (docs.saveTarget(document)) {
+      case 'prompt':
+        // Nothing on disk to write over — a tool result held in memory, or a
+        // rendering that must not be written back over its source.
+        await get().saveDocumentAs(id);
+        return;
 
-    await bridge().writeToPath(document.path, document.bytes);
-    set((state) => ({ documents: mapDocument(state.documents, id, (d) => docs.markSaved(d, '')) }));
+      case 'engine':
+        // The bytes are the engine's. Writing this document's own empty array
+        // to its path would truncate the user's file, so the request goes to
+        // the engine and the frame answers it with what it is holding.
+        await get().requestEngineSave(id);
+        return;
+
+      default:
+        await bridge().writeToPath(document.path, document.bytes);
+        set((state) => ({ documents: mapDocument(state.documents, id, (d) => docs.markSaved(d, '')) }));
+    }
+  },
+
+  /**
+   * ⌘S on an engine-held document.
+   *
+   * Not wired yet: the engine holds the bytes and getting them out of the frame
+   * is its own piece of protocol work. What matters here is that this path
+   * exists at all — without it ⌘S fell through to a direct write of this
+   * document's empty byte array, which truncated the user's file.
+   */
+  async requestEngineSave(id) {
+    const document = get().documents.find((d) => d.id === id);
+    if (!document?.editor) return;
+    throw new Error('Saving from the editor is not available yet');
   },
 
   async saveDocumentAs(id) {

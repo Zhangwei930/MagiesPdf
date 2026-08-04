@@ -192,6 +192,19 @@ export function markSaved(doc: DocumentState, path: string): DocumentState {
 }
 
 /**
+ * Where ⌘S should send a document.
+ *
+ * A hosted document keeps the path of the file it came from, but its bytes are
+ * in the engine and `bytes` here is empty. Writing that to the path would
+ * truncate the user's document to nothing, so the choice is made here — as a
+ * value that can be tested — rather than as a condition inside the store.
+ */
+export function saveTarget(doc: DocumentState): 'engine' | 'path' | 'prompt' {
+  if (doc.editor) return 'engine';
+  return doc.path === '' ? 'prompt' : 'path';
+}
+
+/**
  * The filename Save As should propose.
  *
  * A rendering is named after the document it shows — `报告.docx` — while its

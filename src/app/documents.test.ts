@@ -14,6 +14,7 @@ import {
   openDocument,
   redo,
   saveAsName,
+  saveTarget,
   setEngineModified,
   undo,
 } from './documents.ts';
@@ -286,6 +287,41 @@ describe('documents held by the editor engine', () => {
     const first = openDocument([], createDocument(hosted()));
     const second = openDocument(first.documents, createDocument(hosted()));
     assert.equal(second.documents.length, 1);
+  });
+});
+
+describe('where ⌘S sends a document', () => {
+  const hosted = (): PickedFile => ({
+    ...picked('报告.docx', '/docs/报告.docx', 0),
+    bytes: new Uint8Array(0),
+    editor: { sessionId: 'sess1', url: 'http://127.0.0.1:5000/editor/sess1' },
+  });
+
+  /**
+   * The bytes of a hosted document are in the engine; the shell holds an empty
+   * array. Writing that over the path would truncate the user's document to
+   * nothing, so this decision is a function rather than a condition buried in
+   * the store where nothing checks it.
+   */
+  it('sends a hosted document to the engine, never to a direct write', () => {
+    assert.equal(saveTarget(createDocument(hosted())), 'engine');
+  });
+
+  it('writes an ordinary document straight to its path', () => {
+    assert.equal(saveTarget(createDocument(picked('a.pdf', '/docs/a.pdf'))), 'path');
+  });
+
+  it('asks where to put a document that has no path yet', () => {
+    assert.equal(saveTarget(createDocument(picked('result.pdf', ''))), 'prompt');
+  });
+
+  /** A rendering has no path by construction; it must never be written back. */
+  it('asks where to put a rendering', () => {
+    const rendering = createDocument({
+      ...picked('报告.pdf', ''),
+      origin: { path: '/docs/报告.docx', kind: 'word' },
+    });
+    assert.equal(saveTarget(rendering), 'prompt');
   });
 });
 
