@@ -41,6 +41,36 @@ describe('document engine location', () => {
  * it — the converter with a script error, the editor by taking a save path
  * that ends in a native host that is not there.
  */
+/**
+ * The engine is one native converter and a great deal of javascript, and only
+ * the converter differs between platforms. Keeping the javascript once rather
+ * than once per target is the difference between a checkout carrying it five
+ * times and carrying it once — and a packaged app composes the two back into
+ * the single directory the runtime knows.
+ */
+describe('where the parts of the engine are', () => {
+  it('takes the converter from the target being built for', () => {
+    assert.equal(
+      engineRoot({ packaged: false, projectRoot: '/repo', platform: 'win32', arch: 'arm64' }),
+      path.join('/repo', 'vendor', 'onlyoffice', 'win-arm64'),
+    );
+  });
+
+  it('takes everything else from the one copy of it', () => {
+    assert.equal(
+      editorAssetsRoot({ packaged: false, projectRoot: '/repo', platform: 'win32', arch: 'arm64' }),
+      path.join('/repo', 'vendor', 'onlyoffice', 'shared', 'web'),
+    );
+  });
+
+  /** Packaging composes both into one directory, so nothing splits at runtime. */
+  it('finds both in the same place once packaged', () => {
+    const options = { packaged: true, resourcesPath: '/app/Resources' };
+    assert.equal(engineRoot(options), path.join('/app/Resources', 'onlyoffice'));
+    assert.equal(editorAssetsRoot(options), path.join('/app/Resources', 'onlyoffice', 'web'));
+  });
+});
+
 describe('the editor assets', () => {
   it('come from the browser build, not the converter\u2019s', () => {
     assert.equal(
@@ -49,10 +79,10 @@ describe('the editor assets', () => {
     );
   });
 
-  it('sit beside the converter in a checkout', () => {
+  it('are kept once, not once per target', () => {
     assert.equal(
       editorAssetsRoot({ packaged: false, projectRoot: '/repo', platform: 'darwin', arch: 'x64' }),
-      path.join('/repo', 'vendor', 'onlyoffice', 'mac-x64', 'web'),
+      path.join('/repo', 'vendor', 'onlyoffice', 'shared', 'web'),
     );
   });
 });
@@ -72,6 +102,21 @@ describe('engine converter', () => {
     assert.equal(
       built.allFontsPath,
       path.join('/app/Resources', 'onlyoffice', 'editors', 'sdkjs', 'common', 'AllFonts.js'),
+    );
+  });
+
+  /**
+   * The fonts and the manifest are not the converter, so in a checkout they
+   * are in the one copy of them rather than beside the binary being built for.
+   */
+  it('reads fonts from the copy shared with the editor', () => {
+    const built = createEngineX2t({
+      packaged: false, projectRoot: '/repo', platform: 'win32', arch: 'arm64',
+    });
+    assert.equal(built.fontsDir, path.join('/repo', 'vendor', 'onlyoffice', 'shared', 'fonts'));
+    assert.equal(
+      built.allFontsPath,
+      path.join('/repo', 'vendor', 'onlyoffice', 'shared', 'editors', 'sdkjs', 'common', 'AllFonts.js'),
     );
   });
 

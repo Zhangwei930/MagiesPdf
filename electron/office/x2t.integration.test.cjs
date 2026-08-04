@@ -8,7 +8,7 @@ const { execFile } = require('node:child_process');
 const { describe, it, before, after } = require('node:test');
 const { createX2t, x2tExecutablePath } = require('./x2t.cjs');
 const { createOfficeSessions } = require('./session.cjs');
-const { engineRoot } = require('./engine.cjs');
+const { engineRoot, engineSharedRoot } = require('./engine.cjs');
 
 /**
  * The unit tests prove the logic against fakes. This one proves the two
@@ -21,7 +21,10 @@ const { engineRoot } = require('./engine.cjs');
 
 // Resolved the same way the app resolves it, so moving the engine cannot leave
 // this suite quietly skipping while reporting success.
-const RUNTIME_ROOT = engineRoot({ packaged: false, projectRoot: path.join(__dirname, '..', '..') });
+const PROJECT_ROOT = path.join(__dirname, '..', '..');
+const RUNTIME_ROOT = engineRoot({ packaged: false, projectRoot: PROJECT_ROOT });
+// Only the converter is per-target; its fonts are the copy the editor shares.
+const SHARED_ROOT = engineSharedRoot({ packaged: false, projectRoot: PROJECT_ROOT });
 const EXECUTABLE = x2tExecutablePath(RUNTIME_ROOT);
 const AVAILABLE = fs.existsSync(EXECUTABLE);
 
@@ -47,8 +50,8 @@ describe('x2t against the vendored engine', { skip: AVAILABLE ? false : 'vendor/
     tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'magies-x2t-'));
     x2t = createX2t({
       executable: EXECUTABLE,
-      fontsDir: path.join(RUNTIME_ROOT, 'fonts'),
-      allFontsPath: path.join(RUNTIME_ROOT, 'editors', 'sdkjs', 'common', 'AllFonts.js'),
+      fontsDir: path.join(SHARED_ROOT, 'fonts'),
+      allFontsPath: path.join(SHARED_ROOT, 'editors', 'sdkjs', 'common', 'AllFonts.js'),
       tempRoot,
       fs: fsp,
       run,

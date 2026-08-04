@@ -32,6 +32,24 @@ function engineRoot({
 }
 
 /**
+ * Everything of the engine that is not the converter.
+ *
+ * Only the converter is a native binary; the editors, the browser build and
+ * the fonts are javascript and data, identical on every platform. A checkout
+ * keeps one copy of them rather than one per target — five targets would
+ * otherwise carry the same 1.4 GB five times — while a packaged app composes
+ * both halves into the single directory the runtime reads.
+ */
+function engineSharedRoot({
+  packaged = app?.isPackaged ?? false,
+  resourcesPath = process.resourcesPath ?? '',
+  projectRoot = path.join(__dirname, '..', '..'),
+} = {}) {
+  if (packaged) return path.join(resourcesPath, 'onlyoffice');
+  return path.join(projectRoot, 'vendor', 'onlyoffice', 'shared');
+}
+
+/**
  * Where the embedded editor's assets live.
  *
  * Not `editors/`. That is the desktop build, which the converter runs to
@@ -40,7 +58,7 @@ function engineRoot({
  * separately because the two cannot share a directory.
  */
 function editorAssetsRoot(options = {}) {
-  return path.join(engineRoot(options), 'web');
+  return path.join(engineSharedRoot(options), 'web');
 }
 
 function runConverter(executable, args) {
@@ -53,16 +71,18 @@ function runConverter(executable, args) {
 
 function createEngineX2t(options = {}) {
   const root = engineRoot(options);
+  const shared = engineSharedRoot(options);
   const executable = x2tExecutablePath(root, options.platform ?? process.platform);
   // A work directory holds a copy of the document being converted, so it lives
   // in temp and is removed as soon as the bytes have been read.
   const tempRoot = path.join(os.tmpdir(), 'magies-office');
-  const allFontsPath = path.join(root, 'editors', 'sdkjs', 'common', 'AllFonts.js');
+  const allFontsPath = path.join(shared, 'editors', 'sdkjs', 'common', 'AllFonts.js');
+  const fontsDir = path.join(shared, 'fonts');
 
   return {
     ...createX2t({
       executable,
-      fontsDir: path.join(root, 'fonts'),
+      fontsDir,
       allFontsPath,
       tempRoot,
       fs,
@@ -71,8 +91,9 @@ function createEngineX2t(options = {}) {
     }),
     executablePath: executable,
     allFontsPath,
+    fontsDir,
     tempRoot,
   };
 }
 
-module.exports = { editorAssetsRoot, engineRoot, createEngineX2t };
+module.exports = { editorAssetsRoot, engineRoot, engineSharedRoot, createEngineX2t };
