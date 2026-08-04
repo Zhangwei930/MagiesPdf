@@ -482,6 +482,53 @@ window["__fonts_ranges"] = ${JSON.stringify(ranges)};
 `;
 }
 
+/**
+ * The scales the font dropdown looks for its preview strip at, and the two
+ * postfixes: the East Asian strip is used when the interface is in Chinese,
+ * Japanese or Korean.
+ */
+const THUMBNAIL_SCALES = ['', '@1.25x', '@1.5x', '@1.75x', '@2x'];
+const THUMBNAIL_WIDTH = 300;
+const THUMBNAIL_ROW_HEIGHT = 28;
+
+/** Every strip the dropdown may ask for. */
+export function thumbnailSpriteNames() {
+  const names = [];
+  for (const postfix of ['', '_ea']) {
+    for (const scale of THUMBNAIL_SCALES) {
+      names.push(`fonts_thumbnail${postfix}${scale}.png.bin`);
+    }
+  }
+  return names;
+}
+
+/**
+ * A blank strip of font previews.
+ *
+ * The dropdown reads the strip's width, row height and row count out of the
+ * first twelve bytes and then decodes runs: a zero byte followed by a length
+ * is that many transparent pixels. Absent, the width reads as zero and asking
+ * the canvas for an image that wide throws — which the editor reports as a
+ * failure to work with the document, and picking a font stops working.
+ *
+ * The previews come out blank. Generating real ones is the job of a tool that
+ * ships only for Linux; a blank strip is a plain loss next to a dropdown that
+ * cannot be opened.
+ */
+export function thumbnailSprite({ width, rowHeight, count }) {
+  const header = Buffer.alloc(12);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(rowHeight, 4);
+  header.writeUInt32BE(count, 8);
+
+  const pixels = width * rowHeight * count;
+  const runs = [];
+  for (let left = pixels; left > 0; left -= 255) {
+    runs.push(0, Math.min(255, left));
+  }
+  return Buffer.concat([header, Buffer.from(runs)]);
+}
+
 /** Reads every font in `directory` in a fixed order. */
 export function readFontDirectory(directory) {
   return fs.readdirSync(directory)
@@ -504,7 +551,8 @@ export function readFontDirectory(directory) {
  * fonts points at the wrong ones.
  */
 function main() {
-  const root = process.argv[2] ?? 'vendor/onlyoffice/mac-x64/web';
+  // The javascript half, which every target links to rather than copies.
+  const root = process.argv[2] ?? 'vendor/onlyoffice/shared/web';
   const fonts = path.join(root, 'fonts');
   const manifest = path.join(root, 'sdkjs', 'common', 'AllFonts.js');
 
@@ -532,8 +580,21 @@ function main() {
 
   fs.writeFileSync(manifest, manifestSource(built, ranges, selection));
 
+  // The dropdown's preview strip, one row per family. Without it the dropdown
+  // cannot be opened at all — see `thumbnailSprite`.
+  const images = path.join(root, 'sdkjs', 'common', 'Images');
+  fs.mkdirSync(images, { recursive: true });
+  for (const name of thumbnailSpriteNames()) {
+    const scale = Number((name.match(/@([\d.]+)x/) ?? [, '1'])[1]);
+    fs.writeFileSync(path.join(images, name), thumbnailSprite({
+      width: Math.round(THUMBNAIL_WIDTH * scale),
+      rowHeight: Math.round(THUMBNAIL_ROW_HEIGHT * scale),
+      count: built.infos.length,
+    }));
+  }
+
   const unreadable = files.filter((file) => file.faces.length === 0).map((file) => file.name);
-  console.log(`[fonts] ${built.files.length} files, ${built.infos.length} families, ${ranges.length / 3} ranges, ${Math.round(selection.length / 1024)} kB selection -> ${manifest}`);
+  console.log(`[fonts] ${built.files.length} files, ${built.infos.length} families, ${ranges.length / 3} ranges, ${Math.round(selection.length / 1024)} kB selection, ${thumbnailSpriteNames().length} preview strips -> ${manifest}`);
   if (unreadable.length > 0) console.log(`[fonts] skipped ${unreadable.length}: ${unreadable.join(', ')}`);
 }
 
