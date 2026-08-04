@@ -71,10 +71,13 @@ function resolveBackgroundColor() {
 
 function createWindow() {
   const window = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 960,
-    minHeight: 640,
+    // An editor's ribbon, the document, and a rail on either side all have to
+    // fit at once — an office suite opened at a browser's default size makes
+    // every one of them cramped.
+    width: 1560,
+    height: 980,
+    minWidth: 1180,
+    minHeight: 760,
     show: false,
     title: 'Magies Office',
     // Dock / taskbar icon (Windows & Linux; macOS uses the .icns in the bundle).

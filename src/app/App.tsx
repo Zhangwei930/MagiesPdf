@@ -11,7 +11,7 @@ import {
 import { t } from './i18n.ts';
 import { AlertCircle, Bot, Eye, Loader2, Settings } from './icons.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
-import { activeJobCount, useApp } from './store.ts';
+import { useApp } from './store.ts';
 import { isDirty, type DocumentState } from './documents.ts';
 import { canApplyToDocument } from './toolApply.ts';
 import { partitionDocumentPaths } from './office.ts';
@@ -20,11 +20,10 @@ import { CommandPalette } from './components/CommandPalette.tsx';
 import { ApplyToolPanel } from './components/ApplyToolPanel.tsx';
 import { DocumentTabs } from './components/DocumentTabs.tsx';
 import { Home } from './components/Home.tsx';
-import { JobPanel } from './components/JobPanel.tsx';
 import { Ribbon } from './components/Ribbon.tsx';
 import { ToolPage } from './components/ToolPage.tsx';
 import { UpdatePrompt } from './components/UpdatePrompt.tsx';
-import { Badge, Button } from './components/ui.tsx';
+import { Button } from './components/ui.tsx';
 
 /**
  * Screens that most sessions never open, kept out of the entry chunk.
@@ -74,7 +73,6 @@ type MainView =
 export function App() {
   const ready = useApp((s) => s.ready);
   const locale = useApp((s) => s.locale);
-  const jobs = useApp((s) => s.jobs);
   const startupError = useApp((s) => s.startupError);
   const initialize = useApp((s) => s.initialize);
   const documents = useApp((s) => s.documents);
@@ -92,7 +90,6 @@ export function App() {
   // Set while the palette was opened from the document toolbar, so the results
   // are scoped to tools that accept a PDF.
   const [paletteForDocument, setPaletteForDocument] = useState(false);
-  const [jobsOpen, setJobsOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiMounted, setAiMounted] = useState(false);
   // A tab being closed with unsaved changes, held until the user decides.
@@ -320,7 +317,6 @@ export function App() {
           break;
         case 'dismiss':
           closePalette();
-          setJobsOpen(false);
           setDropError('');
           break;
         case 'close':
@@ -366,7 +362,6 @@ export function App() {
     );
   }
 
-  const running = activeJobCount(jobs);
   const tool = view.name === 'tool' ? uiRegistry.tryGet(view.toolId) : undefined;
   const showRibbon = view.name !== 'settings' && view.name !== 'welcome';
 
@@ -427,15 +422,6 @@ export function App() {
         >
           <Bot size={15} />
           {t('aiAssistantShort', locale)}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setJobsOpen(true)}
-          className="no-drag flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
-        >
-          {t('jobs', locale)}
-          {running > 0 && <Badge tone="accent">{running}</Badge>}
         </button>
 
         <button
@@ -582,7 +568,6 @@ export function App() {
           onClose={() => setApplying(null)}
         />
       )}
-      <JobPanel open={jobsOpen} onClose={() => setJobsOpen(false)} />
       <UpdatePrompt />
 
       {dropping && (

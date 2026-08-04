@@ -20,11 +20,47 @@ describe('bundled Office customer experience', () => {
     assert.doesNotMatch(settingsSource, /<input/);
   });
 
-  it('exposes both manual editing and AI automation from the home screen', () => {
-    assert.match(homeSource, /manualOfficeMode/);
-    assert.match(homeSource, /aiOfficeMode/);
+  /**
+   * The start centre is about the customer's files, not about explaining how
+   * the suite works. Two panels used to describe editing by hand and editing
+   * by assistant, which is a description of the product rather than a way into
+   * a document; the assistant is reached from the rail and the title bar.
+   */
+  it('does not spend the start centre explaining its own modes', () => {
+    assert.doesNotMatch(homeSource, /manualOfficeMode/);
+    assert.doesNotMatch(homeSource, /aiOfficeMode/);
+  });
+
+  it('still opens the assistant from the home screen', () => {
     assert.match(homeSource, /onOpenAi/);
     assert.match(appSource, /onOpenAi=\{openAi\}/);
     assert.match(appSource, /setAiMounted\(true\);\s*setAiOpen\(true\)/);
+  });
+
+  /**
+   * The start centre puts the customer's documents in the middle and what can
+   * be done to them at the side, the way a file-first office suite does —
+   * rather than a page of panels that has to be scrolled past to reach a file.
+   */
+  it('leads with documents, with the tools alongside them', () => {
+    assert.match(homeSource, /data-home-region="documents"/);
+    assert.match(homeSource, /data-home-region="tools"/);
+    assert.ok(
+      homeSource.indexOf('data-home-region="documents"') < homeSource.indexOf('data-home-region="tools"'),
+      'documents come first',
+    );
+  });
+
+  /** Creating something is one button, not a grid competing with the files. */
+  it('puts creating a document behind one control', () => {
+    assert.match(homeSource, /createOpen/);
+  });
+});
+
+describe('the title bar', () => {
+  /** Jobs were a panel of their own; the work they showed now speaks for itself. */
+  it('does not offer a jobs panel', () => {
+    assert.doesNotMatch(appSource, /setJobsOpen/);
+    assert.doesNotMatch(appSource, /JobPanel/);
   });
 });
