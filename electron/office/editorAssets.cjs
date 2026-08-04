@@ -81,7 +81,7 @@ function editorPageSource({ documentType, title, fileType }) {
     },
   });
 
-  // A document called `</script>…` would otherwise close the script block and
+  // A document called </script>… would otherwise close the script block and
   // run whatever followed it, so the JSON is escaped for its surroundings.
   const inlineConfig = config.replaceAll('<', '\\u003c');
 
@@ -98,9 +98,14 @@ function editorPageSource({ documentType, title, fileType }) {
 <script>
 (function () {
   var config = ${inlineConfig};
+
   config.events = {
     // The shell cannot see inside the engine, so the engine has to say when
-    // the document has unsaved changes.
+    // the document is open and when it has unsaved changes.
+    onDocumentReady: function () {
+      bindShortcut();
+      parent.postMessage({ magies: 'ready' }, '*');
+    },
     onDocumentStateChange: function (event) {
       parent.postMessage({ magies: 'modified', modified: !!(event && event.data) }, '*');
     },
@@ -108,11 +113,21 @@ function editorPageSource({ documentType, title, fileType }) {
       parent.postMessage({ magies: 'error', data: event && event.data }, '*');
     },
   };
+
   var editor = new DocsAPI.DocEditor('editor', config);
 
-  // ⌘S is pressed in the shell, but the document is in here. Asking the engine
-  // to produce it makes it POST itself back to the host, which is where the
-  // save actually happens; this only starts it.
+  /**
+   * Saving.
+   *
+   * downloadAs is the engine's cloud path: it makes the engine POST its
+   * current document back to the host in chunks, which is where the save
+   * actually happens. This only starts it, and nothing comes back through here.
+   *
+   * The desktop path — window.AscDesktopEditor — is deliberately not taken.
+   * These assets come from the desktop build, so sdkjs would use that host for
+   * far more than saving, and every call it makes is one this page would have
+   * to answer for.
+   */
   function save() {
     try {
       editor.downloadAs('bin');
@@ -125,15 +140,28 @@ function editorPageSource({ documentType, title, fileType }) {
     if (event.data && event.data.magies === 'save') save();
   });
 
-  // ⌘S is pressed while the editor has focus, so the shell never sees it —
-  // its keydown listener is on a window this one is nested inside. Catching it
-  // here is what makes the shortcut work where the user actually presses it.
-  window.addEventListener('keydown', function (event) {
-    if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === 's') {
+  function onKeydown(event) {
+    if ((event.metaKey || event.ctrlKey) && !event.shiftKey && String(event.key).toLowerCase() === 's') {
       event.preventDefault();
       save();
     }
-  }, true);
+  }
+
+  /**
+   * ⌘S is pressed with focus inside the frame DocsAPI builds, so the keystroke
+   * lands on a window both the shell and this page are outside of. Binding it
+   * only here would mean the shortcut worked everywhere except in the document.
+   */
+  function bindShortcut() {
+    window.addEventListener('keydown', onKeydown, true);
+    var frames = document.querySelectorAll('iframe');
+    for (var i = 0; i < frames.length; i += 1) {
+      try {
+        frames[i].contentWindow.addEventListener('keydown', onKeydown, true);
+      } catch (error) { /* another origin: not the engine's */ }
+    }
+  }
+
 })();
 </script>
 </body>
@@ -214,13 +242,34 @@ function socketStubSource({ connect, document }) {
       emit: function () { self._client.emit.apply(self._client, arguments); }
     };
 
+    // Every accepted batch of changes carries the next index; the engine uses
+    // it to know its edits were taken and to release the save lock. Left
+    // unanswered it decides no server is listening and falls back to asking a
+    // desktop host to write the file — which is not there, so saving fails.
+    var syncIndex = 0;
+
     this._server.on('message', function (payload) {
       var type = payload && payload.type;
       var reply = function (msg) { setTimeout(function () { self._client.emit('message', msg); }, 0); };
-      if (type === 'isSaveLock') reply({ type: 'saveLock', saveLock: false });
-      else if (type === 'getLock') reply({ type: 'getLock', locks: [] });
-      else if (type === 'unSaveLock') reply({ type: 'unSaveLock', index: -1, time: Date.now() });
-      else if (type === 'getMessages') reply({ type: 'message', messages: [] });
+      if (type === 'isSaveLock') {
+        reply({ type: 'saveLock', saveLock: false });
+      } else if (type === 'saveChanges') {
+        syncIndex += 1;
+        reply({
+          type: 'unSaveLock',
+          index: typeof payload.startSaveChanges === 'number'
+            ? payload.startSaveChanges
+            : typeof payload.endSaveChanges === 'number' ? payload.endSaveChanges : -1,
+          syncChangesIndex: syncIndex,
+          time: Date.now()
+        });
+      } else if (type === 'getLock') {
+        reply({ type: 'getLock', locks: [] });
+      } else if (type === 'unSaveLock') {
+        reply({ type: 'unSaveLock', index: -1, time: Date.now() });
+      } else if (type === 'getMessages') {
+        reply({ type: 'message', messages: [] });
+      }
     });
 
     this.connect();

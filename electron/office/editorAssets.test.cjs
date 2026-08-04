@@ -68,13 +68,35 @@ describe('the page the frame is pointed at', () => {
   });
 
   /**
-   * The engine takes a different path to the document depending on whether a
-   * desktop bridge is present, and only one of them ends anywhere: with the
-   * bridge it waits for a native host that does not exist here.
+   * These assets come from the desktop build, whose sdkjs treats
+   * `AscDesktopEditor` as a whole native host: it asks it about saving, but
+   * also about the scroll wheel and the window. Defining a stand-in for it
+   * puts the engine on that path with nothing behind it, and it fails on the
+   * first call this page did not anticipate. Leaving it undefined is what
+   * keeps the engine on the cloud path, where saving is a documented call.
    */
-  it('does not pretend to be a desktop host', () => {
-    assert.doesNotMatch(page, /AscDesktopEditor\s*=/);
-    assert.doesNotMatch(page, /type:\s*'desktop'/);
+  it('never claims to be a desktop host', () => {
+    assert.doesNotMatch(page, /AscDesktopEditor\s*=/, 'defining the desktop host strands the engine');
+  });
+
+  /** Two editors on one element race for the document; only one may exist. */
+  it('builds exactly one editor', () => {
+    assert.equal(page.split('new DocsAPI.DocEditor').length - 1, 1);
+  });
+
+  /** Saving is the public cloud call: it makes the engine POST the document. */
+  it('saves through the editor api', () => {
+    assert.match(page, /\.downloadAs\(/);
+  });
+
+  /**
+   * ⌘S is pressed with focus inside the engine's own frame, so neither the
+   * shell nor this page ever sees the event. The listener has to go on the
+   * window the keystroke actually lands in.
+   */
+  it('catches the shortcut inside the engine frame', () => {
+    assert.match(page, /addEventListener\('keydown'/);
+    assert.match(page, /contentWindow/, 'the shortcut is only bound to this page');
   });
 
   it('reports back when the engine says the document changed', () => {
@@ -108,6 +130,18 @@ describe('the socket stand-in served in place of socket.io', () => {
     for (const member of ['setOpenToken', 'setSessionToken', 'reconnectionAttempts', 'timeout', 'transports']) {
       assert.match(source, new RegExp(member), `socket.io.${member} is missing`);
     }
+  });
+
+  /**
+   * Saving is what needs this. Left unanswered, the engine decides no server
+   * is listening and asks a desktop host to write the file instead — and there
+   * is none, so the save fails with a message about the wrong thing entirely.
+   */
+  it('answers the messages a save is made of', () => {
+    for (const type of ['saveChanges', 'isSaveLock', 'getLock', 'unSaveLock']) {
+      assert.match(source, new RegExp(`'${type}'`), `${type} goes unanswered`);
+    }
+    assert.match(source, /syncChangesIndex/, 'an accepted batch must carry its index');
   });
 
   it('is valid JavaScript', () => {
