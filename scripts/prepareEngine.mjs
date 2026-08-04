@@ -22,6 +22,22 @@ const RELEASE = 'v9.4.0';
 const BASE = `https://github.com/ONLYOFFICE/DesktopEditors/releases/download/${RELEASE}`;
 
 /**
+ * The shared half: the editor itself, and the fonts it lays documents out with.
+ *
+ * The editor comes from Document Server rather than the desktop package,
+ * because only that build can save — the desktop one's save path is a call
+ * into a native host that is not here. Both are the same 9.4.0 engine.
+ */
+const DOCUMENT_SERVER = 'https://download.onlyoffice.com/install/documentserver/linux/onlyoffice-documentserver_amd64.deb';
+
+/**
+ * Documents written on Linux commonly name this outright, and the core fonts
+ * do not include it — without it their text has no glyphs at all.
+ */
+const NOTO_CJK = 'https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/03_NotoSansCJK-OTC.zip';
+const NOTO_WEIGHTS = ['NotoSansCJK-Regular.ttc', 'NotoSansCJK-Bold.ttc'];
+
+/**
  * Where each platform keeps the converter inside its own package. These are
  * what the packages contain, read from each of them — a wrong path here
  * prepares a target directory that looks right and holds no converter.
@@ -116,6 +132,89 @@ function linkShared(target, projectRoot) {
   }
 }
 
+/** Fetches a url into the cache under a name of its own. */
+function fetchInto(url, name, cacheDir) {
+  const file = path.join(cacheDir, name);
+  if (fs.existsSync(file)) {
+    console.log(`[engine] using cached ${name}`);
+    return file;
+  }
+  fs.mkdirSync(cacheDir, { recursive: true });
+  console.log(`[engine] downloading ${name}`);
+  const partial = `${file}.part`;
+  run('curl', ['-fL', '--retry', '3', '-o', partial, url]);
+  fs.renameSync(partial, file);
+  return file;
+}
+
+/**
+ * Builds the half every platform shares.
+ *
+ * The fonts are flattened into one directory because the manifest names them
+ * by filename, and the manifest is generated here rather than shipped: the one
+ * that comes with the engine describes whichever machine generated it.
+ */
+function prepareShared(projectRoot, cacheDir) {
+  const shared = path.join(projectRoot, 'vendor', 'onlyoffice', 'shared');
+  const web = path.join(shared, 'web');
+  const fonts = path.join(web, 'fonts');
+
+  const deb = fetchInto(DOCUMENT_SERVER, 'onlyoffice-documentserver_amd64.deb', cacheDir);
+  const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'magies-shared-'));
+  try {
+    run('ar', ['x', deb], { cwd: staging });
+    const data = fs.readdirSync(staging).find((name) => name.startsWith('data.tar'));
+    const inside = './var/www/onlyoffice/documentserver';
+    run('tar', ['-xf', path.join(staging, data),
+      `${inside}/sdkjs`, `${inside}/web-apps`, `${inside}/core-fonts`], { cwd: staging });
+
+    const extracted = path.join(staging, 'var', 'www', 'onlyoffice', 'documentserver');
+    fs.rmSync(web, { recursive: true, force: true });
+    fs.mkdirSync(web, { recursive: true });
+    run('cp', ['-R', path.join(extracted, 'sdkjs'), path.join(web, 'sdkjs')]);
+    run('cp', ['-R', path.join(extracted, 'web-apps'), path.join(web, 'web-apps')]);
+
+    // The fonts arrive as one directory per family and the manifest names
+    // files, so they are flattened. Done here rather than with `find`, which
+    // the Windows runner does not have.
+    fs.mkdirSync(fonts, { recursive: true });
+    const collect = (from) => {
+      for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+        const full = path.join(from, entry.name);
+        if (entry.isDirectory()) collect(full);
+        else if (/\.(ttf|otf|ttc)$/i.test(entry.name)) {
+          const into = path.join(fonts, entry.name);
+          if (!fs.existsSync(into)) fs.copyFileSync(full, into);
+        }
+      }
+    };
+    collect(path.join(extracted, 'core-fonts'));
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+
+  // The help documentation is 595 MB of screen recordings in a dozen
+  // languages, and is never packaged. Dropping it here as well keeps a
+  // checkout — and the artifact this half travels as in CI — a third of the
+  // size, rather than carrying it to be filtered out later.
+  const dropHelp = (from) => {
+    for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const full = path.join(from, entry.name);
+      if (entry.name === 'help') fs.rmSync(full, { recursive: true, force: true });
+      else dropHelp(full);
+    }
+  };
+  dropHelp(path.join(web, 'web-apps'));
+
+  const noto = fetchInto(NOTO_CJK, '03_NotoSansCJK-OTC.zip', cacheDir);
+  run('unzip', ['-o', '-q', '-j', noto, ...NOTO_WEIGHTS, 'LICENSE', '-d', fonts]);
+  fs.renameSync(path.join(fonts, 'LICENSE'), path.join(fonts, 'LICENSE-NotoSansCJK.txt'));
+
+  run('node', [path.join(projectRoot, 'scripts', 'onlyofficeFonts.mjs'), web]);
+  console.log('[engine] shared half ready');
+}
+
 function main() {
   const args = new Map(process.argv.slice(2)
     .filter((argument) => argument.startsWith('--'))
@@ -125,6 +224,12 @@ function main() {
   const arch = args.get('arch') ?? process.arch;
   const projectRoot = path.join(import.meta.dirname, '..');
 
+  const cacheDir = path.join(projectRoot, 'vendor', '.cache');
+  if (args.has('shared')) {
+    prepareShared(projectRoot, cacheDir);
+    return;
+  }
+
   const asset = engineAsset({ platform, arch });
   const target = targetDirectory(projectRoot, { platform, arch });
 
@@ -132,7 +237,7 @@ function main() {
     throw new Error('A macOS package can only be opened on macOS; prepare that target there.');
   }
 
-  const file = download(asset, path.join(projectRoot, 'vendor', '.cache'));
+  const file = download(asset, cacheDir);
   fs.rmSync(path.join(target, 'converter'), { recursive: true, force: true });
   fs.mkdirSync(target, { recursive: true });
   extractConverter(file, asset, path.join(target, 'converter'));
