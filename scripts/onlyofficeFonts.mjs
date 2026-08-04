@@ -30,6 +30,24 @@ const NAME_TYPOGRAPHIC_FAMILY = 16;
 const MAC_STYLE_BOLD = 1;
 const MAC_STYLE_ITALIC = 2;
 
+/**
+ * One name out of a name record.
+ *
+ * Windows and Unicode records are UTF-16BE. A Macintosh record is bytes, and
+ * the standard says Mac Roman — but fonts from the free desktops put UTF-8
+ * there, and reading those as Mac Roman turns a Bengali or Burmese name into
+ * mojibake in the font list. So UTF-8 is tried first and kept when it decodes
+ * cleanly, which for a Mac Roman name it cannot.
+ */
+function decodeName(platform, bytes) {
+  if (platform === 0 || platform === 3) {
+    return Buffer.from(bytes).swap16().toString('utf16le');
+  }
+
+  const utf8 = bytes.toString('utf8');
+  return utf8.includes('\uFFFD') ? bytes.toString('latin1') : utf8;
+}
+
 /** Reads a name table's strings, keyed by name id. */
 function readNames(view, at) {
   const count = view.readUInt16BE(at + 2);
@@ -45,11 +63,7 @@ function readNames(view, at) {
     if (offset + length > view.length) continue;
 
     const bytes = view.subarray(offset, offset + length);
-    // Platform 3 is Windows, whose strings are UTF-16BE; platform 1 is
-    // Macintosh, whose Roman encoding is close enough to latin1 for a name.
-    const value = platform === 3
-      ? Buffer.from(bytes).swap16().toString('utf16le')
-      : bytes.toString('latin1');
+    const value = decodeName(platform, bytes);
 
     // Windows names win: a font that has both spells the family the way a
     // document written on Windows refers to it.

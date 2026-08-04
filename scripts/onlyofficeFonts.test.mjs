@@ -14,21 +14,25 @@ import { buildManifest, buildRanges, buildSelection, manifestSource, readCoverag
  */
 
 /** A font file with only the tables the manifest is built from. */
-function sfnt({ family, subfamily, typographic = '', bold = false, italic = false }) {
+function sfnt({ family, subfamily, typographic = '', bold = false, italic = false, platform = 3 }) {
   const names = [
     [1, family],
     [2, subfamily],
     ...(typographic ? [[16, typographic]] : []),
   ];
 
-  // The name table: a header, one record per name, then the strings.
-  const strings = names.map(([, value]) => Buffer.from(value, 'utf16le').swap16());
+  // The name table: a header, one record per name, then the strings. Windows
+  // and Unicode records are UTF-16BE; Macintosh ones are bytes, and fonts from
+  // the free desktops put UTF-8 in them.
+  const strings = names.map(([, value]) => (platform === 1
+    ? Buffer.from(value, 'utf8')
+    : Buffer.from(value, 'utf16le').swap16()));
   const records = Buffer.alloc(12 * names.length);
   let at = 0;
   names.forEach(([id], index) => {
     const record = records.subarray(12 * index);
-    record.writeUInt16BE(3, 0); // Windows
-    record.writeUInt16BE(1, 2); // UCS-2
+    record.writeUInt16BE(platform, 0);
+    record.writeUInt16BE(platform === 1 ? 0 : 1, 2);
     record.writeUInt16BE(0x0409, 4);
     record.writeUInt16BE(id, 6);
     record.writeUInt16BE(strings[index].length, 8);
@@ -127,6 +131,23 @@ describe('reading a font file', () => {
   it('prefers the typographic family when a font has one', () => {
     const faces = readFaces(sfnt({ family: 'Noto Sans Light', subfamily: 'Regular', typographic: 'Noto Sans' }));
     assert.equal(faces[0].family, 'Noto Sans');
+  });
+
+  /**
+   * A Macintosh name record is bytes, and the standard says Mac Roman. Fonts
+   * that come from the free desktops put UTF-8 there instead — Likhan and
+   * Padauk among the ones bundled here — and reading those as Mac Roman turns
+   * a Bengali or Burmese name into a row of mojibake in the font list.
+   */
+  it('reads a Macintosh name that is really utf-8', () => {
+    const faces = readFaces(sfnt({ family: 'অনি Dvf', subfamily: 'Regular', platform: 1 }));
+    assert.equal(faces[0].family, 'অনি Dvf');
+  });
+
+  /** Platform 0 is Unicode, and its strings are UTF-16 like Windows's. */
+  it('reads a Unicode name as utf-16', () => {
+    const faces = readFaces(sfnt({ family: '思源黑体', subfamily: 'Regular', platform: 0 }));
+    assert.equal(faces[0].family, '思源黑体');
   });
 
   it('reports nothing for something that is not a font', () => {
