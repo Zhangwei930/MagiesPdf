@@ -377,6 +377,20 @@ describe('the font preview strip', () => {
     }
   });
 
+  /**
+   * The engine puts fonts of its own into the list — it reports one more than
+   * the manifest names — and the list is drawn by slicing row `imgidx` out of
+   * the strip. A row past the end throws while the list is being built, and
+   * the list stops there: a dropdown with one entry in it.
+   */
+  it('has rows to spare for fonts the engine adds', () => {
+    const sprite = thumbnailSprite({ width: 8, rowHeight: 2, count: 5 });
+    const long = (at) => (sprite[at] << 24) | (sprite[at + 1] << 16) | (sprite[at + 2] << 8) | sprite[at + 3];
+    const rows = long(8);
+    const pixels = (sprite.length - 12) / 2 * 255;
+    assert.ok(pixels >= long(0) * long(4) * rows, 'every row it claims is described');
+  });
+
   it('states its size the way the dropdown reads it', () => {
     const sprite = thumbnailSprite({ width: 300, rowHeight: 28, count: 7 });
     const long = (at) => (sprite[at] << 24) | (sprite[at + 1] << 16) | (sprite[at + 2] << 8) | sprite[at + 3];

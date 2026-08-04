@@ -490,6 +490,7 @@ window["__fonts_ranges"] = ${JSON.stringify(ranges)};
 const THUMBNAIL_SCALES = ['', '@1.25x', '@1.5x', '@1.75x', '@2x'];
 const THUMBNAIL_WIDTH = 300;
 const THUMBNAIL_ROW_HEIGHT = 28;
+const THUMBNAIL_HEADROOM = 16;
 
 /** Every strip the dropdown may ask for. */
 export function thumbnailSpriteNames() {
@@ -589,7 +590,11 @@ function main() {
     fs.writeFileSync(path.join(images, name), thumbnailSprite({
       width: Math.round(THUMBNAIL_WIDTH * scale),
       rowHeight: Math.round(THUMBNAIL_ROW_HEIGHT * scale),
-      count: built.infos.length,
+      // With headroom: the engine adds fonts of its own to the list — it
+      // reports one more than this manifest names — and a row past the end of
+      // the strip is an exception while the list is being drawn, which stops
+      // it after the first entry.
+      count: built.infos.length + THUMBNAIL_HEADROOM,
     }));
   }
 
