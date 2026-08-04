@@ -1,7 +1,7 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { connectMessages, documentMessages } = require('./editorHandshake.cjs');
-const { documentUrls, editorPageSource, resolveAsset, socketStubSource } = require('./editorAssets.cjs');
+const { documentUrls, editorPageSource, isFontRoute, resolveAsset, socketStubSource } = require('./editorAssets.cjs');
 const { createUploadBuffer } = require('./editorUpload.cjs');
 
 /**
@@ -95,7 +95,10 @@ function createEditorHost(deps) {
     }
 
     const file = resolveAsset(route, roots(), request.session ?? activeSession);
-    return file ? { status: 200, file } : { status: 404 };
+    if (!file) return { status: 404 };
+    // A font is not served as it sits on disk: the engine expects the
+    // obfuscation a document server's fonts are stored under, and undoes it.
+    return { status: 200, file, font: isFontRoute(route) };
   }
 
   async function ensureServer() {

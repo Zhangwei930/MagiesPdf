@@ -25,6 +25,34 @@ function within(root, relative) {
 }
 
 /**
+ * How a document server stores the fonts it serves.
+ *
+ * The engine exclusive-ors the first 32 bytes of every font it downloads with
+ * this key, expecting to undo an obfuscation applied when the fonts were
+ * generated. Serving a plain font does not skip that step — it applies it, and
+ * the engine ends up with 32 bytes of noise where the font's tables should be.
+ */
+const ODTTF_KEY = Buffer.from([
+  0xa0, 0x66, 0xd6, 0x20, 0x14, 0x96, 0x47, 0xfa,
+  0x95, 0x69, 0xb8, 0x50, 0xb0, 0x41, 0x49, 0x48,
+]);
+
+/** A font as the engine expects to receive it. Does not touch the original. */
+function obfuscateFont(bytes) {
+  const out = Buffer.from(bytes);
+  const count = Math.min(32, out.length);
+  for (let index = 0; index < count; index += 1) {
+    out[index] ^= ODTTF_KEY[index % ODTTF_KEY.length];
+  }
+  return out;
+}
+
+/** Whether a route is asking for one of the engine's fonts. */
+function isFontRoute(route) {
+  return route.startsWith('/editors/fonts/');
+}
+
+/**
  * The engine's entry script, which ships as a template.
  *
  * A server would render a build hash into it; there is one version here and
@@ -366,4 +394,4 @@ function socketStubSource({ connect, document }) {
 `;
 }
 
-module.exports = { documentUrls, editorPageSource, resolveAsset, socketStubSource };
+module.exports = { documentUrls, editorPageSource, isFontRoute, obfuscateFont, resolveAsset, socketStubSource };

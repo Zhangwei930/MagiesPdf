@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const { createEditorHost } = require('./editorHost.cjs');
+const { obfuscateFont } = require('./editorAssets.cjs');
 const { editorAssetsRoot } = require('./engine.cjs');
 
 /**
@@ -92,6 +93,19 @@ function listenLoopback(handle) {
         response.writeHead(404).end();
         return;
       }
+      // Fonts are rewritten on the way out, so they are read rather than
+      // streamed. They are a few hundred kilobytes each and the engine caches
+      // them, so this is not the path worth streaming.
+      if (answer.font) {
+        const body = obfuscateFont(fs.readFileSync(answer.file));
+        response.writeHead(200, {
+          'Content-Type': contentType(answer.file),
+          'Content-Length': body.length,
+        });
+        response.end(body);
+        return;
+      }
+
       response.writeHead(200, {
         'Content-Type': contentType(answer.file),
         'Content-Length': stat.size,

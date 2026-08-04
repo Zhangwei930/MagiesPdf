@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { describe, it } = require('node:test');
-const { documentUrls, editorPageSource, resolveAsset, socketStubSource } = require('./editorAssets.cjs');
+const { documentUrls, editorPageSource, obfuscateFont, resolveAsset, socketStubSource } = require('./editorAssets.cjs');
 
 describe('the document parts handed to the editor', () => {
   it('names the editor binary and every extracted image', () => {
@@ -60,6 +60,50 @@ describe('resolving a request to a file', () => {
  * the engine, so a font request is a request for a file under the editors like
  * any other — which is what keeps the traversal guard on it.
  */
+/**
+ * The engine expects its fonts obfuscated.
+ *
+ * After downloading one it exclusive-ors the first 32 bytes with a fixed key —
+ * the scheme a document server's fonts are stored under. Serving a plain font
+ * file therefore does not skip a decode step, it *applies* one: the engine
+ * turns a valid font into 32 bytes of noise, FreeType refuses to open it, and
+ * the failure surfaces much later as a null face while text is laid out.
+ */
+describe('serving a font', () => {
+  const font = Buffer.concat([
+    Buffer.from([0x00, 0x01, 0x00, 0x00, 0x00, 0x12, 0x01, 0x00]),
+    Buffer.alloc(40, 0xcd),
+  ]);
+
+  it('is undone exactly by what the engine does to it', () => {
+    const served = obfuscateFont(font);
+    const guid = [0xa0, 0x66, 0xd6, 0x20, 0x14, 0x96, 0x47, 0xfa,
+      0x95, 0x69, 0xb8, 0x50, 0xb0, 0x41, 0x49, 0x48];
+
+    const decoded = Buffer.from(served);
+    for (let index = 0; index < Math.min(32, decoded.length); index += 1) {
+      decoded[index] ^= guid[index % 16];
+    }
+    assert.deepEqual(decoded, font, 'the engine must get back the font it was given');
+  });
+
+  it('leaves everything past the first 32 bytes alone', () => {
+    const served = obfuscateFont(font);
+    assert.deepEqual(served.subarray(32), font.subarray(32));
+  });
+
+  it('does not read past a font shorter than the key', () => {
+    const short = Buffer.from([0x00, 0x01, 0x00, 0x00]);
+    assert.equal(obfuscateFont(short).length, 4);
+  });
+
+  it('does not modify the buffer it was given', () => {
+    const original = Buffer.from(font);
+    obfuscateFont(font);
+    assert.deepEqual(font, original);
+  });
+});
+
 describe('a font request', () => {
   const roots = { editors: '/engine/editors', sessions: {} };
 
