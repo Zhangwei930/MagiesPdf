@@ -202,6 +202,78 @@ export function readCoverage(buffer) {
   return readCmapRanges(view, best).sort(([left], [right]) => left - right);
 }
 
+/** The neutral answer for a font that carries no OS/2 table at all. */
+const DEFAULT_METRICS = Object.freeze({
+  panose: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  unicodeRange: [0, 0, 0, 0],
+  codePageRange: [0, 0],
+  weight: 400,
+  width: 5,
+  familyClass: 0,
+  avgCharWidth: 0,
+  ascent: 0,
+  descent: 0,
+  lineGap: 0,
+  xHeight: 0,
+  capHeight: 0,
+  type: 0,
+  fixed: false,
+});
+
+function readMetricsAt(view, at) {
+  const tables = readTables(view, at);
+  const os2 = tables.get('OS/2');
+  const post = tables.get('post');
+
+  const fixed = post && post.offset + 16 <= view.length
+    ? view.readUInt32BE(post.offset + 12) !== 0
+    : false;
+
+  if (!os2 || os2.offset + 78 > view.length) return { ...DEFAULT_METRICS, fixed };
+
+  const base = os2.offset;
+  const version = view.readUInt16BE(base);
+  const at32 = (offset) => (base + offset + 4 <= view.length ? view.readUInt32BE(base + offset) : 0);
+  const at16 = (offset) => (base + offset + 2 <= view.length ? view.readInt16BE(base + offset) : 0);
+
+  return {
+    panose: Array.from({ length: 10 }, (unused, index) => view.readUInt8(base + 32 + index)),
+    unicodeRange: [at32(42), at32(46), at32(50), at32(54)],
+    // Only version 1 and later carry the code pages, which is what says a font
+    // covers a script rather than merely a range of characters.
+    codePageRange: version >= 1 ? [at32(78), at32(82)] : [0, 0],
+    weight: view.readUInt16BE(base + 4),
+    width: view.readUInt16BE(base + 6),
+    familyClass: at16(30),
+    avgCharWidth: at16(2),
+    ascent: at16(68),
+    descent: at16(70),
+    lineGap: at16(72),
+    xHeight: version >= 2 ? at16(86) : 0,
+    capHeight: version >= 2 ? at16(88) : 0,
+    type: view.readUInt16BE(base + 8),
+    fixed,
+  };
+}
+
+/**
+ * The metrics the engine compares fonts by when the one a document names is
+ * not there. All of them come from OS/2, which most fonts have and a few do
+ * not — hence a neutral answer rather than a failure.
+ */
+export function readMetrics(buffer, faceIndex = 0) {
+  const view = Buffer.from(buffer);
+  if (view.length < 12) return { ...DEFAULT_METRICS };
+
+  const tag = view.toString('ascii', 0, 4);
+  if (tag === 'ttcf') {
+    const offset = 12 + 4 * faceIndex;
+    if (offset + 4 > view.length) return { ...DEFAULT_METRICS };
+    return readMetricsAt(view, view.readUInt32BE(offset));
+  }
+  return readMetricsAt(view, 0);
+}
+
 /** Which of the four style slots a face fills. */
 function slotOf(face) {
   if (face.bold && face.italic) return 3;
@@ -306,8 +378,86 @@ export function buildRanges({ files, infos }, read, coverage) {
   return out;
 }
 
+/** A growable little-endian writer, which is the order the engine reads in. */
+function writer() {
+  let buffer = Buffer.alloc(1024);
+  let at = 0;
+
+  const room = (bytes) => {
+    if (at + bytes <= buffer.length) return;
+    const grown = Buffer.alloc(Math.max(buffer.length * 2, at + bytes));
+    buffer.copy(grown);
+    buffer = grown;
+  };
+
+  return {
+    get length() { return at; },
+    long(value) { room(4); buffer.writeInt32LE(value | 0, at); at += 4; },
+    ulong(value) { room(4); buffer.writeUInt32LE(value >>> 0, at); at += 4; },
+    ushort(value) { room(2); buffer.writeUInt16LE(value & 0xffff, at); at += 2; },
+    byte(value) { room(1); buffer.writeUInt8(value & 0xff, at); at += 1; },
+    text(value) {
+      const bytes = Buffer.from(value, 'utf8');
+      this.ulong(bytes.length);
+      room(bytes.length);
+      bytes.copy(buffer, at);
+      at += bytes.length;
+    },
+    patchLong(position, value) { buffer.writeInt32LE(value | 0, position); },
+    done() { return buffer.subarray(0, at); },
+  };
+}
+
+/**
+ * The table the engine maps a font's name to a file with.
+ *
+ * Emphatically not optional. With an empty one the engine resolves no font at
+ * all — it fetches none, and every character comes out as an empty box — which
+ * looks like missing fonts rather than a missing table.
+ */
+export function buildSelection(faces) {
+  const out = writer();
+  out.ulong(faces.length);
+
+  faces.forEach((face) => {
+    const lengthAt = out.length;
+    out.long(0); // patched once the record's own length is known
+
+    out.text(face.family);
+    out.ulong(0); // no alternative names: the family name is the only one
+    out.text(face.file);
+
+    out.long(face.faceIndex);
+    out.long(face.italic ? 1 : 0);
+    out.long(face.bold ? 1 : 0);
+    out.long(face.fixed ? 1 : 0);
+
+    out.ulong(face.panose.length);
+    face.panose.forEach((value) => out.byte(value));
+
+    face.unicodeRange.forEach((value) => out.ulong(value));
+    face.codePageRange.forEach((value) => out.ulong(value));
+
+    out.ushort(face.weight);
+    out.ushort(face.width);
+    out.ushort(face.familyClass);
+    out.ushort(1); // the format is a font file on disk, not an embedded one
+    out.ushort(face.avgCharWidth);
+    out.ushort(face.ascent);
+    out.ushort(face.descent);
+    out.ushort(face.lineGap);
+    out.ushort(face.xHeight);
+    out.ushort(face.capHeight);
+    out.ushort(face.type);
+
+    out.patchLong(lengthAt, out.length - lengthAt);
+  });
+
+  return out.done().toString('base64');
+}
+
 /** The manifest as the file the engine loads. */
-export function manifestSource({ files, infos }, ranges = []) {
+export function manifestSource({ files, infos }, ranges = [], selection = '') {
   const rows = infos.map((row) => JSON.stringify(row)).join(',\n');
   return `// Generated by scripts/onlyofficeFonts.mjs from the fonts that ship
 // with the engine. Do not edit; regenerate with \`npm run fonts:engine\`.
@@ -319,12 +469,12 @@ window["__fonts_infos"] = [
 ${rows}
 ];
 
-// The font selection table, which the engine skips when it is empty. It has to
-// be declared: the engine's check is \`!= ""\`, which undefined passes, so
-// leaving it out makes the engine decode a table that is not there and die
-// before it loads a font. Generating a real one is allfontsgen's other
-// output; without it the engine falls back on its built-in language defaults.
-window["g_fonts_selection_bin"] = "";
+// How the engine resolves a font's name to a file. It has to be declared even
+// when empty: the engine's check is \`!= ""\`, which undefined passes, so
+// leaving it out makes it decode a table that is not there and die before
+// loading a font. Empty is no better — it then resolves nothing and fetches
+// nothing, and every character is drawn as a box.
+window["g_fonts_selection_bin"] = "${selection}";
 
 // Which family to fall back on for a character the document's font cannot
 // draw. Without it a document in a font that is not here renders as boxes.
@@ -365,10 +515,25 @@ function main() {
     readCoverage(fs.readFileSync(path.join(fonts, name))),
   ]));
   const ranges = buildRanges(built, files, coverage);
-  fs.writeFileSync(manifest, manifestSource(built, ranges));
+
+  // One record per face, named by the family it belongs to: this is what the
+  // engine looks a font up in.
+  const selection = buildSelection(files.flatMap((file) => file.faces.map((face) => {
+    const bytes = fs.readFileSync(path.join(fonts, file.name));
+    return {
+      family: face.family,
+      file: file.name,
+      faceIndex: face.faceIndex,
+      bold: face.bold,
+      italic: face.italic,
+      ...readMetrics(bytes, face.faceIndex),
+    };
+  })));
+
+  fs.writeFileSync(manifest, manifestSource(built, ranges, selection));
 
   const unreadable = files.filter((file) => file.faces.length === 0).map((file) => file.name);
-  console.log(`[fonts] ${built.files.length} files, ${built.infos.length} families, ${ranges.length / 3} ranges -> ${manifest}`);
+  console.log(`[fonts] ${built.files.length} files, ${built.infos.length} families, ${ranges.length / 3} ranges, ${Math.round(selection.length / 1024)} kB selection -> ${manifest}`);
   if (unreadable.length > 0) console.log(`[fonts] skipped ${unreadable.length}: ${unreadable.join(', ')}`);
 }
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { buildManifest, buildRanges, manifestSource, readCoverage, readFaces } from './onlyofficeFonts.mjs';
+import { buildManifest, buildRanges, buildSelection, manifestSource, readCoverage, readFaces, readMetrics } from './onlyofficeFonts.mjs';
 
 /**
  * The engine is handed its fonts as a manifest, not as a directory.
@@ -89,6 +89,28 @@ function cmapFont(segments) {
   offsets.writeUInt32BE(offsets.length, 20);
   offsets.writeUInt32BE(cmap.length, 24);
   return Buffer.concat([offsets, cmap]);
+}
+
+/** A font carrying an OS/2 table with the fields the selection table needs. */
+function os2Font({ weight = 400, unicodeRange1 = 0, codePageRange1 = 0 } = {}) {
+  const os2 = Buffer.alloc(96);
+  os2.writeUInt16BE(4, 0);
+  os2.writeInt16BE(1000, 2);
+  os2.writeUInt16BE(weight, 4);
+  os2.writeUInt16BE(5, 6);
+  os2.writeUInt16BE(0, 8);
+  os2.writeInt16BE(2, 30);
+  for (let index = 0; index < 10; index += 1) os2.writeUInt8(index + 1, 32 + index);
+  os2.writeUInt32BE(unicodeRange1, 42);
+  os2.writeUInt32BE(codePageRange1, 78);
+
+  const offsets = Buffer.alloc(12 + 16);
+  offsets.writeUInt32BE(0x00010000, 0);
+  offsets.writeUInt16BE(1, 4);
+  offsets.write('OS/2', 12, 'ascii');
+  offsets.writeUInt32BE(offsets.length, 20);
+  offsets.writeUInt32BE(os2.length, 24);
+  return Buffer.concat([offsets, os2]);
 }
 
 describe('reading a font file', () => {
@@ -231,6 +253,101 @@ describe('reading what a font covers', () => {
 
   it('reads nothing from a font with no map', () => {
     assert.deepEqual(readCoverage(Buffer.from('not a font')), []);
+  });
+});
+
+/**
+ * The table that maps a font's name to the file that holds it.
+ *
+ * Not optional, and not only about substitution: with an empty table the
+ * engine resolves no font at all and fetches none, so every character in the
+ * document is drawn as an empty box. It is a binary the engine reads with its
+ * own reader, so the layout is asserted here field by field — a byte out of
+ * place shifts everything after it.
+ */
+describe('reading a font\u2019s metrics', () => {
+  /**
+   * The selection table is how the engine decides which font answers a name it
+   * does not have exactly, and it decides by comparing these. Defaults that
+   * are all zero make every font look equally wrong.
+   */
+  it('takes the weight, the ranges and the panose from the font', () => {
+    const metrics = readMetrics(os2Font({ weight: 700, unicodeRange1: 0x2f, codePageRange1: 0x0400 }));
+    assert.equal(metrics.weight, 700);
+    assert.equal(metrics.unicodeRange[0], 0x2f);
+    assert.equal(metrics.codePageRange[0], 0x0400);
+    assert.equal(metrics.panose.length, 10);
+  });
+
+  it('falls back to something usable for a font with no OS/2 table', () => {
+    const metrics = readMetrics(cmapFont([[0x41, 0x5a]]));
+    assert.equal(metrics.weight, 400);
+    assert.deepEqual(metrics.unicodeRange, [0, 0, 0, 0]);
+    assert.equal(metrics.panose.length, 10);
+  });
+});
+
+describe('the font selection table', () => {
+  const face = {
+    family: 'Liberation Serif',
+    file: 'LiberationSerif-Regular.ttf',
+    faceIndex: 0,
+    bold: false,
+    italic: true,
+    fixed: false,
+    panose: [2, 4, 6, 3, 5, 4, 5, 2, 2, 4],
+    unicodeRange: [1, 2, 3, 4],
+    codePageRange: [5, 6],
+    weight: 400,
+    width: 5,
+    familyClass: 7,
+    avgCharWidth: 1000,
+    ascent: 891,
+    descent: -216,
+    lineGap: 0,
+    xHeight: 450,
+    capHeight: 662,
+    type: 8,
+  };
+
+  it('counts the records it holds', () => {
+    const table = Buffer.from(buildSelection([face, { ...face, family: 'Other' }]), 'base64');
+    assert.equal(table.readUInt32LE(0), 2);
+  });
+
+  it('writes the name and the file the engine looks the name up by', () => {
+    const table = Buffer.from(buildSelection([face]), 'base64');
+    const nameLength = table.readUInt32LE(8);
+    assert.equal(table.toString('utf8', 12, 12 + nameLength), 'Liberation Serif');
+
+    // No alternative names, then the file, each with its own length.
+    let at = 12 + nameLength;
+    assert.equal(table.readUInt32LE(at), 0, 'no alternative names');
+    at += 4;
+    const pathLength = table.readUInt32LE(at);
+    assert.equal(table.toString('utf8', at + 4, at + 4 + pathLength), 'LiberationSerif-Regular.ttf');
+  });
+
+  /**
+   * The engine seeks to the start of a record plus its stated length to reach
+   * the next one, so a record that misstates its own length loses every record
+   * after it.
+   */
+  it('states how long each record is, counting the length itself', () => {
+    const table = Buffer.from(buildSelection([face, { ...face, family: 'Other' }]), 'base64');
+    const second = 4 + table.readUInt32LE(4);
+    const nameLength = table.readUInt32LE(second + 4);
+    assert.equal(table.toString('utf8', second + 8, second + 8 + nameLength), 'Other');
+  });
+
+  it('carries the style, so bold and italic are not looked up as regular', () => {
+    const table = Buffer.from(buildSelection([face]), 'base64');
+    const nameLength = table.readUInt32LE(8);
+    const pathAt = 12 + nameLength + 4;
+    const at = pathAt + 4 + table.readUInt32LE(pathAt);
+    assert.equal(table.readInt32LE(at), 0, 'face index');
+    assert.equal(table.readUInt32LE(at + 4), 1, 'italic');
+    assert.equal(table.readUInt32LE(at + 8), 0, 'bold');
   });
 });
 
