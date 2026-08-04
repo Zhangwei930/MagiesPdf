@@ -157,6 +157,20 @@ export function markSaved(doc: DocumentState, path: string): DocumentState {
   };
 }
 
+/**
+ * The filename Save As should propose.
+ *
+ * A rendering is named after the document it shows — `报告.docx` — while its
+ * bytes are the PDF that was rendered from it. Offering that name would write a
+ * PDF into a file called `.docx`, which nothing can open. What is being saved
+ * is the rendering, so what is proposed is a `.pdf`.
+ */
+export function saveAsName(doc: DocumentState): string {
+  if (!doc.origin) return doc.name;
+  const dot = doc.name.lastIndexOf('.');
+  return `${dot > 0 ? doc.name.slice(0, dot) : doc.name}.pdf`;
+}
+
 export function setPassword(doc: DocumentState, password: string): DocumentState {
   return { ...doc, password };
 }

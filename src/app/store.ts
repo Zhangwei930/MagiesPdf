@@ -200,7 +200,7 @@ export const useApp = create<AppState>((set, get) => ({
     if (!document) return;
 
     const result = await bridge().saveOutputAs({
-      name: document.name,
+      name: docs.saveAsName(document),
       bytes: document.bytes,
       mime: 'application/pdf',
     });

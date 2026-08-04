@@ -13,6 +13,7 @@ import {
   nextActiveId,
   openDocument,
   redo,
+  saveAsName,
   undo,
 } from './documents.ts';
 import type { PickedFile } from './bridge.ts';
@@ -233,6 +234,33 @@ describe('documents rendered from an Office file', () => {
     const second = openDocument(first.documents, createDocument(preview()));
     assert.equal(second.documents.length, 1);
     assert.equal(second.activeId, first.documents[0]?.id);
+  });
+});
+
+describe('the name Save As proposes', () => {
+  /**
+   * A rendering's bytes are a PDF while its name still ends in .docx, because
+   * the tab shows the document the user opened. Proposing that name would save
+   * a PDF as a Word file — openable by nothing.
+   */
+  it('proposes a PDF name for a rendering', () => {
+    const doc = createDocument({
+      ...picked('报告.docx', ''),
+      origin: { path: '/docs/报告.docx', kind: 'word' },
+    });
+    assert.equal(saveAsName(doc), '报告.pdf');
+  });
+
+  it('leaves an ordinary document name alone', () => {
+    assert.equal(saveAsName(createDocument(picked('a.pdf', '/docs/a.pdf'))), 'a.pdf');
+  });
+
+  it('copes with a name that has no extension', () => {
+    const doc = createDocument({
+      ...picked('报告', ''),
+      origin: { path: '/docs/报告', kind: 'word' },
+    });
+    assert.equal(saveAsName(doc), '报告.pdf');
   });
 });
 
