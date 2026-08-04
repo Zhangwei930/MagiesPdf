@@ -97,7 +97,7 @@ function resolveAsset(route, roots, activeSession = '') {
  * for a native host that does not exist, ignoring the socket the document
  * actually arrives through.
  */
-function editorPageSource({ documentType, title, fileType }) {
+function editorPageSource({ documentType, title, fileType, sessionId }) {
   const config = JSON.stringify({
     width: '100%',
     height: '100%',
@@ -108,7 +108,10 @@ function editorPageSource({ documentType, title, fileType }) {
       // config to be accepted at all.
       url: '/session/current/Editor.bin',
       fileType,
-      key: `magies-${Date.now()}`,
+      // The engine posts the document back on a route ending in this key, so
+      // it has to be the session — it is all the host has to match an upload
+      // against, and a key of its own makes every save a 404.
+      key: sessionId,
       permissions: { edit: true, download: true, print: true },
     },
     editorConfig: {

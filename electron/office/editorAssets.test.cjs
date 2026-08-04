@@ -145,7 +145,20 @@ describe('the editor api script', () => {
 });
 
 describe('the page the frame is pointed at', () => {
-  const page = editorPageSource({ documentType: 'word', title: '报告.docx', fileType: 'docx' });
+  const page = editorPageSource({
+    documentType: 'word', title: '报告.docx', fileType: 'docx', sessionId: 'sess-1',
+  });
+
+  /**
+   * The engine posts the document back on a route ending in the document's
+   * key, which is the only thing identifying it there — so the key has to be
+   * the session, or the host has nothing to match the upload against and the
+   * save comes back 404.
+   */
+  it('keys the document by the session it belongs to', () => {
+    assert.match(page, /"key":"sess-1"/);
+    assert.doesNotMatch(page, /magies-\$\{/, 'a key of its own cannot be matched to a session');
+  });
 
   it('loads the engine and starts an editor', () => {
     assert.match(page, /api\/documents\/api\.js/);

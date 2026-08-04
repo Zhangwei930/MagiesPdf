@@ -18,6 +18,16 @@ const { createUploadBuffer } = require('./editorUpload.cjs');
  * the editors, with the same traversal guard on it as any other asset.
  */
 
+/**
+ * Where the engine posts a document back.
+ *
+ * It resolves this against the page it runs in, which is served from under the
+ * editors — so what arrives is `/editors/downloadas/<session>` rather than the
+ * bare path. Matching on the segment rather than the start of the route
+ * accepts both, and the bare one is what the tests and any future caller use.
+ */
+const UPLOAD_ROUTE = '/downloadas/';
+
 function createEditorHost(deps) {
   const { editorsRoot, listen, onDocumentSaved = async () => {} } = deps;
   const sessions = new Map();
@@ -45,7 +55,8 @@ function createEditorHost(deps) {
    * a whole document, and only then is anything written.
    */
   async function acceptUpload(request) {
-    const session = sessions.get(request.path.slice('/downloadas/'.length));
+    const at = request.path.indexOf(UPLOAD_ROUTE);
+    const session = sessions.get(request.path.slice(at + UPLOAD_ROUTE.length));
     if (!session) return { status: 404 };
 
     const document = session.upload.accept(request.command ?? {}, request.body ?? Buffer.alloc(0));
@@ -58,7 +69,7 @@ function createEditorHost(deps) {
   function handle(request) {
     const route = request.path;
 
-    if (route.startsWith('/downloadas/')) return acceptUpload(request);
+    if (route.includes(UPLOAD_ROUTE)) return acceptUpload(request);
 
     // The entry point the renderer's frame is pointed at.
     if (route.startsWith('/editor/')) {
@@ -72,6 +83,7 @@ function createEditorHost(deps) {
           documentType: session.documentType,
           title: session.title,
           fileType: session.fileType,
+          sessionId: session.id,
         }),
       };
     }
