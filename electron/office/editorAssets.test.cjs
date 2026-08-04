@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { describe, it } = require('node:test');
-const { documentUrls, resolveAsset, socketStubSource } = require('./editorAssets.cjs');
+const { documentUrls, editorPageSource, resolveAsset, socketStubSource } = require('./editorAssets.cjs');
 
 describe('the document parts handed to the editor', () => {
   it('names the editor binary and every extracted image', () => {
@@ -51,6 +51,44 @@ describe('resolving a request to a file', () => {
 
   it('has nothing to say about an unknown route', () => {
     assert.equal(resolveAsset('/somewhere/else', roots), '');
+  });
+});
+
+describe('the page the frame is pointed at', () => {
+  const page = editorPageSource({ documentType: 'word', title: '报告.docx', fileType: 'docx' });
+
+  it('loads the engine and starts an editor', () => {
+    assert.match(page, /api\/documents\/api\.js/);
+    assert.match(page, /DocsAPI\.DocEditor/);
+  });
+
+  it('opens the document it was asked for', () => {
+    assert.match(page, /"documentType":"word"|documentType: 'word'/);
+    assert.match(page, /报告\.docx/);
+  });
+
+  /**
+   * The engine takes a different path to the document depending on whether a
+   * desktop bridge is present, and only one of them ends anywhere: with the
+   * bridge it waits for a native host that does not exist here.
+   */
+  it('does not pretend to be a desktop host', () => {
+    assert.doesNotMatch(page, /AscDesktopEditor\s*=/);
+    assert.doesNotMatch(page, /type:\s*'desktop'/);
+  });
+
+  it('reports back when the engine says the document changed', () => {
+    assert.match(page, /postMessage/);
+    assert.match(page, /modified/);
+  });
+
+  it('escapes a title that would otherwise break out of the script', () => {
+    const nasty = editorPageSource({
+      documentType: 'word',
+      title: '</script><script>alert(1)</script>',
+      fileType: 'docx',
+    });
+    assert.doesNotMatch(nasty, /<script>alert\(1\)<\/script>/);
   });
 });
 

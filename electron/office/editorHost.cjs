@@ -1,7 +1,7 @@
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { connectMessages, documentMessages } = require('./editorHandshake.cjs');
-const { documentUrls, resolveAsset, socketStubSource } = require('./editorAssets.cjs');
+const { documentUrls, editorPageSource, resolveAsset, socketStubSource } = require('./editorAssets.cjs');
 
 /**
  * Serves the embedded editor to the renderer.
@@ -54,6 +54,22 @@ function createEditorHost(deps) {
   function handle(request) {
     const route = request.path;
 
+    // The entry point the renderer's frame is pointed at.
+    if (route.startsWith('/editor/')) {
+      const session = sessions.get(route.slice('/editor/'.length));
+      if (!session) return { status: 404 };
+      activeSession = session.id;
+      return {
+        status: 200,
+        type: 'text/html; charset=utf-8',
+        body: editorPageSource({
+          documentType: session.documentType,
+          title: session.title,
+          fileType: session.fileType,
+        }),
+      };
+    }
+
     if (route.endsWith('/vendor/socketio/socket.io.min.js')) {
       const session = sessions.get(request.session ?? activeSession);
       if (!session) return { status: 404 };
@@ -90,13 +106,19 @@ function createEditorHost(deps) {
 
   return {
     /** Makes a converted document reachable, and returns where to point at it. */
-    async publish({ id, workDir, media, user = { id: 'local', name: 'Magies' }, readOnly = false }) {
+    async publish({
+      id, workDir, media, title = '', documentType = 'word', fileType = 'docx',
+      user = { id: 'local', name: 'Magies' }, readOnly = false,
+    }) {
       const started = await ensureServer();
       sessions.set(id, {
         id,
         workDir,
         user,
         readOnly,
+        title,
+        documentType,
+        fileType,
         urls: documentUrls({ id, media }),
         frameId: crypto.randomUUID(),
       });

@@ -50,6 +50,82 @@ function resolveAsset(route, roots, activeSession = '') {
 }
 
 /**
+ * The page the renderer's frame is pointed at.
+ *
+ * It does one thing: start the engine on the document this session holds. In
+ * particular it does *not* define `window.AscDesktopEditor`. The engine takes
+ * one of two paths to a document depending on whether a desktop host is
+ * present, and only the other one ends anywhere here — with a bridge it waits
+ * for a native host that does not exist, ignoring the socket the document
+ * actually arrives through.
+ */
+function editorPageSource({ documentType, title, fileType }) {
+  const config = JSON.stringify({
+    width: '100%',
+    height: '100%',
+    documentType,
+    document: {
+      title,
+      // The parts arrive through the socket; a url has to be here for the
+      // config to be accepted at all.
+      url: '/session/current/Editor.bin',
+      fileType,
+      key: `magies-${Date.now()}`,
+      permissions: { edit: true, download: true, print: true },
+    },
+    editorConfig: {
+      mode: 'edit',
+      lang: 'zh',
+      user: { id: 'local', name: 'Magies' },
+      customization: { about: false, feedback: false, compactHeader: false },
+    },
+  });
+
+  // A document called `</script>…` would otherwise close the script block and
+  // run whatever followed it, so the JSON is escaped for its surroundings.
+  const inlineConfig = config.replaceAll('<', '\\u003c');
+
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${escapeHtml(title)}</title>
+<style>html,body{margin:0;height:100%;overflow:hidden}#editor{height:100%}</style>
+</head>
+<body>
+<div id="editor"></div>
+<script src="/editors/web-apps/apps/api/documents/api.js"></script>
+<script>
+(function () {
+  var config = ${inlineConfig};
+  config.events = {
+    // The shell cannot see inside the engine, so the engine has to say when
+    // the document has unsaved changes.
+    onDocumentStateChange: function (event) {
+      parent.postMessage({ magies: 'modified', modified: !!(event && event.data) }, '*');
+    },
+    onError: function (event) {
+      parent.postMessage({ magies: 'error', data: event && event.data }, '*');
+    },
+  };
+  new DocsAPI.DocEditor('editor', config);
+})();
+</script>
+</body>
+</html>
+`;
+}
+
+/** Keeps a document's name from ending the script or the title element. */
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+
+/**
  * The socket the editor talks to.
  *
  * It is a stand-in for socket.io shaped closely enough that the editor's
@@ -175,4 +251,4 @@ function socketStubSource({ connect, document }) {
 `;
 }
 
-module.exports = { documentUrls, resolveAsset, socketStubSource };
+module.exports = { documentUrls, editorPageSource, resolveAsset, socketStubSource };

@@ -24,6 +24,9 @@ function createEditorService(deps) {
           id: session.id,
           workDir: session.workDir,
           media,
+          title: session.name,
+          documentType: session.editorType,
+          fileType: (session.name.split('.').pop() ?? 'docx').toLowerCase(),
         });
         opened.push({
           name: session.name,
