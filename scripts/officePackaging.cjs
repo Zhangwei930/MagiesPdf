@@ -82,6 +82,12 @@ function documentEngineFilter() {
     '!web/web-apps/apps/*/forms/**',
     '!web/web-apps/apps/visioeditor/**',
     '!web/sdkjs/visio/**',
+    // PDFs open in this app's own viewer; the engine's pdf editor is never
+    // pointed at one — nothing in web-apps so much as names it.
+    '!web/sdkjs/pdf/**',
+    // The editor ships in 46 languages. This app ships in two.
+    '!web/web-apps/apps/*/main/locale/*.json',
+    'web/web-apps/apps/*/main/locale/{en,zh}.json',
     // The converter reads one file from the desktop web-apps; the rest of that
     // build is a second copy of an editor nothing points a frame at.
     // The template gallery, which nothing here opens: it sits under the

@@ -75,18 +75,26 @@ describe('document engine packaging', () => {
  */
 describe('what of the engine is packaged', () => {
   const filter = documentEngineFilter();
-  const kept = (file) => !filter
-    .filter((rule) => rule.startsWith('!'))
-    .some((rule) => matches(rule.slice(1), file));
+  /** Rules apply in order and the last one to match decides, as the builder does. */
+  const kept = (file) => filter.reduce((verdict, rule) => {
+    const negated = rule.startsWith('!');
+    const pattern = negated ? rule.slice(1) : rule;
+    return matches(pattern, file) ? !negated : verdict;
+  }, false);
 
-  /** A minimal glob matcher, enough for the shapes electron-builder takes. */
+  /**
+   * A minimal glob matcher, enough for the shapes electron-builder takes.
+   * Everything is escaped first, so the only regex in the result is what a
+   * glob metacharacter was turned into.
+   */
   function matches(pattern, file) {
     const expression = pattern
-      .split('**').map((part) => part.split('*').map(escape).join('[^/]*')).join('.*');
+      .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/\\\{([^}]*)\\\}/g, (all, options) => `(${options.split(',').join('|')})`)
+      .split('**')
+      .map((part) => part.replace(/\*/g, '[^/]*'))
+      .join('.*');
     return new RegExp(`^${expression}$`).test(file);
-  }
-  function escape(part) {
-    return part.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
   }
 
   it('keeps what a document is opened, laid out and saved with', () => {
@@ -100,6 +108,8 @@ describe('what of the engine is packaged', () => {
       'web/web-apps/apps/api/documents/api.js.tpl',
       'editors/sdkjs/word/sdk-all.js',
       'editors/web-apps/vendor/xregexp/xregexp-all-min.js',
+      'web/web-apps/apps/documenteditor/main/locale/zh.json',
+      'web/web-apps/apps/documenteditor/main/locale/en.json',
     ]) {
       assert.ok(kept(file), `${file} is needed to open a document`);
     }
@@ -113,6 +123,8 @@ describe('what of the engine is packaged', () => {
       'web/web-apps/apps/visioeditor/main/index.html',
       'converter/templates/JA/Forms/form.pdf',
       'editors/web-apps/apps/documenteditor/main/app.js',
+      'web/sdkjs/pdf/pdf.js',
+      'web/web-apps/apps/documenteditor/main/locale/fr.json',
     ]) {
       assert.ok(!kept(file), `${file} is packaged but never reached`);
     }
