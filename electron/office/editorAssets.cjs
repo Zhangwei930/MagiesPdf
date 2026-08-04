@@ -205,6 +205,62 @@ function editorPageSource({ documentType, title, fileType, sessionId }) {
    * and every document opened flashes it. The watch also survives the frame
    * navigating, which replaces the document and the stylesheet with it.
    */
+  /**
+   * Draws the names in the font dropdown.
+   *
+   * Every row of that list is an image cut from a strip of pre-rendered font
+   * names, and the strip is made by a tool that ships only for Linux. The one
+   * generated here is blank — the right size, so the list builds and scrolls,
+   * but every row comes out empty, which is a list of nothing.
+   *
+   * So each row is drawn here instead. The loader keeps getImage on the
+   * instance rather than on a prototype, so that is what is replaced.
+   */
+  function drawFontNames(w) {
+    if (!w.Common || !w.Common.UI || !w.Common.UI.ComboBoxFonts || w.__magiesNames) return;
+    w.__magiesNames = true;
+
+    var combo = w.Common.UI.ComboBoxFonts.prototype;
+    var fill = combo.fillFonts;
+    combo.fillFonts = function () {
+      var loader = this.spriteThumbs;
+      if (loader && !loader.__magiesNames) {
+        loader.__magiesNames = true;
+        loader.getImage = function (index) {
+          var infos = w.AscFonts && w.AscFonts.g_font_infos;
+          var name = infos && infos[index] ? infos[index].Name : '';
+          var scale = w.devicePixelRatio || 1;
+          var width = 300;
+          var height = 28;
+
+          var canvas = w.document.createElement('canvas');
+          canvas.width = width * scale;
+          canvas.height = height * scale;
+          canvas.style.width = width + 'px';
+          canvas.style.height = height + 'px';
+
+          var ctx = canvas.getContext('2d');
+          ctx.scale(scale, scale);
+          ctx.fillStyle = w.getComputedStyle(w.document.body).color || '#000';
+          ctx.font = '13px -apple-system, "Segoe UI", "Noto Sans CJK SC", sans-serif';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(name, 4, height / 2);
+          return canvas;
+        };
+      }
+      return fill.apply(this, arguments);
+    };
+  }
+
+  setInterval(function () {
+    var frames = document.querySelectorAll('iframe');
+    for (var i = 0; i < frames.length; i += 1) {
+      try {
+        if (frames[i].contentWindow) drawFontNames(frames[i].contentWindow);
+      } catch (error) { /* another origin: not the engine's */ }
+    }
+  }, 150);
+
   setInterval(hideEngineChrome, 40);
   hideEngineChrome();
 
