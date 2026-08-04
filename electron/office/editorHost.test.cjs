@@ -45,6 +45,43 @@ describe('the route a document comes back on', () => {
     assert.equal(saved[0][1].toString(), 'DOCY;whole');
   });
 
+  /**
+   * The engine blocks the editor behind a progress dialog for the length of
+   * the operation, and ends it when the reply names the file it produced.
+   * Acknowledging without one leaves the dialog up over a document that has
+   * in fact already been written.
+   */
+  it('answers a finished save with the file it produced', async () => {
+    const { calls, deps } = dependencies({ onDocumentSaved: async () => {} });
+    const host = createEditorHost(deps);
+    await host.publish({ id: 'abc', workDir: '/tmp/abc', media: [], fileType: 'docx' });
+
+    const answer = await calls.listened[0]({
+      path: '/editors/downloadas/abc',
+      body: Buffer.from('DOCY;whole'),
+      command: { c: 'save', savetype: 3 },
+    });
+
+    const reply = JSON.parse(answer.body);
+    assert.equal(reply.type, 'save', 'the engine matches the reply to the command it sent');
+    assert.equal(reply.status, 'ok');
+    assert.ok(reply.data, 'without a file the dialog never closes');
+  });
+
+  /** A chunk that is not the last one is only acknowledged. */
+  it('does not claim a file while parts are still arriving', async () => {
+    const { calls, deps } = dependencies({ onDocumentSaved: async () => {} });
+    const host = createEditorHost(deps);
+    await host.publish({ id: 'abc', workDir: '/tmp/abc', media: [] });
+
+    const answer = await calls.listened[0]({
+      path: '/editors/downloadas/abc',
+      body: Buffer.from('DOCY;'),
+      command: { c: 'save', savetype: 0 },
+    });
+    assert.equal(JSON.parse(answer.body).data, undefined);
+  });
+
   it('still accepts the bare route', async () => {
     const saved = [];
     const { calls, deps } = dependencies({

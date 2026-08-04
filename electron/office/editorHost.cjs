@@ -59,11 +59,26 @@ function createEditorHost(deps) {
     const session = sessions.get(request.path.slice(at + UPLOAD_ROUTE.length));
     if (!session) return { status: 404 };
 
-    const document = session.upload.accept(request.command ?? {}, request.body ?? Buffer.alloc(0));
+    const command = request.command ?? {};
+    const document = session.upload.accept(command, request.body ?? Buffer.alloc(0));
     if (!document) return { status: 200, type: 'application/json', body: '{"status":"ok"}' };
 
     await onDocumentSaved(session.id, document);
-    return { status: 200, type: 'application/json', body: '{"status":"ok"}' };
+
+    // The engine holds the editor behind a progress dialog until the reply
+    // names the file the operation produced, and matches the reply to the
+    // command it sent. The document is already written by now; this is what
+    // lets the editor carry on.
+    return {
+      status: 200,
+      type: 'application/json',
+      body: JSON.stringify({
+        type: command.c ?? 'save',
+        status: 'ok',
+        data: `${UPLOAD_ROUTE}${session.id}/saved`,
+        filetype: session.fileType,
+      }),
+    };
   }
 
   function handle(request) {

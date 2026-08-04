@@ -150,6 +150,10 @@ function editorPageSource({ documentType, title, fileType, sessionId }) {
     onDocumentStateChange: function (event) {
       parent.postMessage({ magies: 'modified', modified: !!(event && event.data) }, '*');
     },
+    // Saving finishes by the engine offering the file it produced. The
+    // document has already been written by the host at that point, so this
+    // exists to take the offer and drop it — unhandled, it becomes a download.
+    onDownloadAs: function () {},
     onError: function (event) {
       parent.postMessage({ magies: 'error', data: event && event.data }, '*');
     },

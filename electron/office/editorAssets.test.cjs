@@ -202,6 +202,15 @@ describe('the page the frame is pointed at', () => {
     assert.match(page, /contentWindow/, 'the shortcut is only bound to this page');
   });
 
+  /**
+   * Finishing a save makes the engine offer the file it produced. It is
+   * already on disk by then, so the offer is taken and dropped — left
+   * unhandled it is a download the user did not ask for.
+   */
+  it('takes the file the engine offers rather than downloading it', () => {
+    assert.match(page, /onDownloadAs/);
+  });
+
   it('reports back when the engine says the document changed', () => {
     assert.match(page, /postMessage/);
     assert.match(page, /modified/);
