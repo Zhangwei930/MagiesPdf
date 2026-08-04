@@ -201,6 +201,8 @@ function escapeHtml(value) {
  */
 function socketStubSource({ connect, document }) {
   return `(function (global) {
+  var READY_POLL_MS = 25;
+  var READY_TIMEOUT_MS = 15000;
   var CONNECT_MESSAGES = ${JSON.stringify(connect)};
   var DOCUMENT_MESSAGES = ${JSON.stringify(document)};
 
@@ -288,6 +290,35 @@ function socketStubSource({ connect, document }) {
   Socket.prototype._deliver = function (messages) {
     for (var i = 0; i < messages.length; i += 1) this._client.emit('message', messages[i]);
   };
+
+  /**
+   * Hands over the document once the engine can take it.
+   *
+   * The engine loads a very large script and only then builds the font
+   * application it lays text out with. A document delivered before that is
+   * shaped against fonts that do not exist yet, and the engine dies on a null
+   * face — so this waits for the measurer rather than guessing a delay.
+   *
+   * It gives up eventually: an editor showing a document that cannot be laid
+   * out is worse than one that says it could not open it.
+   */
+  Socket.prototype._deliverWhenReady = function () {
+    var self = this;
+    var waited = 0;
+    var poll = setInterval(function () {
+      var ready = window.AscCommon
+        && window.AscCommon.g_oTextMeasurer
+        && window.AscFonts
+        && window.AscFonts.g_font_infos
+        && window.AscFonts.g_font_infos.length > 0;
+
+      waited += READY_POLL_MS;
+      if (!ready && waited < READY_TIMEOUT_MS) return;
+
+      clearInterval(poll);
+      self._deliver(DOCUMENT_MESSAGES);
+    }, READY_POLL_MS);
+  };
   Socket.prototype.on = function (event, fn) { this._client.on(event, fn); return this; };
   Socket.prototype.once = function (event, fn) { this._client.once(event, fn); return this; };
   Socket.prototype.off = function (event, fn) { this._client.off(event, fn); return this; };
@@ -305,7 +336,7 @@ function socketStubSource({ connect, document }) {
       // The client will not ask, so it is told: first what a server announces
       // on connect, then the document itself.
       setTimeout(function () { self._deliver(CONNECT_MESSAGES); }, 20);
-      setTimeout(function () { self._deliver(DOCUMENT_MESSAGES); }, 120);
+      self._deliverWhenReady();
     }, 0);
     return this;
   };

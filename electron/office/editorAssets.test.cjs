@@ -171,6 +171,26 @@ describe('the socket stand-in served in place of socket.io', () => {
     assert.match(source, /"type":"authChanges"/);
   });
 
+  /**
+   * The document is delivered when the engine can take it, not at a guessed
+   * moment. The engine loads a very large script and only then builds the
+   * font application; a document that arrives before that is laid out against
+   * fonts that do not exist yet, and shaping dies on a null face.
+   */
+  it('waits for the engine before handing it the document', () => {
+    assert.match(source, /g_oTextMeasurer/, 'nothing is checked before delivering');
+    assert.doesNotMatch(
+      source,
+      /_deliver\(DOCUMENT_MESSAGES\)[^;]*\}\s*,\s*\d+\s*\)/,
+      'the document is still delivered on a timer',
+    );
+  });
+
+  /** A wait with no end would leave the editor blank with nothing to show. */
+  it('gives up waiting rather than hanging', () => {
+    assert.match(source, /clearInterval/);
+  });
+
   /** Missing any of these and the editor stops before it registers a handler. */
   it('provides the transport members the editor reaches for', () => {
     for (const member of ['setOpenToken', 'setSessionToken', 'reconnectionAttempts', 'timeout', 'transports']) {
