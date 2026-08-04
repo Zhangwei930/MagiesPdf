@@ -164,10 +164,38 @@ function editorPageSource({ documentType, title, fileType, sessionId }) {
 (function () {
   var config = ${inlineConfig};
 
+  /**
+   * The engine's own chrome, hidden in the frame it runs in.
+   *
+   * Its mark belongs to the software this app embeds rather than to this app,
+   * and its licence asks for appropriate legal notices rather than for its
+   * logo — those are in settings. The signed-in avatar is worse than
+   * decoration: there is no account here, one machine and one file.
+   *
+   * Injected as a stylesheet rather than by editing the engine's own files,
+   * which are redistributed byte for byte.
+   */
+  var CHROME_CSS = '#header-logo, #header-logo *, .btn-current-user { display: none !important; }';
+
+  function hideEngineChrome() {
+    var frames = document.querySelectorAll('iframe');
+    for (var i = 0; i < frames.length; i += 1) {
+      try {
+        var doc = frames[i].contentDocument;
+        if (!doc || !doc.head || doc.getElementById('magies-chrome')) continue;
+        var style = doc.createElement('style');
+        style.id = 'magies-chrome';
+        style.textContent = CHROME_CSS;
+        doc.head.appendChild(style);
+      } catch (error) { /* another origin: not the engine's */ }
+    }
+  }
+
   config.events = {
     // The shell cannot see inside the engine, so the engine has to say when
     // the document is open and when it has unsaved changes.
     onDocumentReady: function () {
+      hideEngineChrome();
       bindShortcut();
       parent.postMessage({ magies: 'ready' }, '*');
     },

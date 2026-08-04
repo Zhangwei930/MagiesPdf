@@ -69,6 +69,18 @@ describe('bundled Office customer experience', () => {
   });
 });
 
+describe('an open Office document', () => {
+  /**
+   * The PDF ribbon belongs to a PDF. Above a Word, Sheet or Slide document
+   * there are two toolbars stacked — the app's, whose tools do not apply, and
+   * the editor's own, which does — and the one on top is the one that does
+   * nothing for the document being looked at.
+   */
+  it('does not stack the pdf ribbon above the editor', () => {
+    assert.match(appSource, /showRibbon = [^;]*officeEditor/s);
+  });
+});
+
 describe('the title bar', () => {
   /**
    * The mark belongs where the app is named, which is the title bar. The start

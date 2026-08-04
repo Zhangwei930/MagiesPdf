@@ -243,6 +243,20 @@ describe('the page the frame is pointed at', () => {
   });
 
   /**
+   * The engine's own branding and the account it thinks is signed in.
+   *
+   * There is no account here — the editor runs on one machine, against one
+   * file — and the mark belongs to software this app embeds rather than to
+   * this app. The engine's licence requires appropriate legal notices, not its
+   * logo in the interface, and grants no trademark rights in the first place;
+   * the notices are shown in settings.
+   */
+  it('hides the engine mark and the signed-in avatar', () => {
+    assert.match(page, /#header-logo/);
+    assert.match(page, /\.btn-current-user/);
+  });
+
+  /**
    * Saving goes through the engine's own api rather than the download the
    * embedding interface offers.
    *

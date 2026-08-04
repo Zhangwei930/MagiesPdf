@@ -363,7 +363,11 @@ export function App() {
   }
 
   const tool = view.name === 'tool' ? uiRegistry.tryGet(view.toolId) : undefined;
-  const showRibbon = view.name !== 'settings' && view.name !== 'welcome';
+  // The PDF ribbon belongs to a PDF. An Office document has the engine's own
+  // toolbar right below it, and none of these tools apply to what is open —
+  // two stacked toolbars where the top one does nothing for the document.
+  const officeEditor = view.name === 'document' && Boolean(activeDocument?.editor);
+  const showRibbon = view.name !== 'settings' && view.name !== 'welcome' && !officeEditor;
 
   return (
     <div

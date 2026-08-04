@@ -775,6 +775,20 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
 
           {section === 'app' && (
             <section className="surface-panel space-y-4 p-4">
+              {/* The engine's licence asks that the interface show appropriate
+                  legal notices — not that it show the engine's logo, which is
+                  hidden in the editor. A file beside the application is not the
+                  interface, so they are here. */}
+              <Field label={t('legalNotices', locale)}>
+                <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
+                  {t('legalNoticesBody', locale)}
+                </p>
+                <p className="mt-2 text-[12px] text-[var(--text-muted)]">
+                  {t('legalNoticesSource', locale)}:{' '}
+                  <span className="select-text font-mono">github.com/Zhangwei930/MagiesPdf</span>
+                </p>
+              </Field>
+
               <Field label={t('updatesSection', locale)}>
                 <p className="mb-2 text-[12px] text-[var(--text-secondary)]">
                   {t('updatesCurrentVersion', locale)}:{' '}
