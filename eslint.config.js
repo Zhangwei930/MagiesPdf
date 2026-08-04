@@ -162,6 +162,10 @@ export default [
         queueMicrotask: 'readonly',
         URL: 'readonly',
         fetch: 'readonly',
+        // Electron's protocol handlers are answered with a Response, and it
+        // comes from the same fetch standard already listed above.
+        Response: 'readonly',
+        Request: 'readonly',
         structuredClone: 'readonly',
         AbortController: 'readonly',
         TextDecoder: 'readonly',
