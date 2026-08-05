@@ -300,8 +300,17 @@ function editorPageSource({ documentType, title, fileType, sessionId }) {
     onRequestOpen: function () {
       parent.postMessage({ magies: 'requestOpen' }, '*');
     },
-    onRequestSaveAs: function () {
-      parent.postMessage({ magies: 'requestSaveAs' }, '*');
+    // Fires after the engine has already produced the copy (with a format
+    // the user picked). The shell must write those bytes, not ask for another
+    // engine save — that path expects the editor binary and made the menu
+    // appear to do nothing.
+    onRequestSaveAs: function (event) {
+      var data = (event && event.data) || {};
+      parent.postMessage({
+        magies: 'exportReady',
+        title: data.title || '',
+        fileType: data.fileType || '',
+      }, '*');
     },
 
     onError: function (event) {

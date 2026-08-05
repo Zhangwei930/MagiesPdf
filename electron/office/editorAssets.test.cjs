@@ -255,6 +255,9 @@ describe('the page the frame is pointed at', () => {
     for (const event of ['onRequestCreateNew', 'onRequestOpen', 'onRequestSaveAs']) {
       assert.match(page, new RegExp(event), `${event} is never answered`);
     }
+    // Save copy as is already a finished export; the shell writes it, rather
+    // than asking the engine to save again.
+    assert.match(page, /exportReady/);
   });
 
   /**

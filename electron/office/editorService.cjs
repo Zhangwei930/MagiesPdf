@@ -10,8 +10,10 @@
  * holds only the session it can reach them through.
  */
 
+const path = require('node:path');
+
 function createEditorService(deps) {
-  const { sessions, host, listMedia, rememberPaths } = deps;
+  const { sessions, host, listMedia, rememberPaths, fs } = deps;
 
   return {
     /** Converts each document and makes it reachable by the editor. */
@@ -85,6 +87,25 @@ function createEditorService(deps) {
       host.withdraw(sessionId);
       await sessions.close(sessionId);
       return { closed: sessionId };
+    },
+
+    /**
+     * Writes the file the engine already produced for "Save copy as".
+     *
+     * Unlike `save` / `saveAs`, the bytes are not the engine binary — they are
+     * already in the format the user picked (docx, pdf, …), so they go to disk
+     * as-is. The destination is chosen by the shell first.
+     */
+    async writeExport(sessionId, targetPath) {
+      if (typeof targetPath !== 'string' || !targetPath) {
+        throw new Error('An absolute target path is required');
+      }
+      if (typeof fs?.writeFile !== 'function') {
+        throw new Error('A file system is required to write an export');
+      }
+      const taken = host.consumeExport(sessionId);
+      await fs.writeFile(targetPath, taken.bytes);
+      return { path: targetPath, name: path.basename(targetPath) };
     },
   };
 }

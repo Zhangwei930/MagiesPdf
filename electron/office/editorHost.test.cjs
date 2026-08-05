@@ -97,6 +97,53 @@ describe('the route a document comes back on', () => {
     });
     assert.equal(saved.length, 1);
   });
+
+  /**
+   * "Save copy as" uploads a finished export (PDF, DOCX, …). Treating that as
+   * the editor binary and writing it over the open file is what made the menu
+   * item appear to do nothing — conversion failed and the dialog never closed.
+   */
+  it('keeps a save-copy upload off the session path', async () => {
+    const saved = [];
+    const { calls, deps } = dependencies({
+      onDocumentSaved: async (id, bytes) => { saved.push([id, bytes]); },
+    });
+    const host = createEditorHost(deps);
+    await host.publish({ id: 'abc', workDir: '/tmp/abc', media: [], title: '报告.docx' });
+
+    const answer = await calls.listened[0]({
+      path: '/editors/downloadas/abc',
+      body: Buffer.from('%PDF-1.4 copy'),
+      command: { c: 'save', savetype: 3, isSaveAs: true, title: '报告.pdf' },
+    });
+
+    assert.equal(saved.length, 0, 'must not write the export over the open document');
+    assert.equal(JSON.parse(answer.body).status, 'ok');
+
+    const taken = host.consumeExport('abc');
+    assert.equal(taken.bytes.toString(), '%PDF-1.4 copy');
+    assert.equal(taken.title, '报告.pdf');
+  });
+
+  it('serves the export at the URL the reply named', async () => {
+    const { calls, deps } = dependencies({ onDocumentSaved: async () => {} });
+    const host = createEditorHost(deps);
+    await host.publish({ id: 'abc', workDir: '/tmp/abc', media: [] });
+
+    await calls.listened[0]({
+      path: '/editors/downloadas/abc',
+      body: Buffer.from('exported-bytes'),
+      command: { c: 'save', savetype: 3, isSaveAs: true, title: 'a.pdf' },
+    });
+
+    const answer = await calls.listened[0]({
+      path: '/editors/downloadas/abc/saved',
+      body: Buffer.alloc(0),
+      command: {},
+    });
+    assert.equal(answer.status, 200);
+    assert.equal(answer.body.toString(), 'exported-bytes');
+  });
 });
 
 describe('the editor host', () => {

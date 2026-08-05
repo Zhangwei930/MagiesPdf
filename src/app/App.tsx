@@ -405,6 +405,18 @@ export function App() {
     return undefined;
   };
 
+  /**
+   * The engine's "Save copy as" (另存副本为).
+   *
+   * By the time this runs the engine has already converted and uploaded the
+   * file. Writing it is a disk write of those bytes — not another engine save,
+   * which would try to treat a PDF as Editor.bin and fail silently.
+   */
+  const handleEditorExport = async (document: DocumentState, title: string) => {
+    if (!document.editor) return;
+    await bridge().saveEditorExport(document.editor.sessionId, title || document.name);
+  };
+
   const tool = view.name === 'tool' ? uiRegistry.tryGet(view.toolId) : undefined;
   // The PDF ribbon belongs to a PDF. An Office document has the engine's own
   // toolbar right below it, and none of these tools apply to what is open —
@@ -536,6 +548,7 @@ export function App() {
                     engineSaveRequest?.id === activeDocument.id ? engineSaveRequest.at : 0
                   }
                   onRequest={(what) => void handleEditorRequest(activeDocument, what)}
+                  onExportReady={(title) => void handleEditorExport(activeDocument, title)}
                 />
               ) : (
                 /* Keyed by document id so switching tabs remounts the viewer's

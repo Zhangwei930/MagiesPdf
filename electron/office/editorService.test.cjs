@@ -199,4 +199,37 @@ describe('saving from the editor', () => {
     await service.saveAs('abc', 'ZG9j', '/tmp/copy.pdf');
     assert.deepEqual(order, ['write', 'saveAs:/tmp/copy.pdf']);
   });
+
+  /**
+   * "Save copy as" has already produced the file the user wants. Writing it
+   * must not go through the converter — the bytes are a finished PDF or DOCX.
+   */
+  it('writes a finished export straight to disk', async () => {
+    const written = [];
+    const service = createEditorService({
+      sessions: {
+        open: async () => ({}),
+        close: async () => ({}),
+        save: async () => ({}),
+        writeEditorBin: async () => { throw new Error('export is not the editor binary'); },
+      },
+      host: {
+        publish: async () => ({ url: '' }),
+        withdraw: () => {},
+        consumeExport: (id) => {
+          assert.equal(id, 'sess1');
+          return { bytes: Buffer.from('%PDF-export'), title: 'a.pdf' };
+        },
+      },
+      listMedia: async () => [],
+      fs: {
+        writeFile: async (target, bytes) => { written.push([target, bytes.toString()]); },
+      },
+    });
+
+    const result = await service.writeExport('sess1', '/docs/copy.pdf');
+    assert.deepEqual(written, [['/docs/copy.pdf', '%PDF-export']]);
+    assert.equal(result.path, '/docs/copy.pdf');
+    assert.equal(result.name, 'copy.pdf');
+  });
 });

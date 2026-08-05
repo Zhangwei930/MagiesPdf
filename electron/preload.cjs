@@ -36,6 +36,9 @@ const api = {
   saveEditor: (sessionId, bytes) => ipcRenderer.invoke('office:editorSave', { sessionId, bytes }),
   pickEditorSaveAsTarget: (sessionId, name) =>
     ipcRenderer.invoke('office:editorSaveAsTarget', { sessionId, name }),
+  /** Writes the file the engine already produced for "Save copy as". */
+  saveEditorExport: (sessionId, name) =>
+    ipcRenderer.invoke('office:editorSaveExport', { sessionId, name }),
   closeEditor: (sessionId) => ipcRenderer.invoke('office:editorClose', { sessionId }),
   onEditorSaved: (handler) => {
     const listener = (_event, payload) => handler(payload);

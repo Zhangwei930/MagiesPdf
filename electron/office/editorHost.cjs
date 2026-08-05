@@ -35,6 +35,13 @@ const { createUploadBuffer } = require('./editorUpload.cjs');
  */
 const UPLOAD_ROUTE = '/downloadas/';
 
+/** Session id from `/…/downloadas/<id>` or `/…/downloadas/<id>/saved`. */
+function sessionIdFromUploadPath(route) {
+  const at = String(route).indexOf(UPLOAD_ROUTE);
+  if (at < 0) return '';
+  return String(route).slice(at + UPLOAD_ROUTE.length).split('/')[0] || '';
+}
+
 function createEditorHost(deps) {
   const { editorsRoot, listen, onDocumentSaved = async () => {} } = deps;
   const sessions = new Map();
@@ -58,19 +65,45 @@ function createEditorHost(deps) {
   /**
    * A document the engine is sending back.
    *
-   * The chunks arrive as ordinary POSTs; the buffer knows when they add up to
-   * a whole document, and only then is anything written.
+   * Two different operations land here:
+   * - A normal save: the bytes are the engine binary, and the shell writes
+   *   them back through `onDocumentSaved`.
+   * - "Save copy as" (`isSaveAs`): the engine has already converted to the
+   *   format the user picked. Those bytes must not go through the session
+   *   path — writing a PDF over a .docx as if it were Editor.bin is what made
+   *   the menu item appear to do nothing. They are held as an export for the
+   *   shell to write wherever the user chooses.
    */
   async function acceptUpload(request) {
-    const at = request.path.indexOf(UPLOAD_ROUTE);
-    const session = sessions.get(request.path.slice(at + UPLOAD_ROUTE.length));
+    const session = sessions.get(sessionIdFromUploadPath(request.path));
     if (!session) return { status: 404 };
 
     const command = request.command ?? {};
-    const document = session.upload.accept(command, request.body ?? Buffer.alloc(0));
+    const body = request.body ?? Buffer.alloc(0);
+
+    // The reply's `data` URL is fetched after upload. Serve the export there
+    // so the engine can finish its own "download ready" step.
+    if (body.length === 0) {
+      if (!session.export?.bytes) return { status: 404 };
+      return {
+        status: 200,
+        type: 'application/octet-stream',
+        body: session.export.bytes,
+      };
+    }
+
+    const document = session.upload.accept(command, body);
     if (!document) return { status: 200, type: 'application/json', body: '{"status":"ok"}' };
 
-    await onDocumentSaved(session.id, document);
+    if (command.isSaveAs) {
+      session.export = {
+        bytes: document,
+        title: typeof command.title === 'string' && command.title ? command.title : session.title,
+      };
+    } else {
+      session.export = null;
+      await onDocumentSaved(session.id, document);
+    }
 
     // The engine holds the editor behind a progress dialog until the reply
     // names the file the operation produced, and matches the reply to the
@@ -177,6 +210,21 @@ function createEditorHost(deps) {
 
     focus(id) {
       if (sessions.has(id)) activeSession = id;
+    },
+
+    /**
+     * Takes the file "Save copy as" produced, once.
+     *
+     * The shell asks where it should go after the engine posts the export; this
+     * hands over the bytes and clears them so a second call cannot write the
+     * same copy twice by accident.
+     */
+    consumeExport(id) {
+      const session = sessions.get(id);
+      if (!session?.export?.bytes) throw new Error(`No export ready for Office session: ${id}`);
+      const taken = session.export;
+      session.export = null;
+      return taken;
     },
 
     withdraw(id) {

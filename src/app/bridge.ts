@@ -312,6 +312,11 @@ export interface MagiesPdfBridge {
    * goes there instead of over the original. The extension decides the format.
    */
   pickEditorSaveAsTarget(sessionId: string, name: string): Promise<{ path: string } | null>;
+  /**
+   * The engine's "Save copy as": the file is already converted and uploaded.
+   * Opens a save dialog and writes those bytes (does not re-run the engine).
+   */
+  saveEditorExport(sessionId: string, name: string): Promise<{ path: string; name: string } | null>;
   closeEditor(sessionId: string): Promise<{ closed: string }>;
   /** Fires once the engine's document has been written back to disk. */
   onEditorSaved(

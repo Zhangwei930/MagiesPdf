@@ -131,31 +131,35 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   /** Where the next document out of a session goes, when it is a save-as. */
   const pendingSaveAs = new Map();
 
+  const editorHost = createEditorRuntime({
+    electron: { protocol },
+    // The engine posts its document back when asked; that is the save.
+    // "Save copy as" is not this path — those bytes are already converted and
+    // sit on the host as an export (see office:editorSaveExport).
+    onDocumentSaved: async (sessionId, document) => {
+      // A save-as asked where it should go before triggering this; taking
+      // the target here is what keeps the original untouched.
+      const target = pendingSaveAs.get(sessionId);
+      pendingSaveAs.delete(sessionId);
+
+      const saved = target
+        ? await editor.saveAs(sessionId, document.toString('base64'), target)
+        : await editor.save(sessionId, document.toString('base64'));
+
+      // The tab has to adopt path/name after Save As, or the title and the
+      // next ⌘S still point at the original file.
+      if (saved?.path) office.rememberRecent([saved.path]);
+      getWindow()?.webContents.send('office:editorSaved', {
+        sessionId,
+        path: saved?.path,
+        name: saved?.name,
+      });
+    },
+  });
   const editor = createEditorService({
     sessions: editorSessions,
-    host: createEditorRuntime({
-      electron: { protocol },
-      // The engine posts its document back when asked; that is the save.
-      onDocumentSaved: async (sessionId, document) => {
-        // A save-as asked where it should go before triggering this; taking
-        // the target here is what keeps the original untouched.
-        const target = pendingSaveAs.get(sessionId);
-        pendingSaveAs.delete(sessionId);
-
-        const saved = target
-          ? await editor.saveAs(sessionId, document.toString('base64'), target)
-          : await editor.save(sessionId, document.toString('base64'));
-
-        // The tab has to adopt path/name after Save As, or the title and the
-        // next ⌘S still point at the original file.
-        if (saved?.path) office.rememberRecent([saved.path]);
-        getWindow()?.webContents.send('office:editorSaved', {
-          sessionId,
-          path: saved?.path,
-          name: saved?.name,
-        });
-      },
-    }),
+    host: editorHost,
+    fs,
     // x2t writes a document's images beside the binary it produced.
     listMedia: async (workDir) => {
       try {
@@ -224,6 +228,25 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     pendingSaveAs.set(String(sessionId), result.filePath);
     writableTargets.remember(result.filePath);
     return { path: result.filePath };
+  });
+
+  /**
+   * The engine's "Save copy as" (另存副本为).
+   *
+   * The engine has already converted and uploaded the file; this only asks
+   * where it should land and writes those bytes. It must not re-trigger an
+   * engine save — that path expects the editor binary, not a finished export.
+   */
+  handle('office:editorSaveExport', async (_event, { sessionId, name }) => {
+    const result = await dialog.showSaveDialog(getWindow(), {
+      defaultPath: safeFileName(String(name || '')),
+    });
+    if (result.canceled || !result.filePath) return null;
+
+    writableTargets.remember(result.filePath);
+    const written = await editor.writeExport(String(sessionId), result.filePath);
+    office.rememberRecent([written.path]);
+    return written;
   });
 
   handle('office:editorClose', (_event, { sessionId }) => editor.close(String(sessionId)));

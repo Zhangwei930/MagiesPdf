@@ -12,6 +12,11 @@ interface OfficeEditorProps {
    * what a new document, a picker or another name mean belongs to the shell.
    */
   onRequest(what: 'createNew' | 'open' | 'saveAs'): void;
+  /**
+   * "Save copy as" finished converting in the engine; write the export.
+   * `title` is the suggested file name (with extension).
+   */
+  onExportReady(title: string): void;
 }
 
 /**
@@ -27,7 +32,13 @@ interface OfficeEditorProps {
  * showing, so the shell keeps every open editor alive and only changes which
  * one is visible.
  */
-export function OfficeEditor({ document: doc, onModifiedChange, onRequest, saveRequestedAt }: OfficeEditorProps) {
+export function OfficeEditor({
+  document: doc,
+  onModifiedChange,
+  onRequest,
+  onExportReady,
+  saveRequestedAt,
+}: OfficeEditorProps) {
   const frame = useRef<HTMLIFrameElement>(null);
   const session = doc.editor;
 
@@ -41,7 +52,7 @@ export function OfficeEditor({ document: doc, onModifiedChange, onRequest, saveR
      */
     const onMessage = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow) return;
-      const data = event.data as { magies?: string; modified?: boolean } | null;
+      const data = event.data as { magies?: string; modified?: boolean; title?: string } | null;
       if (!data) return;
 
       if (data.magies === 'modified') {
@@ -51,11 +62,12 @@ export function OfficeEditor({ document: doc, onModifiedChange, onRequest, saveR
       if (data.magies === 'requestCreateNew') onRequest('createNew');
       else if (data.magies === 'requestOpen') onRequest('open');
       else if (data.magies === 'requestSaveAs') onRequest('saveAs');
+      else if (data.magies === 'exportReady') onExportReady(typeof data.title === 'string' ? data.title : '');
     };
 
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [session, onModifiedChange, onRequest]);
+  }, [session, onModifiedChange, onRequest, onExportReady]);
 
   useEffect(() => {
     if (!saveRequestedAt) return;
