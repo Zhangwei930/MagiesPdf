@@ -20,7 +20,7 @@ function createEditorService(deps) {
      * Converts each document and makes it reachable by the editor.
      * `uiTheme` is an ONLYOFFICE id (`theme-system` / `theme-white` / `theme-night`).
      */
-    async open(paths, { uiTheme = 'theme-system' } = {}) {
+    async open(paths, { uiTheme = 'theme-white' } = {}) {
       const opened = [];
       for (const sourcePath of paths) {
         const session = await sessions.open(sourcePath);

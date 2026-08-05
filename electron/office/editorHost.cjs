@@ -200,7 +200,7 @@ function createEditorHost(deps) {
     async publish({
       id, workDir, media, title = '', documentType = 'word', fileType = 'docx',
       user = { id: 'local', name: 'Magies' }, readOnly = false,
-      uiTheme = 'theme-system',
+      uiTheme = 'theme-white',
     }) {
       const started = await ensureServer();
       sessions.set(id, {

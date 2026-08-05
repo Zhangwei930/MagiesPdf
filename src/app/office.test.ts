@@ -33,13 +33,10 @@ describe('partitionDocumentPaths', () => {
 });
 
 describe('officeUiThemeFor', () => {
-  it('follows the system when Magies is set to system', () => {
-    assert.equal(officeUiThemeFor('system', false), 'theme-system');
-    assert.equal(officeUiThemeFor('system', true), 'theme-system');
-  });
-
-  it('forces the engine light/dark skins when Magies is forced', () => {
+  it('always uses a white engine skin so text stays readable', () => {
+    assert.equal(officeUiThemeFor('system', false), 'theme-white');
+    assert.equal(officeUiThemeFor('system', true), 'theme-white');
     assert.equal(officeUiThemeFor('light', false), 'theme-white');
-    assert.equal(officeUiThemeFor('dark', true), 'theme-night');
+    assert.equal(officeUiThemeFor('dark', true), 'theme-white');
   });
 });

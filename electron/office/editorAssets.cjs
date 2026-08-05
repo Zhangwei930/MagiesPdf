@@ -123,17 +123,18 @@ function resolveAsset(route, roots, activeSession = '') {
  */
 /**
  * ONLYOFFICE uiTheme ids the engine understands.
- * theme-system follows the OS; white/night match Magies light/dark.
+ * Prefer white: dark skins left black text on a dark canvas in this embed.
  */
 function officeUiTheme(value) {
   if (value === 'theme-dark' || value === 'theme-night' || value === 'theme-contrast-dark') return value;
   if (value === 'theme-light' || value === 'theme-white' || value === 'theme-classic-light' || value === 'theme-gray') {
     return value;
   }
-  return 'theme-system';
+  // Default white, not system — system-dark painted black text on black UI.
+  return 'theme-white';
 }
 
-function editorPageSource({ documentType, title, fileType, sessionId, uiTheme = 'theme-system' }) {
+function editorPageSource({ documentType, title, fileType, sessionId, uiTheme = 'theme-white' }) {
   const theme = officeUiTheme(uiTheme);
   const config = JSON.stringify({
     width: '100%',
@@ -181,7 +182,12 @@ function editorPageSource({ documentType, title, fileType, sessionId, uiTheme = 
 <head>
 <meta charset="utf-8">
 <title>${escapeHtml(title)}</title>
-<style>html,body{margin:0;height:100%;overflow:hidden}#editor{height:100%}</style>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#fff;color:#222}
+#editor{height:100%;background:#fff}
+/* Keep loadmask / file panels from sitting as a black veil on the page. */
+.loadmask,.asc-loadmask,.modals-mask,#loading-mask{background:rgba(255,255,255,.72)!important}
+</style>
 </head>
 <body>
 <div id="editor"></div>
@@ -201,7 +207,14 @@ function editorPageSource({ documentType, title, fileType, sessionId, uiTheme = 
    * Injected as a stylesheet rather than by editing the engine's own files,
    * which are redistributed byte for byte.
    */
-  var CHROME_CSS = '#header-logo, #header-logo *, .btn-current-user { display: none !important; }';
+  // White chrome: dark theme left black text on black toolbars in this embed.
+  var CHROME_CSS = [
+    '#header-logo, #header-logo *, .btn-current-user { display: none !important; }',
+    'html, body, #viewport, .layout-region, .toolbar, .toolbar-full, #toolbar,',
+    '.panel-left, .left-panel, #left-menu, .file-menu, #file-menu-panel,',
+    '.asc-window, .modals-mask, .loadmask, #loading-mask { background-color: #fff !important; color: #222 !important; }',
+    '.toolbar, .toolbar * { color: #222 !important; }',
+  ].join('\\n');
 
   function hideEngineChrome() {
     var frames = document.querySelectorAll('iframe');

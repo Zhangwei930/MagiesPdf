@@ -264,11 +264,11 @@ describe('the page the frame is pointed at', () => {
   });
 
   /**
-   * A missing uiTheme leaves the engine on a default that often looks like a
-   * black translucent pane over the document when the OS is light.
+   * Default white so the embed never paints black chrome over black text.
    */
-  it('sets the engine interface theme (defaults to following the system)', () => {
-    assert.match(page, /"uiTheme":"theme-system"/);
+  it('sets the engine interface theme to white by default', () => {
+    assert.match(page, /"uiTheme":"theme-white"/);
+    assert.match(page, /background:#fff/);
     const dark = editorPageSource({
       documentType: 'word',
       title: 'a.docx',

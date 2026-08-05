@@ -203,7 +203,7 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   handle('office:editorOpen', (_event, { paths, uiTheme }) =>
     editor.open(
       Array.isArray(paths) ? paths.filter((p) => typeof p === 'string') : [],
-      { uiTheme: typeof uiTheme === 'string' ? uiTheme : 'theme-system' },
+      { uiTheme: typeof uiTheme === 'string' ? uiTheme : 'theme-white' },
     ),
   );
   handle('office:editorFocus', (_event, { sessionId }) => {
