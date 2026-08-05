@@ -33,9 +33,15 @@ const DOCUMENT_SERVER = 'https://download.onlyoffice.com/install/documentserver/
 /**
  * Documents written on Linux commonly name this outright, and the core fonts
  * do not include it — without it their text has no glyphs at all.
+ *
+ * Sans covers the black / UI faces (黑体, 微软雅黑). Serif is the Song / Fang
+ * style (宋体, 仿宋) that Chinese office suites list separately; without it
+ * those names have to fall back to a sans face and look wrong.
  */
-const NOTO_CJK = 'https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/03_NotoSansCJK-OTC.zip';
-const NOTO_WEIGHTS = ['NotoSansCJK-Regular.ttc', 'NotoSansCJK-Bold.ttc'];
+const NOTO_SANS_CJK = 'https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/03_NotoSansCJK-OTC.zip';
+const NOTO_SANS_WEIGHTS = ['NotoSansCJK-Regular.ttc', 'NotoSansCJK-Bold.ttc'];
+const NOTO_SERIF_CJK = 'https://github.com/notofonts/noto-cjk/releases/download/Serif2.003/04_NotoSerifCJKOTC.zip';
+const NOTO_SERIF_WEIGHTS = ['NotoSerifCJK-Regular.ttc', 'NotoSerifCJK-Bold.ttc'];
 
 /**
  * Where each platform keeps the converter inside its own package. These are
@@ -207,9 +213,16 @@ function prepareShared(projectRoot, cacheDir) {
   };
   dropHelp(path.join(web, 'web-apps'));
 
-  const noto = fetchInto(NOTO_CJK, '03_NotoSansCJK-OTC.zip', cacheDir);
-  run('unzip', ['-o', '-q', '-j', noto, ...NOTO_WEIGHTS, 'LICENSE', '-d', fonts]);
+  const notoSans = fetchInto(NOTO_SANS_CJK, '03_NotoSansCJK-OTC.zip', cacheDir);
+  run('unzip', ['-o', '-q', '-j', notoSans, ...NOTO_SANS_WEIGHTS, 'LICENSE', '-d', fonts]);
   fs.renameSync(path.join(fonts, 'LICENSE'), path.join(fonts, 'LICENSE-NotoSansCJK.txt'));
+
+  const notoSerif = fetchInto(NOTO_SERIF_CJK, '04_NotoSerifCJKOTC.zip', cacheDir);
+  run('unzip', ['-o', '-q', '-j', notoSerif, ...NOTO_SERIF_WEIGHTS, 'LICENSE', '-d', fonts]);
+  // The serif zip also ships a LICENSE; keep one copy of each licence text.
+  if (fs.existsSync(path.join(fonts, 'LICENSE'))) {
+    fs.renameSync(path.join(fonts, 'LICENSE'), path.join(fonts, 'LICENSE-NotoSerifCJK.txt'));
+  }
 
   run('node', [path.join(projectRoot, 'scripts', 'onlyofficeFonts.mjs'), web]);
   console.log('[engine] shared half ready');

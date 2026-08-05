@@ -332,6 +332,109 @@ export function buildManifest(files) {
 }
 
 /**
+ * Names Chinese office suites put in the font list and in documents.
+ *
+ * WPS and Microsoft Word ship proprietary faces under 黑体 / 楷体 / 宋体 and
+ * the matching English names (SimHei, KaiTi, SimSun). Those binaries cannot be
+ * redistributed. Each alias reuses an open face of the same style so the
+ * dropdown shows the names users look for and a document that names them still
+ * draws, rather than falling back to empty boxes.
+ *
+ * `prefer` is tried in order against the families that are actually present.
+ */
+export const WPS_FONT_ALIASES = [
+  // Hei / sans — WPS "黑体", "微软雅黑", "等线"
+  { name: '黑体', prefer: ['Noto Sans CJK SC', '文泉驛正黑', 'Droid Sans Fallback'] },
+  { name: 'SimHei', prefer: ['Noto Sans CJK SC', '文泉驛正黑', 'Droid Sans Fallback'] },
+  { name: '微软雅黑', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: 'Microsoft YaHei', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: 'Microsoft YaHei UI', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: '等线', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: 'DengXian', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: '华文黑体', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: '华文细黑', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: 'STHeiti', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: '幼圆', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+
+  // Kai — WPS "楷体" / "楷书"
+  { name: '楷体', prefer: ['AR PL UKai CN', 'AR PL UKai TW', 'AR PL UKai HK'] },
+  { name: '楷书', prefer: ['AR PL UKai CN', 'AR PL UKai TW', 'AR PL UKai HK'] },
+  { name: '楷体_GB2312', prefer: ['AR PL UKai CN', 'AR PL UKai TW'] },
+  { name: 'KaiTi', prefer: ['AR PL UKai CN', 'AR PL UKai TW'] },
+  { name: 'KaiTi_GB2312', prefer: ['AR PL UKai CN', 'AR PL UKai TW'] },
+  { name: '华文楷体', prefer: ['AR PL UKai CN', 'AR PL UKai TW'] },
+  { name: 'STKaiti', prefer: ['AR PL UKai CN', 'AR PL UKai TW'] },
+  { name: '隶书', prefer: ['AR PL UKai CN', 'Noto Serif CJK SC'] },
+
+  // Song / Fang — WPS "宋体" / "仿宋" (need a serif CJK face present)
+  { name: '宋体', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK', 'Noto Sans CJK SC'] },
+  { name: '新宋体', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK', 'Noto Sans CJK SC'] },
+  { name: 'SimSun', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK', 'Noto Sans CJK SC'] },
+  { name: 'NSimSun', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK', 'Noto Sans CJK SC'] },
+  { name: '仿宋', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK', 'Noto Sans CJK SC'] },
+  { name: '仿宋_GB2312', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK'] },
+  { name: 'FangSong', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK'] },
+  { name: 'FangSong_GB2312', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK'] },
+  { name: '华文宋体', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK'] },
+  { name: '华文仿宋', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK'] },
+  { name: '华文中宋', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK'] },
+  { name: 'STSong', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK'] },
+  { name: 'STFangsong', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK'] },
+];
+
+/**
+ * Adds WPS-style names to the family list, each pointing at an open face.
+ *
+ * Rows that already exist under the alias name are left alone — a real face
+ * always wins over a synthetic one.
+ */
+export function applyFontAliases(infos, aliases = WPS_FONT_ALIASES) {
+  const byName = new Map(infos.map((row) => [row[0], row]));
+  const added = [];
+
+  for (const alias of aliases) {
+    if (byName.has(alias.name)) continue;
+    const sourceName = alias.prefer.find((name) => byName.has(name));
+    if (!sourceName) continue;
+    const source = byName.get(sourceName);
+    const row = [alias.name, ...source.slice(1)];
+    byName.set(alias.name, row);
+    added.push(row);
+  }
+
+  if (added.length === 0) return infos;
+  return [...infos, ...added].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+}
+
+/**
+ * Duplicates selection-table faces under each alias so name lookup finds them.
+ *
+ * `__fonts_infos` is what the dropdown draws; `g_fonts_selection_bin` is what
+ * resolves a name on a document. Both have to carry the alias.
+ */
+export function aliasSelectionFaces(faces, aliases = WPS_FONT_ALIASES) {
+  const byFamily = new Map();
+  for (const face of faces) {
+    const list = byFamily.get(face.family) ?? [];
+    list.push(face);
+    byFamily.set(face.family, list);
+  }
+
+  const existing = new Set(byFamily.keys());
+  const extra = [];
+  for (const alias of aliases) {
+    if (existing.has(alias.name)) continue;
+    const sourceName = alias.prefer.find((name) => byFamily.has(name));
+    if (!sourceName) continue;
+    for (const face of byFamily.get(sourceName)) {
+      extra.push({ ...face, family: alias.name });
+    }
+    existing.add(alias.name);
+  }
+  return extra.length === 0 ? faces : [...faces, ...extra];
+}
+
+/**
  * The table the engine reads when the font a document names cannot draw a
  * character.
  *
@@ -573,15 +676,20 @@ function main() {
 
   const files = readFontDirectory(fonts);
   const built = buildManifest(files);
+  // WPS / Word Chinese names (黑体, 楷体, …) over the open faces that draw them.
+  built.infos = applyFontAliases(built.infos);
   const coverage = new Map(built.files.map((name) => [
     name,
     readCoverage(fs.readFileSync(path.join(fonts, name))),
   ]));
+  // Ranges index into `infos` after aliases, so a fallback that lands on an
+  // alias still names a family the dropdown and the engine both know.
   const ranges = buildRanges(built, files, coverage);
 
   // One record per face, named by the family it belongs to: this is what the
-  // engine looks a font up in.
-  const selection = buildSelection(files.flatMap((file) => file.faces.map((face) => {
+  // engine looks a font up in. Aliases are duplicated here too, or a document
+  // that names 黑体 would find nothing even though the dropdown lists it.
+  const selection = buildSelection(aliasSelectionFaces(files.flatMap((file) => file.faces.map((face) => {
     const bytes = fs.readFileSync(path.join(fonts, file.name));
     return {
       family: face.family,
@@ -591,7 +699,7 @@ function main() {
       italic: face.italic,
       ...readMetrics(bytes, face.faceIndex),
     };
-  })));
+  }))));
 
   fs.writeFileSync(manifest, manifestSource(built, ranges, selection));
 

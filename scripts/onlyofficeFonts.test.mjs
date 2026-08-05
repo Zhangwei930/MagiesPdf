@@ -1,6 +1,19 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { buildManifest, buildRanges, buildSelection, manifestSource, readCoverage, readFaces, readMetrics, thumbnailSprite, thumbnailSpriteNames } from './onlyofficeFonts.mjs';
+import {
+  applyFontAliases,
+  aliasSelectionFaces,
+  buildManifest,
+  buildRanges,
+  buildSelection,
+  manifestSource,
+  readCoverage,
+  readFaces,
+  readMetrics,
+  thumbnailSprite,
+  thumbnailSpriteNames,
+  WPS_FONT_ALIASES,
+} from './onlyofficeFonts.mjs';
 
 /**
  * The engine is handed its fonts as a manifest, not as a directory.
@@ -207,6 +220,81 @@ describe('building the manifest', () => {
     const { files: listed, infos } = buildManifest([...files, { name: 'broken.ttf', faces: [] }]);
     assert.ok(!listed.includes('broken.ttf'));
     assert.equal(infos.length, 2);
+  });
+});
+
+/**
+ * WPS and Microsoft Word name Chinese faces 黑体 / 楷体 / 宋体, not the
+ * open-source family that actually draws them. Without aliases those names are
+ * absent from the dropdown and documents that use them fall back to boxes.
+ */
+describe('WPS-style Chinese font aliases', () => {
+  const infos = [
+    ['AR PL UKai CN', 0, 0, -1, -1, -1, -1, -1, -1],
+    ['Noto Sans CJK SC', 1, 2, -1, -1, 2, 2, -1, -1],
+    ['Noto Serif CJK SC', 3, 0, -1, -1, 4, 0, -1, -1],
+  ];
+
+  it('exposes the names Chinese office suites list', () => {
+    const names = applyFontAliases(infos).map((row) => row[0]);
+    for (const expected of ['黑体', '楷体', '楷书', '宋体', '仿宋', '微软雅黑', '等线']) {
+      assert.ok(names.includes(expected), `missing ${expected}`);
+    }
+  });
+
+  it('points each alias at the same file the open face uses', () => {
+    const aliased = applyFontAliases(infos);
+    const hei = aliased.find((row) => row[0] === '黑体');
+    const sans = infos.find((row) => row[0] === 'Noto Sans CJK SC');
+    assert.deepEqual(hei.slice(1), sans.slice(1));
+
+    const kai = aliased.find((row) => row[0] === '楷体');
+    const ukai = infos.find((row) => row[0] === 'AR PL UKai CN');
+    assert.deepEqual(kai.slice(1), ukai.slice(1));
+
+    const song = aliased.find((row) => row[0] === '宋体');
+    const serif = infos.find((row) => row[0] === 'Noto Serif CJK SC');
+    assert.deepEqual(song.slice(1), serif.slice(1));
+  });
+
+  it('keeps English document names (SimSun, KaiTi, …) resolvable', () => {
+    const names = applyFontAliases(infos).map((row) => row[0]);
+    for (const expected of ['SimSun', 'SimHei', 'KaiTi', 'FangSong', 'Microsoft YaHei']) {
+      assert.ok(names.includes(expected), `missing ${expected}`);
+    }
+  });
+
+  it('does not invent a name when no open face can back it', () => {
+    const onlyLatin = [['Liberation Serif', 0, 0, -1, -1, -1, -1, -1, -1]];
+    assert.deepEqual(applyFontAliases(onlyLatin), onlyLatin);
+  });
+
+  it('does not overwrite a real family that already uses the alias name', () => {
+    const withHei = [...infos, ['黑体', 9, 0, -1, -1, -1, -1, -1, -1]];
+    const hei = applyFontAliases(withHei).find((row) => row[0] === '黑体');
+    assert.deepEqual(hei, ['黑体', 9, 0, -1, -1, -1, -1, -1, -1]);
+  });
+
+  it('duplicates selection faces under each alias name', () => {
+    const faces = [
+      { family: 'Noto Sans CJK SC', file: 'NotoSansCJK-Regular.ttc', faceIndex: 2, bold: false, italic: false },
+      { family: 'Noto Sans CJK SC', file: 'NotoSansCJK-Bold.ttc', faceIndex: 2, bold: true, italic: false },
+      { family: 'AR PL UKai CN', file: 'ukai.ttc', faceIndex: 0, bold: false, italic: false },
+    ];
+    const aliased = aliasSelectionFaces(faces);
+    const hei = aliased.filter((face) => face.family === '黑体');
+    assert.equal(hei.length, 2);
+    assert.equal(hei[0].file, 'NotoSansCJK-Regular.ttc');
+    assert.equal(hei[1].bold, true);
+    assert.ok(aliased.some((face) => face.family === '楷书' && face.file === 'ukai.ttc'));
+  });
+
+  it('lists every WPS alias against a real style bucket', () => {
+    assert.ok(WPS_FONT_ALIASES.length >= 20);
+    for (const alias of WPS_FONT_ALIASES) {
+      assert.equal(typeof alias.name, 'string');
+      assert.ok(alias.prefer.length > 0);
+    }
   });
 });
 

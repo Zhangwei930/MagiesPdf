@@ -69,14 +69,21 @@ Redistributed unmodified under `resources/onlyoffice/web/fonts`. The families
 include Liberation, Carlito, Caladea, DejaVu, Open Sans, FreeFont, WenQuanYi
 Zen Hei, AR PL UKai, Nanum, Takao and the Noto script families.
 
-### Noto Sans CJK
+### Noto Sans CJK / Noto Serif CJK
 
 **SIL Open Font License 1.1** · Google
 Source: <https://github.com/notofonts/noto-cjk>
-Licence text: `resources/onlyoffice/web/fonts/LICENSE-NotoSansCJK.txt`
+Licence text: `resources/onlyoffice/web/fonts/LICENSE-NotoSansCJK.txt` and
+`LICENSE-NotoSerifCJK.txt`
 
-Redistributed unmodified. It is here because documents written on Linux
-commonly name it outright, and without it their text has no glyphs.
+Redistributed unmodified. Sans is here because documents written on Linux
+commonly name it outright; Serif supplies the Song / Fang style that Chinese
+office suites list separately from Hei. Without them those glyphs are missing.
+
+The font dropdown and document name lookup also expose WPS-style aliases
+(黑体, 楷体, 宋体, 微软雅黑, SimSun, …) that point at these open faces — the
+proprietary Microsoft / WPS binaries are not shipped. The mapping is generated
+in `scripts/onlyofficeFonts.mjs`.
 
 **The font manifest is generated, not redistributed.**
 `web/sdkjs/common/AllFonts.js` is produced by `scripts/onlyofficeFonts.mjs` in
