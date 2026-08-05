@@ -332,31 +332,102 @@ export function buildManifest(files) {
 }
 
 /**
- * Names Chinese office suites put in the font list and in documents.
+ * Names WPS / Microsoft Office put in the font list and in documents.
  *
- * WPS and Microsoft Word ship proprietary faces under 黑体 / 楷体 / 宋体 and
- * the matching English names (SimHei, KaiTi, SimSun). Those binaries cannot be
- * redistributed. Each alias reuses an open face of the same style so the
- * dropdown shows the names users look for and a document that names them still
- * draws, rather than falling back to empty boxes.
+ * Those suites ship proprietary faces (Arial, Times New Roman, 宋体, …).
+ * They cannot be redistributed here. Each alias reuses a metric-compatible
+ * open face we already ship (Liberation ≈ Arial/Times/Courier, Carlito ≈
+ * Calibri, Caladea ≈ Cambria, Noto CJK / UKai for East Asian), so the
+ * dropdown looks like WPS and documents that name those fonts still draw.
  *
- * `prefer` is tried in order against the families that are actually present.
+ * `prefer` is tried in order against families that are actually present.
  */
 export const WPS_FONT_ALIASES = [
-  // Hei / sans — WPS "黑体", "微软雅黑", "等线"
+  // ——— Western defaults (WPS / Word / Windows) ———
+  // Sans
+  { name: 'Arial', prefer: ['Liberation Sans', 'FreeSans', 'DejaVu Sans'] },
+  { name: 'Arial Black', prefer: ['Liberation Sans', 'DejaVu Sans', 'FreeSans'] },
+  { name: 'Arial Narrow', prefer: ['Liberation Sans Narrow', 'Liberation Sans', 'FreeSans'] },
+  { name: 'Arial Rounded MT Bold', prefer: ['Liberation Sans', 'FreeSans'] },
+  { name: 'Arial Unicode MS', prefer: ['Liberation Sans', 'Noto Sans CJK SC', 'FreeSans'] },
+  { name: 'Helvetica', prefer: ['Liberation Sans', 'FreeSans', 'DejaVu Sans'] },
+  { name: 'Helvetica Neue', prefer: ['Liberation Sans', 'FreeSans'] },
+  { name: 'Calibri', prefer: ['Carlito', 'Liberation Sans', 'DejaVu Sans'] },
+  { name: 'Calibri Light', prefer: ['Carlito', 'Liberation Sans', 'Open Sans'] },
+  { name: 'Candara', prefer: ['Carlito', 'Liberation Sans', 'Open Sans'] },
+  { name: 'Corbel', prefer: ['Carlito', 'Liberation Sans', 'Open Sans'] },
+  { name: 'Segoe UI', prefer: ['Carlito', 'Liberation Sans', 'Open Sans'] },
+  { name: 'Segoe UI Light', prefer: ['Open Sans', 'Carlito', 'Liberation Sans'] },
+  { name: 'Tahoma', prefer: ['DejaVu Sans', 'Liberation Sans', 'FreeSans'] },
+  { name: 'Verdana', prefer: ['DejaVu Sans', 'Liberation Sans', 'FreeSans'] },
+  { name: 'Trebuchet MS', prefer: ['Liberation Sans', 'DejaVu Sans', 'FreeSans'] },
+  { name: 'Comic Sans MS', prefer: ['FreeSans', 'DejaVu Sans', 'Liberation Sans'] },
+  { name: 'Impact', prefer: ['Liberation Sans', 'DejaVu Sans', 'FreeSans'] },
+  { name: 'Franklin Gothic Medium', prefer: ['Liberation Sans', 'DejaVu Sans'] },
+  { name: 'Franklin Gothic Book', prefer: ['Liberation Sans', 'DejaVu Sans'] },
+  { name: 'Century Gothic', prefer: ['FreeSans', 'Liberation Sans', 'Open Sans'] },
+  { name: 'Gill Sans MT', prefer: ['FreeSans', 'Liberation Sans'] },
+  { name: 'Lucida Sans Unicode', prefer: ['DejaVu Sans', 'Liberation Sans'] },
+  { name: 'Lucida Grande', prefer: ['DejaVu Sans', 'Liberation Sans'] },
+  { name: 'Geneva', prefer: ['DejaVu Sans', 'Liberation Sans'] },
+  { name: 'MS Sans Serif', prefer: ['Liberation Sans', 'FreeSans'] },
+  { name: 'Microsoft Sans Serif', prefer: ['Liberation Sans', 'FreeSans'] },
+
+  // Serif
+  { name: 'Times New Roman', prefer: ['Liberation Serif', 'FreeSerif', 'DejaVu Serif'] },
+  { name: 'Times', prefer: ['Liberation Serif', 'FreeSerif', 'DejaVu Serif'] },
+  { name: 'Cambria', prefer: ['Caladea', 'Liberation Serif', 'DejaVu Serif'] },
+  { name: 'Cambria Math', prefer: ['Asana Math', 'Caladea', 'Liberation Serif'] },
+  { name: 'Georgia', prefer: ['DejaVu Serif', 'Liberation Serif', 'FreeSerif'] },
+  { name: 'Garamond', prefer: ['FreeSerif', 'Liberation Serif', 'DejaVu Serif'] },
+  { name: 'Book Antiqua', prefer: ['FreeSerif', 'Liberation Serif'] },
+  { name: 'Palatino Linotype', prefer: ['FreeSerif', 'Liberation Serif', 'DejaVu Serif'] },
+  { name: 'Palatino', prefer: ['FreeSerif', 'Liberation Serif'] },
+  { name: 'Century Schoolbook', prefer: ['Liberation Serif', 'FreeSerif'] },
+  { name: 'Bookman Old Style', prefer: ['Liberation Serif', 'FreeSerif'] },
+  { name: 'Constantia', prefer: ['Caladea', 'Liberation Serif'] },
+  { name: 'MS Serif', prefer: ['Liberation Serif', 'FreeSerif'] },
+  { name: 'Roman', prefer: ['Liberation Serif', 'FreeSerif'] },
+
+  // Mono
+  { name: 'Courier New', prefer: ['Liberation Mono', 'DejaVu Sans Mono', 'FreeMono'] },
+  { name: 'Courier', prefer: ['Liberation Mono', 'DejaVu Sans Mono', 'FreeMono'] },
+  { name: 'Consolas', prefer: ['Liberation Mono', 'DejaVu Sans Mono', 'Ubuntu Mono'] },
+  { name: 'Lucida Console', prefer: ['DejaVu Sans Mono', 'Liberation Mono'] },
+  { name: 'Monaco', prefer: ['DejaVu Sans Mono', 'Liberation Mono'] },
+  { name: 'Menlo', prefer: ['DejaVu Sans Mono', 'Liberation Mono'] },
+  { name: 'Cascadia Mono', prefer: ['Liberation Mono', 'DejaVu Sans Mono'] },
+  { name: 'Cascadia Code', prefer: ['Liberation Mono', 'DejaVu Sans Mono'] },
+
+  // Symbol / misc (OpenSymbol ships with the core set)
+  { name: 'Symbol', prefer: ['OpenSymbol', 'DejaVu Sans', 'FreeSans'] },
+  { name: 'Wingdings', prefer: ['OpenSymbol', 'DejaVu Sans'] },
+  { name: 'Wingdings 2', prefer: ['OpenSymbol', 'DejaVu Sans'] },
+  { name: 'Wingdings 3', prefer: ['OpenSymbol', 'DejaVu Sans'] },
+  { name: 'Webdings', prefer: ['OpenSymbol', 'DejaVu Sans'] },
+  { name: 'Marlett', prefer: ['OpenSymbol', 'DejaVu Sans'] },
+
+  // ——— Simplified Chinese (WPS default set) ———
   { name: '黑体', prefer: ['Noto Sans CJK SC', '文泉驛正黑', 'Droid Sans Fallback'] },
   { name: 'SimHei', prefer: ['Noto Sans CJK SC', '文泉驛正黑', 'Droid Sans Fallback'] },
   { name: '微软雅黑', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
   { name: 'Microsoft YaHei', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
   { name: 'Microsoft YaHei UI', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: '微软雅黑 Light', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
   { name: '等线', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: '等线 Light', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
   { name: 'DengXian', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: 'DengXian Light', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
   { name: '华文黑体', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
   { name: '华文细黑', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
   { name: 'STHeiti', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: '华文新魏', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: '华文彩云', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: '方正姚体', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: '方正舒体', prefer: ['AR PL UKai CN', 'Noto Serif CJK SC'] },
   { name: '幼圆', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
+  { name: 'YouYuan', prefer: ['Noto Sans CJK SC', '文泉驛正黑'] },
 
-  // Kai — WPS "楷体" / "楷书"
   { name: '楷体', prefer: ['AR PL UKai CN', 'AR PL UKai TW', 'AR PL UKai HK'] },
   { name: '楷书', prefer: ['AR PL UKai CN', 'AR PL UKai TW', 'AR PL UKai HK'] },
   { name: '楷体_GB2312', prefer: ['AR PL UKai CN', 'AR PL UKai TW'] },
@@ -365,12 +436,15 @@ export const WPS_FONT_ALIASES = [
   { name: '华文楷体', prefer: ['AR PL UKai CN', 'AR PL UKai TW'] },
   { name: 'STKaiti', prefer: ['AR PL UKai CN', 'AR PL UKai TW'] },
   { name: '隶书', prefer: ['AR PL UKai CN', 'Noto Serif CJK SC'] },
+  { name: 'LiSu', prefer: ['AR PL UKai CN', 'Noto Serif CJK SC'] },
+  { name: '华文隶书', prefer: ['AR PL UKai CN', 'Noto Serif CJK SC'] },
+  { name: '华文行楷', prefer: ['AR PL UKai CN', 'Noto Serif CJK SC'] },
 
-  // Song / Fang — WPS "宋体" / "仿宋" (need a serif CJK face present)
   { name: '宋体', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK', 'Noto Sans CJK SC'] },
   { name: '新宋体', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK', 'Noto Sans CJK SC'] },
   { name: 'SimSun', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK', 'Noto Sans CJK SC'] },
   { name: 'NSimSun', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK', 'Noto Sans CJK SC'] },
+  { name: 'SimSun-ExtB', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK'] },
   { name: '仿宋', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK', 'Noto Sans CJK SC'] },
   { name: '仿宋_GB2312', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK'] },
   { name: 'FangSong', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK'] },
@@ -380,6 +454,53 @@ export const WPS_FONT_ALIASES = [
   { name: '华文中宋', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK'] },
   { name: 'STSong', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK'] },
   { name: 'STFangsong', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK'] },
+  { name: 'STZhongsong', prefer: ['Noto Serif CJK SC', 'Noto Serif CJK'] },
+  { name: '华文琥珀', prefer: ['Noto Serif CJK SC', 'Noto Sans CJK SC'] },
+
+  // ——— Traditional Chinese ———
+  { name: '新細明體', prefer: ['Noto Serif CJK TC', 'Noto Serif CJK SC', 'AR PL UKai TW'] },
+  { name: '細明體', prefer: ['Noto Serif CJK TC', 'Noto Serif CJK SC'] },
+  { name: 'PMingLiU', prefer: ['Noto Serif CJK TC', 'Noto Serif CJK SC'] },
+  { name: 'MingLiU', prefer: ['Noto Serif CJK TC', 'Noto Serif CJK SC'] },
+  { name: '微軟正黑體', prefer: ['Noto Sans CJK TC', 'Noto Sans CJK SC'] },
+  { name: 'Microsoft JhengHei', prefer: ['Noto Sans CJK TC', 'Noto Sans CJK SC'] },
+  { name: 'Microsoft JhengHei UI', prefer: ['Noto Sans CJK TC', 'Noto Sans CJK SC'] },
+  { name: '標楷體', prefer: ['AR PL UKai TW', 'AR PL UKai CN', 'Noto Serif CJK TC'] },
+  { name: 'DFKai-SB', prefer: ['AR PL UKai TW', 'AR PL UKai CN'] },
+
+  // ——— Japanese (common in WPS / Office East Asia) ———
+  { name: 'ＭＳ ゴシック', prefer: ['Noto Sans CJK JP', 'Noto Sans CJK SC'] },
+  { name: 'MS Gothic', prefer: ['Noto Sans CJK JP', 'Noto Sans CJK SC'] },
+  { name: 'ＭＳ Ｐゴシック', prefer: ['Noto Sans CJK JP', 'Noto Sans CJK SC'] },
+  { name: 'MS PGothic', prefer: ['Noto Sans CJK JP', 'Noto Sans CJK SC'] },
+  { name: 'ＭＳ 明朝', prefer: ['Noto Serif CJK JP', 'Noto Serif CJK SC'] },
+  { name: 'MS Mincho', prefer: ['Noto Serif CJK JP', 'Noto Serif CJK SC'] },
+  { name: 'ＭＳ Ｐ明朝', prefer: ['Noto Serif CJK JP', 'Noto Serif CJK SC'] },
+  { name: 'MS PMincho', prefer: ['Noto Serif CJK JP', 'Noto Serif CJK SC'] },
+  { name: 'メイリオ', prefer: ['Noto Sans CJK JP', 'Noto Sans CJK SC'] },
+  { name: 'Meiryo', prefer: ['Noto Sans CJK JP', 'Noto Sans CJK SC'] },
+  { name: 'Meiryo UI', prefer: ['Noto Sans CJK JP', 'Noto Sans CJK SC'] },
+  { name: '游ゴシック', prefer: ['Noto Sans CJK JP', 'Noto Sans CJK SC'] },
+  { name: 'Yu Gothic', prefer: ['Noto Sans CJK JP', 'Noto Sans CJK SC'] },
+  { name: 'Yu Gothic UI', prefer: ['Noto Sans CJK JP', 'Noto Sans CJK SC'] },
+  { name: '游明朝', prefer: ['Noto Serif CJK JP', 'Noto Serif CJK SC'] },
+  { name: 'Yu Mincho', prefer: ['Noto Serif CJK JP', 'Noto Serif CJK SC'] },
+  { name: 'ヒラギノ角ゴ ProN', prefer: ['Noto Sans CJK JP', 'Noto Sans CJK SC'] },
+  { name: 'Hiragino Sans', prefer: ['Noto Sans CJK JP', 'Noto Sans CJK SC'] },
+  { name: 'Hiragino Kaku Gothic ProN', prefer: ['Noto Sans CJK JP', 'Noto Sans CJK SC'] },
+  { name: 'Hiragino Mincho ProN', prefer: ['Noto Serif CJK JP', 'Noto Serif CJK SC'] },
+
+  // ——— Korean ———
+  { name: '맑은 고딕', prefer: ['Noto Sans CJK KR', 'Noto Sans KR', 'Noto Sans CJK SC'] },
+  { name: 'Malgun Gothic', prefer: ['Noto Sans CJK KR', 'Noto Sans KR', 'Noto Sans CJK SC'] },
+  { name: '돋움', prefer: ['Noto Sans CJK KR', 'Noto Sans KR'] },
+  { name: 'Dotum', prefer: ['Noto Sans CJK KR', 'Noto Sans KR'] },
+  { name: '굴림', prefer: ['Noto Sans CJK KR', 'Noto Sans KR'] },
+  { name: 'Gulim', prefer: ['Noto Sans CJK KR', 'Noto Sans KR'] },
+  { name: '바탕', prefer: ['Noto Serif CJK KR', 'Noto Serif CJK SC'] },
+  { name: 'Batang', prefer: ['Noto Serif CJK KR', 'Noto Serif CJK SC'] },
+  { name: '궁서', prefer: ['Noto Serif CJK KR', 'AR PL UKai CN'] },
+  { name: 'Gungsuh', prefer: ['Noto Serif CJK KR', 'AR PL UKai CN'] },
 ];
 
 /**

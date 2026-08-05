@@ -224,25 +224,72 @@ describe('building the manifest', () => {
 });
 
 /**
- * WPS and Microsoft Word name Chinese faces 黑体 / 楷体 / 宋体, not the
- * open-source family that actually draws them. Without aliases those names are
- * absent from the dropdown and documents that use them fall back to boxes.
+ * WPS / Word name faces Arial, Times New Roman, 黑体… not the open families
+ * that actually draw them. Without aliases those names are missing from the
+ * dropdown and documents that use them fall back to boxes.
  */
-describe('WPS-style Chinese font aliases', () => {
+describe('WPS-style office font aliases', () => {
   const infos = [
     ['AR PL UKai CN', 0, 0, -1, -1, -1, -1, -1, -1],
+    ['Caladea', 5, 0, -1, -1, 6, 0, -1, -1],
+    ['Carlito', 7, 0, -1, -1, 8, 0, -1, -1],
+    ['Liberation Mono', 9, 0, -1, -1, 10, 0, -1, -1],
+    ['Liberation Sans', 11, 0, -1, -1, 12, 0, -1, -1],
+    ['Liberation Serif', 13, 0, -1, -1, 14, 0, -1, -1],
+    ['Noto Sans CJK JP', 15, 0, -1, -1, 16, 0, -1, -1],
+    ['Noto Sans CJK KR', 17, 0, -1, -1, 18, 0, -1, -1],
     ['Noto Sans CJK SC', 1, 2, -1, -1, 2, 2, -1, -1],
+    ['Noto Sans CJK TC', 19, 0, -1, -1, 20, 0, -1, -1],
+    ['Noto Serif CJK JP', 21, 0, -1, -1, 22, 0, -1, -1],
     ['Noto Serif CJK SC', 3, 0, -1, -1, 4, 0, -1, -1],
+    ['Noto Serif CJK TC', 23, 0, -1, -1, 24, 0, -1, -1],
   ];
 
-  it('exposes the names Chinese office suites list', () => {
+  it('exposes Chinese names WPS lists', () => {
     const names = applyFontAliases(infos).map((row) => row[0]);
     for (const expected of ['黑体', '楷体', '楷书', '宋体', '仿宋', '微软雅黑', '等线']) {
       assert.ok(names.includes(expected), `missing ${expected}`);
     }
   });
 
-  it('points each alias at the same file the open face uses', () => {
+  it('exposes Western names WPS / Word list', () => {
+    const names = applyFontAliases(infos).map((row) => row[0]);
+    for (const expected of [
+      'Arial', 'Times New Roman', 'Courier New', 'Calibri', 'Cambria',
+      'Verdana', 'Tahoma', 'Georgia', 'Consolas', 'Helvetica',
+    ]) {
+      assert.ok(names.includes(expected), `missing ${expected}`);
+    }
+  });
+
+  it('exposes Japanese and Korean office names', () => {
+    const names = applyFontAliases(infos).map((row) => row[0]);
+    for (const expected of ['MS Gothic', 'MS Mincho', 'Meiryo', 'Malgun Gothic', 'Batang']) {
+      assert.ok(names.includes(expected), `missing ${expected}`);
+    }
+  });
+
+  it('maps Western names onto metric-compatible open faces', () => {
+    const aliased = applyFontAliases(infos);
+    assert.deepEqual(
+      aliased.find((row) => row[0] === 'Arial')?.slice(1),
+      infos.find((row) => row[0] === 'Liberation Sans')?.slice(1),
+    );
+    assert.deepEqual(
+      aliased.find((row) => row[0] === 'Times New Roman')?.slice(1),
+      infos.find((row) => row[0] === 'Liberation Serif')?.slice(1),
+    );
+    assert.deepEqual(
+      aliased.find((row) => row[0] === 'Calibri')?.slice(1),
+      infos.find((row) => row[0] === 'Carlito')?.slice(1),
+    );
+    assert.deepEqual(
+      aliased.find((row) => row[0] === 'Cambria')?.slice(1),
+      infos.find((row) => row[0] === 'Caladea')?.slice(1),
+    );
+  });
+
+  it('points Chinese aliases at the same file the open face uses', () => {
     const aliased = applyFontAliases(infos);
     const hei = aliased.find((row) => row[0] === '黑体');
     const sans = infos.find((row) => row[0] === 'Noto Sans CJK SC');
@@ -257,7 +304,7 @@ describe('WPS-style Chinese font aliases', () => {
     assert.deepEqual(song.slice(1), serif.slice(1));
   });
 
-  it('keeps English document names (SimSun, KaiTi, …) resolvable', () => {
+  it('keeps legacy English CJK names resolvable', () => {
     const names = applyFontAliases(infos).map((row) => row[0]);
     for (const expected of ['SimSun', 'SimHei', 'KaiTi', 'FangSong', 'Microsoft YaHei']) {
       assert.ok(names.includes(expected), `missing ${expected}`);
@@ -265,8 +312,8 @@ describe('WPS-style Chinese font aliases', () => {
   });
 
   it('does not invent a name when no open face can back it', () => {
-    const onlyLatin = [['Liberation Serif', 0, 0, -1, -1, -1, -1, -1, -1]];
-    assert.deepEqual(applyFontAliases(onlyLatin), onlyLatin);
+    const onlyOdd = [['Some Local Font', 0, 0, -1, -1, -1, -1, -1, -1]];
+    assert.deepEqual(applyFontAliases(onlyOdd), onlyOdd);
   });
 
   it('does not overwrite a real family that already uses the alias name', () => {
@@ -277,20 +324,21 @@ describe('WPS-style Chinese font aliases', () => {
 
   it('duplicates selection faces under each alias name', () => {
     const faces = [
+      { family: 'Liberation Sans', file: 'LiberationSans-Regular.ttf', faceIndex: 0, bold: false, italic: false },
+      { family: 'Liberation Sans', file: 'LiberationSans-Bold.ttf', faceIndex: 0, bold: true, italic: false },
       { family: 'Noto Sans CJK SC', file: 'NotoSansCJK-Regular.ttc', faceIndex: 2, bold: false, italic: false },
-      { family: 'Noto Sans CJK SC', file: 'NotoSansCJK-Bold.ttc', faceIndex: 2, bold: true, italic: false },
       { family: 'AR PL UKai CN', file: 'ukai.ttc', faceIndex: 0, bold: false, italic: false },
     ];
     const aliased = aliasSelectionFaces(faces);
-    const hei = aliased.filter((face) => face.family === '黑体');
-    assert.equal(hei.length, 2);
-    assert.equal(hei[0].file, 'NotoSansCJK-Regular.ttc');
-    assert.equal(hei[1].bold, true);
+    const arial = aliased.filter((face) => face.family === 'Arial');
+    assert.equal(arial.length, 2);
+    assert.equal(arial[0].file, 'LiberationSans-Regular.ttf');
+    assert.equal(arial[1].bold, true);
     assert.ok(aliased.some((face) => face.family === '楷书' && face.file === 'ukai.ttc'));
   });
 
-  it('lists every WPS alias against a real style bucket', () => {
-    assert.ok(WPS_FONT_ALIASES.length >= 20);
+  it('lists a full WPS-style set, each against a real style bucket', () => {
+    assert.ok(WPS_FONT_ALIASES.length >= 80, `only ${WPS_FONT_ALIASES.length} aliases`);
     for (const alias of WPS_FONT_ALIASES) {
       assert.equal(typeof alias.name, 'string');
       assert.ok(alias.prefer.length > 0);

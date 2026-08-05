@@ -80,10 +80,12 @@ Redistributed unmodified. Sans is here because documents written on Linux
 commonly name it outright; Serif supplies the Song / Fang style that Chinese
 office suites list separately from Hei. Without them those glyphs are missing.
 
-The font dropdown and document name lookup also expose WPS-style aliases
-(黑体, 楷体, 宋体, 微软雅黑, SimSun, …) that point at these open faces — the
-proprietary Microsoft / WPS binaries are not shipped. The mapping is generated
-in `scripts/onlyofficeFonts.mjs`.
+The font dropdown and document name lookup also expose WPS / Office-style
+aliases for both Western and East-Asian names (Arial, Times New Roman,
+Calibri, Courier New, 黑体, 楷体, 宋体, 微软雅黑, MS Gothic, Malgun Gothic, …)
+that point at metric-compatible open faces (Liberation, Carlito, Caladea,
+Noto CJK, UKai). Proprietary Microsoft / WPS binaries are not shipped. The
+mapping is generated in `scripts/onlyofficeFonts.mjs`.
 
 **The font manifest is generated, not redistributed.**
 `web/sdkjs/common/AllFonts.js` is produced by `scripts/onlyofficeFonts.mjs` in
