@@ -1,4 +1,4 @@
-import * as mupdf from 'mupdf';
+import type * as mupdf from 'mupdf';
 import { PDFDocument } from 'pdf-lib';
 import { openDocument, saveDocument } from '../../pdf/document.ts';
 import { renderPage } from '../../pdf/render.ts';
@@ -175,7 +175,14 @@ async function compressAggressive(
   ];
 
   candidates.sort((a, b) => a.bytes.length - b.bytes.length);
-  return candidates[0]!;
+  const best = candidates[0];
+  if (!best) {
+    return {
+      bytes: sourceBytes,
+      note: { zh: '无损结构压缩', en: 'lossless structure pass' },
+    };
+  }
+  return best;
 }
 
 /**
