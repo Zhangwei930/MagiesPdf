@@ -69,7 +69,7 @@ interface AppState {
   requestEngineSave(id: string): Promise<void>;
   /** Set while a hosted document has been asked for; the frame watches it. */
   engineSaveRequest: { id: string; at: number } | null;
-  engineSaved(sessionId: string): void;
+  engineSaved(payload: { sessionId: string; path?: string; name?: string }): void;
   saveDocumentAs(id: string): Promise<void>;
   /**
    * Runs a tool over an open document. A single PDF coming back replaces the
@@ -241,10 +241,13 @@ export const useApp = create<AppState>((set, get) => ({
     set({ engineSaveRequest: { id, at: Date.now() } });
   },
 
-  engineSaved(sessionId) {
+  engineSaved(payload) {
+    const sessionId = payload.sessionId;
     set((state) => ({
       documents: state.documents.map((d) =>
-        d.editor?.sessionId === sessionId ? docs.setEngineModified(d, false) : d,
+        d.editor?.sessionId === sessionId
+          ? docs.applyEngineSaved(d, { path: payload.path, name: payload.name })
+          : d,
       ),
       engineSaveRequest: null,
     }));
@@ -253,6 +256,15 @@ export const useApp = create<AppState>((set, get) => ({
   async saveDocumentAs(id) {
     const document = get().documents.find((d) => d.id === id);
     if (!document) return;
+
+    // Hosted documents have no bytes here. The PDF save-as path would write an
+    // empty file under a .pdf name; the engine has to do it instead — same as
+    // the file menu's Save As.
+    if (document.editor) {
+      const target = await bridge().pickEditorSaveAsTarget(document.editor.sessionId, document.name);
+      if (target) await get().requestEngineSave(id);
+      return;
+    }
 
     const result = await bridge().saveOutputAs({
       name: docs.saveAsName(document),

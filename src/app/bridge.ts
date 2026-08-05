@@ -19,7 +19,7 @@ export interface PickedFile {
    * Present when the editor engine is holding this document open. The bytes
    * then live in that session rather than in `bytes`, which is empty.
    */
-  editor?: { sessionId: string; url: string } | null;
+  editor?: { sessionId: string; url: string; editorType?: string } | null;
 }
 
 export interface SaveResult {
@@ -314,7 +314,9 @@ export interface MagiesPdfBridge {
   pickEditorSaveAsTarget(sessionId: string, name: string): Promise<{ path: string } | null>;
   closeEditor(sessionId: string): Promise<{ closed: string }>;
   /** Fires once the engine's document has been written back to disk. */
-  onEditorSaved(handler: (payload: { sessionId: string }) => void): () => void;
+  onEditorSaved(
+    handler: (payload: { sessionId: string; path?: string; name?: string }) => void,
+  ): () => void;
   listRecentDocuments(): Promise<RecentDocument[]>;
   renameRecentDocument(path: string, name: string): Promise<{ path: string; name: string }>;
   trashRecentDocument(path: string): Promise<{ trashed: boolean }>;

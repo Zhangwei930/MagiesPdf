@@ -11,7 +11,7 @@
  */
 
 function createEditorService(deps) {
-  const { sessions, host, listMedia } = deps;
+  const { sessions, host, listMedia, rememberPaths } = deps;
 
   return {
     /** Converts each document and makes it reachable by the editor. */
@@ -34,8 +34,15 @@ function createEditorService(deps) {
           size: 0,
           mime: 'application/octet-stream',
           bytes: new Uint8Array(0),
-          editor: { sessionId: session.id, url },
+          // editorType lets the shell create "the same kind" when the engine
+          // asks for New — without it every new document would be Word.
+          editor: { sessionId: session.id, url, editorType: session.editorType },
         });
+      }
+      // Recent documents used to be written only by the PDF-preview open path.
+      // Opening in the editor is the real path now, so it has to remember too.
+      if (typeof rememberPaths === 'function' && paths.length > 0) {
+        rememberPaths(paths);
       }
       return opened;
     },

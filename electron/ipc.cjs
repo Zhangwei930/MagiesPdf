@@ -142,10 +142,18 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
         const target = pendingSaveAs.get(sessionId);
         pendingSaveAs.delete(sessionId);
 
-        if (target) await editor.saveAs(sessionId, document.toString('base64'), target);
-        else await editor.save(sessionId, document.toString('base64'));
+        const saved = target
+          ? await editor.saveAs(sessionId, document.toString('base64'), target)
+          : await editor.save(sessionId, document.toString('base64'));
 
-        getWindow()?.webContents.send('office:editorSaved', { sessionId });
+        // The tab has to adopt path/name after Save As, or the title and the
+        // next ⌘S still point at the original file.
+        if (saved?.path) office.rememberRecent([saved.path]);
+        getWindow()?.webContents.send('office:editorSaved', {
+          sessionId,
+          path: saved?.path,
+          name: saved?.name,
+        });
       },
     }),
     // x2t writes a document's images beside the binary it produced.
@@ -156,6 +164,7 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
         return [];
       }
     },
+    rememberPaths: (paths) => office.rememberRecent(paths),
   });
   const officeAutomation = createOfficeAutomationProvider({
     getLibreOfficeExecutable: () => office.status().libreOffice.executable,

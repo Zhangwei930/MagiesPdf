@@ -12,7 +12,7 @@ import { t } from './i18n.ts';
 import { AlertCircle, Bot, Eye, Loader2, Settings } from './icons.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
 import { useApp } from './store.ts';
-import { isDirty, type DocumentState } from './documents.ts';
+import { isDirty, officeCreateKind, type DocumentState } from './documents.ts';
 import { canApplyToDocument } from './toolApply.ts';
 import { partitionDocumentPaths } from './office.ts';
 import { createDefaultBlankPdf } from './pdf/directEdit.ts';
@@ -81,6 +81,7 @@ export function App() {
   const closeDocument = useApp((s) => s.closeDocument);
   const setActiveDocument = useApp((s) => s.setActiveDocument);
   const saveDocument = useApp((s) => s.saveDocument);
+  const saveDocumentAs = useApp((s) => s.saveDocumentAs);
   const setEngineModified = useApp((s) => s.setEngineModified);
   const engineSaveRequest = useApp((s) => s.engineSaveRequest);
   const engineSaved = useApp((s) => s.engineSaved);
@@ -112,10 +113,11 @@ export function App() {
   }, [initialize]);
 
   // The engine writes a document back through the main process, so the shell
-  // learns a save finished from there rather than from the frame.
+  // learns a save finished from there rather than from the frame — including
+  // the path after Save As, which the tab has to adopt.
   useEffect(() => {
     if (!hasBridge()) return undefined;
-    return bridge().onEditorSaved(({ sessionId }) => engineSaved(sessionId));
+    return bridge().onEditorSaved((payload) => engineSaved(payload));
   }, [engineSaved]);
 
   /**
@@ -189,9 +191,8 @@ export function App() {
   /**
    * Opens every document in this window.
    *
-   * PDFs are read as they are; Word, Sheet and Slide files are rendered to PDF
-   * by the main process and arrive as bytes. Both become tabs here, which is
-   * what makes this one application rather than two.
+   * PDFs are read as bytes for the viewer. Word, Sheet and Slide files open in
+   * the embedded engine (no second application). Both become tabs here.
    */
   const openPaths = useCallback(
     async (paths: string[]) => {
@@ -296,8 +297,11 @@ export function App() {
   );
 
   /**
-   * The shell's shortcuts. Document shortcuts (save, zoom, paging) belong to
-   * the Viewer and are handled there; the two sets are disjoint.
+   * The shell's shortcuts.
+   *
+   * PDF save / zoom / paging stay on the Viewer. Hosted Office documents have
+   * no Viewer, so save and save-as are handled here — only when the open tab
+   * is engine-held, so the two sets stay disjoint.
    */
   useEffect(() => {
     const platform = currentPlatform();
@@ -327,6 +331,18 @@ export function App() {
           else if (view.name !== 'welcome') openWelcome();
           else return;
           break;
+        case 'save':
+          if (view.name === 'document' && activeDocument?.editor && activeDocumentId) {
+            void saveDocument(activeDocumentId);
+            break;
+          }
+          return;
+        case 'saveAs':
+          if (view.name === 'document' && activeDocument?.editor && activeDocumentId) {
+            void saveDocumentAs(activeDocumentId);
+            break;
+          }
+          return;
         default:
           return;
       }
@@ -335,7 +351,17 @@ export function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeDocumentId, closePalette, view.name, openDocumentPicker, openWelcome, requestCloseTab]);
+  }, [
+    activeDocument,
+    activeDocumentId,
+    closePalette,
+    view.name,
+    openDocumentPicker,
+    openWelcome,
+    requestCloseTab,
+    saveDocument,
+    saveDocumentAs,
+  ]);
 
   if (!ready) {
     return (
@@ -368,8 +394,9 @@ export function App() {
    */
   const handleEditorRequest = async (document: DocumentState, what: 'createNew' | 'open' | 'saveAs') => {
     if (what === 'open') return openDocumentPicker();
-    // A new document of the kind the one in front of you is.
-    if (what === 'createNew') return createOfficeDocument(document.origin?.kind ?? 'word');
+    // Same kind as the open document — derived from the engine type, not the
+    // old PDF-preview origin field (hosted tabs do not have one).
+    if (what === 'createNew') return createOfficeDocument(officeCreateKind(document));
 
     // Where it goes is settled first; the save that follows lands there
     // rather than over the original.

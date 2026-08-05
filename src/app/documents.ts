@@ -35,6 +35,11 @@ export interface DocumentOrigin {
 export interface EditorSession {
   sessionId: string;
   url: string;
+  /**
+   * What the engine is editing: `word`, `cell`, or `slide`. Used by the shell
+   * when the file menu asks for a new document of the same kind.
+   */
+  editorType?: string;
 }
 
 export interface DocumentState {
@@ -120,6 +125,43 @@ export function createDocument(file: PickedFile): DocumentState {
  */
 export function setEngineModified(doc: DocumentState, modified: boolean): DocumentState {
   return { ...doc, engineModified: modified };
+}
+
+/**
+ * What "New" should create when the open document is held by the engine.
+ *
+ * The engine's own type is authoritative (`cell` is a sheet). Falling back to
+ * the file name covers older sessions that never carried a type, so a missing
+ * field never silently turns every new document into Word.
+ */
+export function officeCreateKind(doc: DocumentState): DocumentOrigin['kind'] {
+  const type = doc.editor?.editorType;
+  if (type === 'cell') return 'sheet';
+  if (type === 'slide') return 'slide';
+  if (type === 'word') return 'word';
+
+  const name = (doc.path || doc.name).toLowerCase();
+  if (name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.ods')) return 'sheet';
+  if (name.endsWith('.pptx') || name.endsWith('.ppt') || name.endsWith('.odp')) return 'slide';
+  return 'word';
+}
+
+/**
+ * Applies what the main process reports after a successful engine save.
+ *
+ * Save As rewrites the session's path there; the tab has to follow, or the
+ * title and the next ⌘S still point at the original file.
+ */
+export function applyEngineSaved(
+  doc: DocumentState,
+  saved: { path?: string; name?: string },
+): DocumentState {
+  return {
+    ...doc,
+    engineModified: false,
+    path: typeof saved.path === 'string' && saved.path !== '' ? saved.path : doc.path,
+    name: typeof saved.name === 'string' && saved.name !== '' ? saved.name : doc.name,
+  };
 }
 
 export function canUndo(doc: DocumentState): boolean {

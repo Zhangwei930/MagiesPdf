@@ -4,6 +4,7 @@ import {
   HISTORY_BYTE_BUDGET,
   HISTORY_LIMIT,
   applyEdit,
+  applyEngineSaved,
   canRedo,
   canUndo,
   closeDocument,
@@ -11,6 +12,7 @@ import {
   isDirty,
   markSaved,
   nextActiveId,
+  officeCreateKind,
   openDocument,
   redo,
   saveAsName,
@@ -240,10 +242,11 @@ describe('documents rendered from an Office file', () => {
 });
 
 describe('documents held by the editor engine', () => {
-  const hosted = (): PickedFile => ({
+  const hosted = (overrides: Partial<PickedFile> = {}): PickedFile => ({
     ...picked('报告.docx', '/docs/报告.docx', 0),
     bytes: new Uint8Array(0),
-    editor: { sessionId: 'sess1', url: 'http://127.0.0.1:5000/editor/sess1' },
+    editor: { sessionId: 'sess1', url: 'http://127.0.0.1:5000/editor/sess1', editorType: 'word' },
+    ...overrides,
   });
 
   it('remembers the session the engine is holding it in', () => {
@@ -251,6 +254,7 @@ describe('documents held by the editor engine', () => {
     assert.deepEqual(doc.editor, {
       sessionId: 'sess1',
       url: 'http://127.0.0.1:5000/editor/sess1',
+      editorType: 'word',
     });
   });
 
@@ -288,13 +292,71 @@ describe('documents held by the editor engine', () => {
     const second = openDocument(first.documents, createDocument(hosted()));
     assert.equal(second.documents.length, 1);
   });
+
+  /**
+   * "New" in the engine's file menu must create the same kind of document as
+   * the one in front. Without the editor type on the tab, every new document
+   * would be Word — even when the open one is a sheet or a deck.
+   */
+  it('carries the engine type so New can match the open document', () => {
+    const sheet = createDocument(
+      hosted({
+        name: '表.xlsx',
+        path: '/docs/表.xlsx',
+        editor: { sessionId: 's2', url: 'http://127.0.0.1:9/e/s2', editorType: 'cell' },
+      }),
+    );
+    assert.equal(officeCreateKind(sheet), 'sheet');
+    assert.equal(
+      officeCreateKind(
+        createDocument(
+          hosted({
+            name: 'deck.pptx',
+            path: '/docs/deck.pptx',
+            editor: { sessionId: 's3', url: 'http://127.0.0.1:9/e/s3', editorType: 'slide' },
+          }),
+        ),
+      ),
+      'slide',
+    );
+    assert.equal(officeCreateKind(createDocument(hosted())), 'word');
+  });
+
+  /** Falls back to the file name when an older session lacks editorType. */
+  it('infers the create kind from the file name when the type is missing', () => {
+    const doc = createDocument(
+      hosted({
+        name: 'budget.xlsx',
+        path: '/docs/budget.xlsx',
+        editor: { sessionId: 's4', url: 'http://127.0.0.1:9/e/s4' },
+      }),
+    );
+    assert.equal(officeCreateKind(doc), 'sheet');
+  });
+
+  /**
+   * Save As rewrites the session's path in the main process. The tab has to
+   * follow, or the next ⌘S and the tab title still point at the original.
+   */
+  it('adopts the path and name the engine saved under', () => {
+    const dirty = setEngineModified(createDocument(hosted()), true);
+    const saved = applyEngineSaved(dirty, { path: '/docs/copy.docx', name: 'copy.docx' });
+    assert.equal(saved.path, '/docs/copy.docx');
+    assert.equal(saved.name, 'copy.docx');
+    assert.equal(isDirty(saved), false);
+  });
+
+  it('clears dirty even when the path did not change', () => {
+    const dirty = setEngineModified(createDocument(hosted()), true);
+    assert.equal(isDirty(applyEngineSaved(dirty, {})), false);
+  });
 });
 
 describe('where ⌘S sends a document', () => {
   const hosted = (): PickedFile => ({
     ...picked('报告.docx', '/docs/报告.docx', 0),
     bytes: new Uint8Array(0),
-    editor: { sessionId: 'sess1', url: 'http://127.0.0.1:5000/editor/sess1' },
+    editor: { sessionId: 'sess1', url: 'http://127.0.0.1:5000/editor/sess1', editorType: 'word' },
   });
 
   /**

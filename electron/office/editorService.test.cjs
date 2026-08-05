@@ -52,7 +52,36 @@ describe('opening a document in the editor', () => {
     assert.deepEqual(calls.opened, ['/docs/a.docx']);
     assert.equal(file.name, 'a.docx');
     assert.equal(file.path, '/docs/a.docx');
-    assert.deepEqual(file.editor, { sessionId: 'sess1', url: 'http://127.0.0.1:9/editor/sess1' });
+    assert.deepEqual(file.editor, {
+      sessionId: 'sess1',
+      url: 'http://127.0.0.1:9/editor/sess1',
+      editorType: 'word',
+    });
+  });
+
+  /**
+   * The shell's "New" needs the document kind. Without it on the tab, every
+   * new document would be Word regardless of what is open.
+   */
+  it('carries the engine type the session already knows', async () => {
+    const { deps } = dependencies({
+      sessions: {
+        open: async (sourcePath) => ({
+          id: 'sess-cell',
+          path: sourcePath,
+          name: 'book.xlsx',
+          editorType: 'cell',
+          binPath: '/tmp/w/Editor.bin',
+          workDir: '/tmp/w',
+        }),
+        get: () => ({}),
+        save: async () => ({}),
+        close: async () => ({}),
+        writeEditorBin: async () => undefined,
+      },
+    });
+    const [file] = await createEditorService(deps).open(['/docs/book.xlsx']);
+    assert.equal(file.editor.editorType, 'cell');
   });
 
   /** The tab holds no bytes: they are in the engine's work directory. */
@@ -74,6 +103,20 @@ describe('opening a document in the editor', () => {
     const files = await createEditorService(deps).open(['/docs/a.docx', '/docs/b.pptx']);
     assert.equal(files.length, 2);
     assert.deepEqual(calls.opened, ['/docs/a.docx', '/docs/b.pptx']);
+  });
+
+  /**
+   * Recent documents used to be written only by the old PDF-preview open path.
+   * Opening in the editor is the real path now, so it has to remember too —
+   * otherwise the start centre stays empty after every open.
+   */
+  it('remembers the paths it opened', async () => {
+    const remembered = [];
+    const { deps } = dependencies({
+      rememberPaths: (paths) => remembered.push(...paths),
+    });
+    await createEditorService(deps).open(['/docs/a.docx', '/docs/b.xlsx']);
+    assert.deepEqual(remembered, ['/docs/a.docx', '/docs/b.xlsx']);
   });
 });
 
