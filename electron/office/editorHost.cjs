@@ -79,11 +79,10 @@ function createEditorHost(deps) {
     if (!session) return { status: 404 };
 
     const command = request.command ?? {};
-    const body = request.body ?? Buffer.alloc(0);
-
-    // The reply's `data` URL is fetched after upload. Serve the export there
-    // so the engine can finish its own "download ready" step.
-    if (body.length === 0) {
+    // GET (no body) serves the finished export so the engine can fetch the URL
+    // we put in the upload reply. Empty POST bodies are real uploads with no
+    // payload yet — they must not be mistaken for that fetch.
+    if (request.method === 'GET' || request.method === 'HEAD') {
       if (!session.export?.bytes) return { status: 404 };
       return {
         status: 200,
@@ -92,8 +91,21 @@ function createEditorHost(deps) {
       };
     }
 
+    const body = request.body ?? Buffer.alloc(0);
     const document = session.upload.accept(command, body);
-    if (!document) return { status: 200, type: 'application/json', body: '{"status":"ok"}' };
+    if (!document) {
+      // Intermediate parts need `data` as a save key; without it multi-part
+      // downloads stall. The key is opaque to the engine as long as it returns.
+      return {
+        status: 200,
+        type: 'application/json',
+        body: JSON.stringify({
+          type: command.c ?? 'save',
+          status: 'ok',
+          data: session.id,
+        }),
+      };
+    }
 
     if (command.isSaveAs) {
       session.export = {

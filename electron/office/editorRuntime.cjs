@@ -66,6 +66,7 @@ function listenLoopback(handle) {
 
       const answer = await handle({
         path: url.pathname,
+        method: request.method,
         session: url.searchParams.get('session') ?? undefined,
         body,
         command,

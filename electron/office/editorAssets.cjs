@@ -281,7 +281,7 @@ function editorPageSource({ documentType, title, fileType, sessionId }) {
     // the document is open and when it has unsaved changes.
     onDocumentReady: function () {
       hideEngineChrome();
-      bindShortcut();
+      patchEngine();
       parent.postMessage({ magies: 'ready' }, '*');
     },
     onDocumentStateChange: function (event) {
@@ -419,6 +419,70 @@ function editorPageSource({ documentType, title, fileType, sessionId }) {
       } catch (error) { /* another origin: not the engine's */ }
     }
   }
+
+  /**
+   * "Save copy as" / download hangs on "电子表格下载中" without this.
+   *
+   * The engine's saveWithParts only invokes options.callback on success, not
+   * the default fCurCallback that ends the progress dialog and fires
+   * asc_onDownloadUrl. File-menu downloads never pass a callback, so the mask
+   * stays up forever. Providing one restores the Document Server behaviour.
+   */
+  function patchDownloadAs(w) {
+    if (!w || !w.Asc || !w.Asc.editor || w.Asc.editor.__magiesDownloadAs) return;
+    var api = w.Asc.editor;
+    if (typeof api.downloadAs !== 'function') return;
+    api.__magiesDownloadAs = true;
+    var original = api.downloadAs.bind(api);
+    api.downloadAs = function (actionType, options) {
+      options = options || new w.Asc.asc_CDownloadOptions();
+      if (!options.callback) {
+        var downloadType = w.AscCommon && w.AscCommon.DownloadType
+          ? (options.isDownloadEvent
+            ? (actionType === w.Asc.c_oAscAsyncAction.Print
+              ? w.AscCommon.DownloadType.Print
+              : w.AscCommon.DownloadType.Download)
+            : w.AscCommon.DownloadType.None)
+          : 'asc_onDownloadUrl';
+        options.callback = function (input) {
+          try {
+            if (input && input.status === 'ok' && input.data) {
+              api.processSavedFile(input.data, downloadType, input.filetype);
+            } else if (actionType) {
+              api.sendEvent(
+                'asc_onError',
+                w.Asc.c_oAscError.ID.Unknown,
+                w.Asc.c_oAscError.Level.NoCritical,
+              );
+            }
+          } catch (error) {
+            console.error('[magies downloadAs]', error);
+          }
+          if (actionType) {
+            try {
+              api.sync_EndAction(w.Asc.c_oAscAsyncActionType.BlockInteraction, actionType);
+            } catch (error) { /* dialog may already be gone */ }
+          }
+        };
+      }
+      return original(actionType, options);
+    };
+  }
+
+  function patchEngine() {
+    bindShortcut();
+    var frames = document.querySelectorAll('iframe');
+    for (var i = 0; i < frames.length; i += 1) {
+      try {
+        if (frames[i].contentWindow) patchDownloadAs(frames[i].contentWindow);
+      } catch (error) { /* another origin */ }
+    }
+  }
+
+  // DocsAPI builds the engine frame after DocEditor returns; keep trying until
+  // downloadAs is on the window we can reach.
+  setInterval(patchEngine, 250);
+  patchEngine();
 
 })();
 </script>

@@ -92,9 +92,9 @@ function createEditorService(deps) {
     /**
      * Writes the file the engine already produced for "Save copy as".
      *
-     * Unlike `save` / `saveAs`, the bytes are not the engine binary — they are
-     * already in the format the user picked (docx, pdf, …), so they go to disk
-     * as-is. The destination is chosen by the shell first.
+     * The engine may upload a finished document (PDF, OOXML zip) or still the
+     * editor binary (spreadsheet downloads go that way). Finished files land
+     * as-is; binaries are converted by extension without moving the open tab.
      */
     async writeExport(sessionId, targetPath) {
       if (typeof targetPath !== 'string' || !targetPath) {
@@ -104,10 +104,21 @@ function createEditorService(deps) {
         throw new Error('A file system is required to write an export');
       }
       const taken = host.consumeExport(sessionId);
-      await fs.writeFile(targetPath, taken.bytes);
-      return { path: targetPath, name: path.basename(targetPath) };
+      if (looksLikeFinishedDocument(taken.bytes)) {
+        await fs.writeFile(targetPath, taken.bytes);
+        return { path: targetPath, name: path.basename(targetPath) };
+      }
+      return sessions.exportTo(sessionId, taken.bytes, targetPath);
     },
   };
 }
 
-module.exports = { createEditorService };
+/** PDF (`%PDF`) or OOXML/ZIP (`PK`) — already the file the user asked for. */
+function looksLikeFinishedDocument(bytes) {
+  if (!bytes || bytes.length < 4) return false;
+  if (bytes.slice(0, 5).toString('ascii') === '%PDF-') return true;
+  return bytes[0] === 0x50 && bytes[1] === 0x4b;
+}
+
+module.exports = { createEditorService, looksLikeFinishedDocument };
+

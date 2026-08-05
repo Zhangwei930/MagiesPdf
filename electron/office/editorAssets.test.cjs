@@ -258,6 +258,9 @@ describe('the page the frame is pointed at', () => {
     // Save copy as is already a finished export; the shell writes it, rather
     // than asking the engine to save again.
     assert.match(page, /exportReady/);
+    // Without a downloadAs callback the progress mask ("电子表格下载中") never
+    // ends — the engine only invokes options.callback on success.
+    assert.match(page, /patchDownloadAs|__magiesDownloadAs/);
   });
 
   /**

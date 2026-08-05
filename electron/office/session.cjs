@@ -119,6 +119,21 @@ function createOfficeSessions(deps) {
       return restoreTo(session, targetPath);
     },
 
+    /**
+     * Converts editor-binary bytes to a document file without moving the open
+     * session. Used by "Save copy as", which must not rewrite the tab's path.
+     */
+    async exportTo(id, bytes, targetPath) {
+      const session = get(id);
+      if (typeof targetPath !== 'string' || !path.isAbsolute(targetPath)) {
+        throw new Error('An absolute target path is required');
+      }
+      const tempBin = path.join(session.workDir, 'Export.bin');
+      await fs.writeFile(tempBin, Buffer.from(bytes));
+      await x2t.fromEditorFormat(tempBin, targetPath);
+      return { path: targetPath, name: path.basename(targetPath) };
+    },
+
     async close(id) {
       const session = get(id);
       sessions.delete(id);

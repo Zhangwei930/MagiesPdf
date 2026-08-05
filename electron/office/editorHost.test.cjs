@@ -35,6 +35,7 @@ describe('the route a document comes back on', () => {
     const handler = calls.listened[0];
     const answer = await handler({
       path: '/editors/downloadas/abc',
+      method: 'POST',
       body: Buffer.from('DOCY;whole'),
       command: { savetype: 3 },
     });
@@ -58,6 +59,7 @@ describe('the route a document comes back on', () => {
 
     const answer = await calls.listened[0]({
       path: '/editors/downloadas/abc',
+      method: 'POST',
       body: Buffer.from('DOCY;whole'),
       command: { c: 'save', savetype: 3 },
     });
@@ -76,10 +78,12 @@ describe('the route a document comes back on', () => {
 
     const answer = await calls.listened[0]({
       path: '/editors/downloadas/abc',
+      method: 'POST',
       body: Buffer.from('DOCY;'),
       command: { c: 'save', savetype: 0 },
     });
-    assert.equal(JSON.parse(answer.body).data, undefined);
+    assert.equal(JSON.parse(answer.body).status, 'ok');
+    assert.ok(JSON.parse(answer.body).data, 'multi-part needs a save key');
   });
 
   it('still accepts the bare route', async () => {
@@ -92,6 +96,7 @@ describe('the route a document comes back on', () => {
 
     await calls.listened[0]({
       path: '/downloadas/abc',
+      method: 'POST',
       body: Buffer.from('DOCY;whole'),
       command: { savetype: 3 },
     });
@@ -113,6 +118,7 @@ describe('the route a document comes back on', () => {
 
     const answer = await calls.listened[0]({
       path: '/editors/downloadas/abc',
+      method: 'POST',
       body: Buffer.from('%PDF-1.4 copy'),
       command: { c: 'save', savetype: 3, isSaveAs: true, title: '报告.pdf' },
     });
@@ -132,17 +138,36 @@ describe('the route a document comes back on', () => {
 
     await calls.listened[0]({
       path: '/editors/downloadas/abc',
+      method: 'POST',
       body: Buffer.from('exported-bytes'),
       command: { c: 'save', savetype: 3, isSaveAs: true, title: 'a.pdf' },
     });
 
     const answer = await calls.listened[0]({
       path: '/editors/downloadas/abc/saved',
+      method: 'GET',
       body: Buffer.alloc(0),
       command: {},
     });
     assert.equal(answer.status, 200);
     assert.equal(answer.body.toString(), 'exported-bytes');
+  });
+
+  it('answers intermediate parts with a save key so multi-part downloads continue', async () => {
+    const { calls, deps } = dependencies({ onDocumentSaved: async () => {} });
+    const host = createEditorHost(deps);
+    await host.publish({ id: 'abc', workDir: '/tmp/abc', media: [] });
+
+    const answer = await calls.listened[0]({
+      path: '/editors/downloadas/abc',
+      method: 'POST',
+      body: Buffer.from('part-'),
+      command: { c: 'save', savetype: 0 },
+    });
+    const reply = JSON.parse(answer.body);
+    assert.equal(reply.status, 'ok');
+    assert.equal(reply.type, 'save');
+    assert.ok(reply.data, 'without a save key the next part never starts');
   });
 });
 

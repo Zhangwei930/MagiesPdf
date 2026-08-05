@@ -212,6 +212,7 @@ describe('saving from the editor', () => {
         close: async () => ({}),
         save: async () => ({}),
         writeEditorBin: async () => { throw new Error('export is not the editor binary'); },
+        exportTo: async () => { throw new Error('PDF should not be converted'); },
       },
       host: {
         publish: async () => ({ url: '' }),
@@ -231,5 +232,30 @@ describe('saving from the editor', () => {
     assert.deepEqual(written, [['/docs/copy.pdf', '%PDF-export']]);
     assert.equal(result.path, '/docs/copy.pdf');
     assert.equal(result.name, 'copy.pdf');
+  });
+
+  it('converts an editor-binary export through the session without moving the tab', async () => {
+    const service = createEditorService({
+      sessions: {
+        open: async () => ({}),
+        close: async () => ({}),
+        save: async () => ({}),
+        exportTo: async (id, bytes, target) => {
+          assert.equal(id, 'sess1');
+          assert.equal(bytes.toString(), 'DOCY;bin');
+          return { path: target, name: 'copy.xlsx' };
+        },
+      },
+      host: {
+        publish: async () => ({ url: '' }),
+        withdraw: () => {},
+        consumeExport: () => ({ bytes: Buffer.from('DOCY;bin'), title: 'a.xlsx' }),
+      },
+      listMedia: async () => [],
+      fs: { writeFile: async () => { throw new Error('must convert, not write raw'); } },
+    });
+
+    const result = await service.writeExport('sess1', '/docs/copy.xlsx');
+    assert.equal(result.path, '/docs/copy.xlsx');
   });
 });
