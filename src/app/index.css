@@ -47,6 +47,8 @@
     --success: oklch(0.58 0.13 155);
     --success-soft: oklch(0.95 0.04 155);
     --shadow-card: 0 1px 2px oklch(0.2 0.02 265 / 0.06), 0 4px 12px oklch(0.2 0.02 265 / 0.05);
+    /* Modal / palette scrim — light mode must not read as a black sheet. */
+    --overlay-scrim: oklch(0.35 0.02 265 / 0.28);
   }
 
   .dark {
@@ -68,6 +70,7 @@
     --success: oklch(0.72 0.14 155);
     --success-soft: oklch(0.28 0.05 155);
     --shadow-card: 0 1px 2px oklch(0 0 0 / 0.3), 0 6px 18px oklch(0 0 0 / 0.28);
+    --overlay-scrim: oklch(0 0 0 / 0.5);
   }
 
   * {

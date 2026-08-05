@@ -151,6 +151,7 @@ function createEditorHost(deps) {
           title: session.title,
           fileType: session.fileType,
           sessionId: session.id,
+          uiTheme: session.uiTheme,
         }),
       };
     }
@@ -199,6 +200,7 @@ function createEditorHost(deps) {
     async publish({
       id, workDir, media, title = '', documentType = 'word', fileType = 'docx',
       user = { id: 'local', name: 'Magies' }, readOnly = false,
+      uiTheme = 'theme-system',
     }) {
       const started = await ensureServer();
       sessions.set(id, {
@@ -209,6 +211,7 @@ function createEditorHost(deps) {
         title,
         documentType,
         fileType,
+        uiTheme,
         urls: documentUrls({ id, media }),
         upload: createUploadBuffer(),
         frameId: crypto.randomUUID(),

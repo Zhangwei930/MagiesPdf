@@ -31,3 +31,18 @@ export function partitionDocumentPaths(paths: readonly string[]): {
   }
   return result;
 }
+
+/**
+ * ONLYOFFICE uiTheme id matching Magies appearance settings.
+ *
+ * theme-system follows the OS (same as Magies "跟随系统"). Forced light/dark
+ * map to the engine's white/night skins so the editor chrome is not a black
+ * pane when the shell is light.
+ */
+export function officeUiThemeFor(
+  theme: 'system' | 'light' | 'dark',
+  darkMode: boolean,
+): 'theme-system' | 'theme-white' | 'theme-night' {
+  if (theme === 'system') return 'theme-system';
+  return darkMode || theme === 'dark' ? 'theme-night' : 'theme-white';
+}

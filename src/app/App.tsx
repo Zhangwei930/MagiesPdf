@@ -14,7 +14,7 @@ import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
 import { useApp } from './store.ts';
 import { isDirty, officeCreateKind, type DocumentState } from './documents.ts';
 import { canApplyToDocument } from './toolApply.ts';
-import { partitionDocumentPaths } from './office.ts';
+import { officeUiThemeFor, partitionDocumentPaths } from './office.ts';
 import { createDefaultBlankPdf } from './pdf/directEdit.ts';
 import { CommandPalette } from './components/CommandPalette.tsx';
 import { ApplyToolPanel } from './components/ApplyToolPanel.tsx';
@@ -194,6 +194,9 @@ export function App() {
    * PDFs are read as bytes for the viewer. Word, Sheet and Slide files open in
    * the embedded engine (no second application). Both become tabs here.
    */
+  const settings = useApp((s) => s.settings);
+  const darkMode = useApp((s) => s.darkMode);
+
   const openPaths = useCallback(
     async (paths: string[]) => {
       if (paths.length === 0) return;
@@ -202,8 +205,13 @@ export function App() {
         setOpening(partitioned.office);
         try {
           // Word, Sheet and Slide documents open in the engine, where they can
-          // be edited. PDFs stay with the viewer below.
-          for (const file of await bridge().openInEditor(partitioned.office)) showDocument(file);
+          // be edited. PDFs stay with the viewer below. uiTheme keeps the
+          // engine chrome in step with Magies / the OS — without it a dark
+          // loadmask can sit over a light document.
+          const uiTheme = officeUiThemeFor(settings.theme, darkMode);
+          for (const file of await bridge().openInEditor(partitioned.office, { uiTheme })) {
+            showDocument(file);
+          }
         } finally {
           setOpening([]);
         }
@@ -211,7 +219,7 @@ export function App() {
       for (const file of await bridge().readFiles(partitioned.pdf)) showDocument(file);
       if (partitioned.unsupported.length > 0) throw new Error(t('dropNotDocument', locale));
     },
-    [locale, showDocument],
+    [darkMode, locale, settings.theme, showDocument],
   );
 
   const openDocumentPicker = useCallback(async () => {
@@ -231,12 +239,15 @@ export function App() {
 
       setOpening([created]);
       try {
-        for (const file of await bridge().openInEditor([created])) showDocument(file);
+        const uiTheme = officeUiThemeFor(settings.theme, darkMode);
+        for (const file of await bridge().openInEditor([created], { uiTheme })) {
+          showDocument(file);
+        }
       } finally {
         setOpening([]);
       }
     },
-    [showDocument],
+    [darkMode, settings.theme, showDocument],
   );
 
   const createPdfDocument = useCallback(async () => {
@@ -686,7 +697,7 @@ export function App() {
 
       {closing && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay-scrim)] px-4 backdrop-blur-sm"
           role="presentation"
         >
           <div

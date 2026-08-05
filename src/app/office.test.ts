@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { partitionDocumentPaths } from './office.ts';
+import { officeUiThemeFor, partitionDocumentPaths } from './office.ts';
 
 describe('partitionDocumentPaths', () => {
   it('routes PDFs to Magies and Office formats to LibreOffice', () => {
@@ -29,5 +29,17 @@ describe('partitionDocumentPaths', () => {
         unsupported: [],
       },
     );
+  });
+});
+
+describe('officeUiThemeFor', () => {
+  it('follows the system when Magies is set to system', () => {
+    assert.equal(officeUiThemeFor('system', false), 'theme-system');
+    assert.equal(officeUiThemeFor('system', true), 'theme-system');
+  });
+
+  it('forces the engine light/dark skins when Magies is forced', () => {
+    assert.equal(officeUiThemeFor('light', false), 'theme-white');
+    assert.equal(officeUiThemeFor('dark', true), 'theme-night');
   });
 });

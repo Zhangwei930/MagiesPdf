@@ -302,8 +302,14 @@ export interface MagiesPdfBridge {
   openOfficePaths(paths: string[]): Promise<OfficeOpenResult>;
   /** Creates a blank document on disk. Opening it is a separate step. */
   createBlankOffice(kind: OfficeCreateKind): Promise<{ created: string; canceled: boolean }>;
-  /** Opens Office documents in the embedded editor. Bytes stay in the engine. */
-  openInEditor(paths: string[]): Promise<PickedFile[]>;
+  /**
+   * Opens Office documents in the embedded editor. Bytes stay in the engine.
+   * `uiTheme` is an ONLYOFFICE id: theme-system | theme-white | theme-night.
+   */
+  openInEditor(
+    paths: string[],
+    options?: { uiTheme?: 'theme-system' | 'theme-white' | 'theme-night' | string },
+  ): Promise<PickedFile[]>;
   focusEditor(sessionId: string): Promise<{ focused: boolean }>;
   /** `bytes` is the engine's own binary, base64 encoded. */
   saveEditor(sessionId: string, bytes: string): Promise<{ path: string; name: string }>;

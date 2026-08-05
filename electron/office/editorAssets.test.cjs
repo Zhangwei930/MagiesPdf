@@ -264,6 +264,22 @@ describe('the page the frame is pointed at', () => {
   });
 
   /**
+   * A missing uiTheme leaves the engine on a default that often looks like a
+   * black translucent pane over the document when the OS is light.
+   */
+  it('sets the engine interface theme (defaults to following the system)', () => {
+    assert.match(page, /"uiTheme":"theme-system"/);
+    const dark = editorPageSource({
+      documentType: 'word',
+      title: 'a.docx',
+      fileType: 'docx',
+      sessionId: 's',
+      uiTheme: 'theme-night',
+    });
+    assert.match(dark, /"uiTheme":"theme-night"/);
+  });
+
+  /**
    * Every row of the font dropdown is an image cut from a strip of
    * pre-rendered font names. The strip generated for this app is blank — the
    * right size, so the list builds and scrolls, but a list of nothing — so

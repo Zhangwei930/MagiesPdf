@@ -31,7 +31,11 @@ const api = {
   createAndOpenOffice: (kind) => ipcRenderer.invoke('office:createAndOpen', { kind }),
   openOfficePaths: (paths) => ipcRenderer.invoke('office:openPaths', { paths }),
   createBlankOffice: (kind) => ipcRenderer.invoke('office:createBlank', { kind }),
-  openInEditor: (paths) => ipcRenderer.invoke('office:editorOpen', { paths }),
+  openInEditor: (paths, options) =>
+    ipcRenderer.invoke('office:editorOpen', {
+      paths,
+      uiTheme: options && typeof options.uiTheme === 'string' ? options.uiTheme : undefined,
+    }),
   focusEditor: (sessionId) => ipcRenderer.invoke('office:editorFocus', { sessionId }),
   saveEditor: (sessionId, bytes) => ipcRenderer.invoke('office:editorSave', { sessionId, bytes }),
   pickEditorSaveAsTarget: (sessionId, name) =>

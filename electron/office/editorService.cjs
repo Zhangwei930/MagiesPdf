@@ -16,8 +16,11 @@ function createEditorService(deps) {
   const { sessions, host, listMedia, rememberPaths, fs } = deps;
 
   return {
-    /** Converts each document and makes it reachable by the editor. */
-    async open(paths) {
+    /**
+     * Converts each document and makes it reachable by the editor.
+     * `uiTheme` is an ONLYOFFICE id (`theme-system` / `theme-white` / `theme-night`).
+     */
+    async open(paths, { uiTheme = 'theme-system' } = {}) {
       const opened = [];
       for (const sourcePath of paths) {
         const session = await sessions.open(sourcePath);
@@ -29,6 +32,7 @@ function createEditorService(deps) {
           title: session.name,
           documentType: session.editorType,
           fileType: (session.name.split('.').pop() ?? 'docx').toLowerCase(),
+          uiTheme,
         });
         opened.push({
           name: session.name,

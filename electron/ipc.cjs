@@ -200,8 +200,11 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   );
   // The embedded editor. Paths are validated by the session layer, which
   // refuses anything relative or of a format no editor opens.
-  handle('office:editorOpen', (_event, { paths }) =>
-    editor.open(Array.isArray(paths) ? paths.filter((p) => typeof p === 'string') : []),
+  handle('office:editorOpen', (_event, { paths, uiTheme }) =>
+    editor.open(
+      Array.isArray(paths) ? paths.filter((p) => typeof p === 'string') : [],
+      { uiTheme: typeof uiTheme === 'string' ? uiTheme : 'theme-system' },
+    ),
   );
   handle('office:editorFocus', (_event, { sessionId }) => {
     editor.focus(String(sessionId));

@@ -121,7 +121,20 @@ function resolveAsset(route, roots, activeSession = '') {
  * for a native host that does not exist, ignoring the socket the document
  * actually arrives through.
  */
-function editorPageSource({ documentType, title, fileType, sessionId }) {
+/**
+ * ONLYOFFICE uiTheme ids the engine understands.
+ * theme-system follows the OS; white/night match Magies light/dark.
+ */
+function officeUiTheme(value) {
+  if (value === 'theme-dark' || value === 'theme-night' || value === 'theme-contrast-dark') return value;
+  if (value === 'theme-light' || value === 'theme-white' || value === 'theme-classic-light' || value === 'theme-gray') {
+    return value;
+  }
+  return 'theme-system';
+}
+
+function editorPageSource({ documentType, title, fileType, sessionId, uiTheme = 'theme-system' }) {
+  const theme = officeUiTheme(uiTheme);
   const config = JSON.stringify({
     width: '100%',
     height: '100%',
@@ -148,7 +161,14 @@ function editorPageSource({ documentType, title, fileType, sessionId }) {
       mode: 'edit',
       lang: 'zh',
       user: { id: 'local', name: 'Magies' },
-      customization: { about: false, feedback: false, compactHeader: false },
+      // Without uiTheme the engine often keeps a dark loadmask / chrome that
+      // does not track the OS, so the document looks covered by a black pane.
+      customization: {
+        about: false,
+        feedback: false,
+        compactHeader: false,
+        uiTheme: theme,
+      },
     },
   });
 
@@ -684,6 +704,7 @@ module.exports = {
   emptyConfig,
   isFontRoute,
   obfuscateFont,
+  officeUiTheme,
   resolveAsset,
   socketStubSource,
 };

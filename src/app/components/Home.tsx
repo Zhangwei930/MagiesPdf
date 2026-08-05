@@ -436,7 +436,7 @@ function RowAction({ label, danger = false, onClick, children }: { label: string
 
 function ConfirmDialog({ title, onClose, children }: { title: string; onClose(): void; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay-scrim)] p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="surface-panel w-full max-w-sm p-4 shadow-2xl" role="dialog" aria-modal="true" aria-label={title}>
         <h2 className="mb-3 text-[14px] font-semibold">{title}</h2>
         {children}
