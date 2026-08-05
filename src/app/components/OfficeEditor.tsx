@@ -11,7 +11,7 @@ interface OfficeEditorProps {
    * What the engine's file menu asks the host for. The engine only asks —
    * what a new document, a picker or another name mean belongs to the shell.
    */
-  onRequest(what: 'createNew' | 'open' | 'saveAs'): void;
+  onRequest(what: 'createNew' | 'open' | 'saveAs' | 'exportPdf'): void;
   /**
    * "Save copy as" finished converting in the engine; write the export.
    * `title` is the suggested file name (with extension).
@@ -62,6 +62,7 @@ export function OfficeEditor({
       if (data.magies === 'requestCreateNew') onRequest('createNew');
       else if (data.magies === 'requestOpen') onRequest('open');
       else if (data.magies === 'requestSaveAs') onRequest('saveAs');
+      else if (data.magies === 'requestExportPdf') onRequest('exportPdf');
       else if (data.magies === 'exportReady') onExportReady(typeof data.title === 'string' ? data.title : '');
     };
 

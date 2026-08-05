@@ -87,6 +87,8 @@ export interface SaveOptions {
   compress?: boolean;
   compressImages?: boolean;
   compressFonts?: boolean;
+  /** Pack objects into compressed object streams (often another ~10–25%). */
+  objstms?: boolean;
   /** Write every stream uncompressed, for inspecting or repairing raw structure. */
   decompress?: boolean;
   /** `compact` merges duplicate objects; `deduplicate`/`compact` are MuPDF's garbage levels. */
@@ -124,6 +126,7 @@ export function saveDocument(doc: mupdf.PDFDocument, options: SaveOptions = {}):
   if (options.compress) flags.push('compress');
   if (options.compressImages) flags.push('compress-images');
   if (options.compressFonts) flags.push('compress-fonts');
+  if (options.objstms) flags.push('objstms');
   if (options.clean) flags.push('clean');
   if (options.sanitize) flags.push('sanitize');
   if (options.garbage && options.garbage !== 'none') flags.push(`garbage=${options.garbage}`);

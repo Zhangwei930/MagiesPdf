@@ -80,6 +80,8 @@ interface AppState {
     id: string,
     tool: ToolMeta,
     params: Record<string, unknown>,
+    /** Extra inputs after the open PDF (merge, overlay, …). */
+    extraFiles?: Array<{ name: string; bytes: Uint8Array; mime: string }>,
   ): Promise<JobResult>;
 
   initialize(): Promise<void>;
@@ -280,17 +282,23 @@ export const useApp = create<AppState>((set, get) => ({
     }));
   },
 
-  async applyToolToDocument(id, tool, params) {
+  async applyToolToDocument(id, tool, params, extraFiles = []) {
     const document = get().documents.find((d) => d.id === id);
     if (!document) throw new Error('That document is no longer open');
 
     // Deliberately not through `runTool`: applying a tool to what you are
     // looking at is an edit, and it belongs in the document's history rather
     // than as a row in the job list beside batch runs.
+    const lead = { name: document.name, bytes: document.bytes, mime: 'application/pdf' as const };
+    const extras = extraFiles.map((file) => ({
+      name: file.name,
+      bytes: file.bytes,
+      mime: file.mime,
+    }));
     const result = await bridge().runJob({
       jobId: crypto.randomUUID(),
       toolId: tool.id,
-      files: [{ name: document.name, bytes: document.bytes, mime: 'application/pdf' }],
+      files: [lead, ...extras],
       params: { ...params, password: document.password },
     });
 
@@ -342,6 +350,26 @@ export const useApp = create<AppState>((set, get) => ({
 
     const dark = resolveDark(settings.theme);
     applyTheme(dark);
+
+    // Warm the Office editor host and pull its static assets into Chromium's
+    // cache while the user is still on the home screen. First open still has
+    // to convert the document; it should not also wait on sdkjs + fonts.
+    // A same-origin hidden iframe is required — the editor runs on loopback
+    // with its own port, so a fetch from the Vite origin would not share cache.
+    void bridge()
+      .warmEditor()
+      .then(({ url }) => {
+        if (!url || typeof document === 'undefined') return;
+        const frame = document.createElement('iframe');
+        frame.setAttribute('aria-hidden', 'true');
+        frame.tabIndex = -1;
+        frame.src = url;
+        frame.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
+        document.body.appendChild(frame);
+        // Drop the frame once the heavy assets have had time to land.
+        window.setTimeout(() => frame.remove(), 120_000);
+      })
+      .catch(() => undefined);
 
     // Track the OS theme while "system" is selected.
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {

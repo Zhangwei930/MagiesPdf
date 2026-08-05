@@ -209,4 +209,34 @@ describe('the editor host', () => {
 
     assert.equal(calls.closed, 1);
   });
+
+  /**
+   * Warm starts the host without a document so the renderer can prefetch
+   * static engine assets before the user opens anything.
+   */
+  it('warms the host without opening a document', async () => {
+    const { deps } = dependencies();
+    const host = createEditorHost(deps);
+
+    const warmed = await host.warm();
+    assert.match(warmed.origin, /^http:\/\/127\.0\.0\.1:\d+$/);
+    assert.equal(warmed.url, `${warmed.origin}/warm`);
+    assert.ok(warmed.prefetch.some((p) => p.includes('sdk-all-min.js')));
+    assert.equal(host.sessions().length, 0);
+  });
+});
+
+describe('warm page HTML', () => {
+  const { warmPageSource } = require('./editorHost.cjs');
+
+  it('preloads the engine assets the first open would fetch', () => {
+    const html = warmPageSource([
+      '/editors/sdkjs/word/sdk-all-min.js',
+      '/editors/web-apps/apps/documenteditor/main/resources/css/app.css',
+    ]);
+    assert.match(html, /rel="preload"/);
+    assert.match(html, /as="script"/);
+    assert.match(html, /as="style"/);
+    assert.match(html, /sdk-all-min\.js/);
+  });
 });

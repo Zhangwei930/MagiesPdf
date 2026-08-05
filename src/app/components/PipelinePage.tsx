@@ -15,11 +15,11 @@ import {
   Plus,
   Save,
   Trash2,
-  ToolIcon,
 } from '../icons.ts';
 import { useApp } from '../store.ts';
 import { FileDrop } from './FileDrop.tsx';
 import { ParamForm } from './ParamForm.tsx';
+import { ToolWindow } from './ToolWindow.tsx';
 import { Button, Field, ProgressBar } from './ui.tsx';
 
 interface PipelinePageProps {
@@ -44,7 +44,7 @@ function newStep(toolId: string): StepDraft {
   };
 }
 
-export function PipelinePage({ tool }: PipelinePageProps) {
+export function PipelinePage({ tool, onBack }: PipelinePageProps) {
   const locale = useApp((s) => s.locale);
   const runTool = useApp((s) => s.runTool);
   const cancelJob = useApp((s) => s.cancelJob);
@@ -200,248 +200,270 @@ export function PipelinePage({ tool }: PipelinePageProps) {
     [jobId, markJobSaved],
   );
 
+  const done = job?.status === 'done' && job.result;
+
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col">
-      <header className="flex items-start gap-3 px-6 pt-5 pb-4">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)]">
-          <ToolIcon name={tool.icon} size={19} className="text-[var(--accent)]" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h1 className="text-lg font-semibold tracking-tight">{tool.name[locale]}</h1>
-          <p className="mt-0.5 text-[13px] leading-relaxed text-[var(--text-secondary)]">
-            {tool.description[locale]}
-          </p>
-        </div>
-      </header>
-
-      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 pb-6">
-        <FileDrop spec={tool.input} files={files} locale={locale} onChange={setFiles} />
-
-        <section className="surface-panel space-y-3 p-4">
-          <h2 className="text-[13px] font-semibold text-[var(--text-secondary)]">
-            {t('pipelinePresets', locale)}
-          </h2>
-          <Field label={t('pipelinePresetName', locale)}>
-            <div className="flex gap-2">
-              <input
-                className="field-input text-[13px]"
-                value={presetName}
-                disabled={busy}
-                placeholder="e.g. Compress + watermark"
-                onChange={(e) => setPresetName(e.target.value)}
-              />
-              <Button size="sm" disabled={busy || steps.length === 0} onClick={() => void savePreset()}>
-                <Save size={13} />
-                {t('pipelineSavePreset', locale)}
-              </Button>
-            </div>
-          </Field>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={busy || steps.length === 0}
-              onClick={() => void exportPreset()}
-            >
-              {t('pipelineExport', locale)}
+    <ToolWindow
+      title={tool.name[locale]}
+      subtitle={tool.description[locale]}
+      icon={tool.icon}
+      locale={locale}
+      busy={busy}
+      size="lg"
+      onClose={onBack}
+      footer={
+        done && job.result ? (
+          <>
+            <span className="mr-auto text-[11px] text-[var(--text-muted)]">
+              {steps.length} {t('pipelineStepCount', locale)}
+            </span>
+            <Button size="sm" variant="ghost" onClick={onBack}>
+              {t('close', locale)}
             </Button>
-            <Button size="sm" variant="secondary" disabled={busy} onClick={() => void importPreset()}>
-              {t('pipelineImport', locale)}
+            {job.result.files.length > 0 && (
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  const outputs = job.result?.files;
+                  if (outputs) void saveAll(outputs);
+                }}
+              >
+                <Save size={12} />
+                {t('saveAll', locale)}
+              </Button>
+            )}
+          </>
+        ) : busy ? (
+          <Button size="sm" variant="danger" onClick={() => job && void cancelJob(job.id)}>
+            {t('cancel', locale)}
+          </Button>
+        ) : (
+          <>
+            <span className="mr-auto text-[11px] text-[var(--text-muted)]">
+              {steps.length} {t('pipelineStepCount', locale)}
+            </span>
+            <Button size="sm" variant="ghost" onClick={onBack}>
+              {t('cancel', locale)}
+            </Button>
+            <Button size="sm" variant="primary" disabled={!canRun} onClick={() => void run()}>
+              {t('pdfTaskOk', locale)}
+            </Button>
+          </>
+        )
+      }
+    >
+      <FileDrop
+        spec={tool.input}
+        files={files}
+        locale={locale}
+        density="compact"
+        onChange={setFiles}
+      />
+
+      <section className="space-y-2">
+        <h3 className="text-[12px] font-semibold text-[var(--text-secondary)]">
+          {t('pipelinePresets', locale)}
+        </h3>
+        <Field label={t('pipelinePresetName', locale)}>
+          <div className="flex gap-2">
+            <input
+              className="field-input text-[12px]"
+              value={presetName}
+              disabled={busy}
+              placeholder="e.g. Compress + watermark"
+              onChange={(e) => setPresetName(e.target.value)}
+            />
+            <Button size="sm" disabled={busy || steps.length === 0} onClick={() => void savePreset()}>
+              <Save size={12} />
+              {t('pipelineSavePreset', locale)}
             </Button>
           </div>
-          {presetNotice && (
-            <p
-              className={
-                presetNotice === t('pipelineImportBad', locale)
-                  ? 'text-[12px] text-[var(--danger)]'
-                  : 'text-[12px] text-[var(--success)]'
-              }
-            >
-              {presetNotice}
-            </p>
-          )}
+        </Field>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy || steps.length === 0}
+            onClick={() => void exportPreset()}
+          >
+            {t('pipelineExport', locale)}
+          </Button>
+          <Button size="sm" variant="secondary" disabled={busy} onClick={() => void importPreset()}>
+            {t('pipelineImport', locale)}
+          </Button>
+        </div>
+        {presetNotice && (
+          <p
+            className={
+              presetNotice === t('pipelineImportBad', locale)
+                ? 'text-[11px] text-[var(--danger)]'
+                : 'text-[11px] text-[var(--success)]'
+            }
+          >
+            {presetNotice}
+          </p>
+        )}
 
-          <div>
-            <h3 className="mb-1.5 text-[12px] font-semibold text-[var(--text-muted)]">
-              {t('pipelineBuiltinPresets', locale)}
-            </h3>
+        <div>
+          <h4 className="mb-1 text-[11px] font-semibold text-[var(--text-muted)]">
+            {t('pipelineBuiltinPresets', locale)}
+          </h4>
+          <ul className="divide-y divide-[var(--border-subtle)] rounded-lg border border-[var(--border-subtle)]">
+            {BUILTIN_PIPELINE_PRESETS.map((preset) => (
+              <li key={preset.id} className="flex items-center gap-2 px-2.5 py-1.5">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[12px] font-medium">{preset.name}</p>
+                  <p className="text-[10px] text-[var(--text-muted)]">
+                    {preset.steps.length} {t('pipelineStepCount', locale)}
+                  </p>
+                </div>
+                <Button size="sm" variant="secondary" disabled={busy} onClick={() => loadPreset(preset)}>
+                  {t('pipelineLoadPreset', locale)}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div>
+          <h4 className="mb-1 text-[11px] font-semibold text-[var(--text-muted)]">
+            {t('pipelinePresets', locale)}
+          </h4>
+          {presets.length === 0 ? (
+            <p className="text-[11px] text-[var(--text-muted)]">{t('pipelinePresetEmpty', locale)}</p>
+          ) : (
             <ul className="divide-y divide-[var(--border-subtle)] rounded-lg border border-[var(--border-subtle)]">
-              {BUILTIN_PIPELINE_PRESETS.map((preset) => (
-                <li key={preset.id} className="flex items-center gap-2 px-3 py-2">
+              {presets.map((preset) => (
+                <li key={preset.id} className="flex items-center gap-2 px-2.5 py-1.5">
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-medium">{preset.name}</p>
-                    <p className="text-[11px] text-[var(--text-muted)]">
+                    <p className="truncate text-[12px] font-medium">{preset.name}</p>
+                    <p className="text-[10px] text-[var(--text-muted)]">
                       {preset.steps.length} {t('pipelineStepCount', locale)}
                     </p>
                   </div>
+                  <Button size="sm" variant="secondary" disabled={busy} onClick={() => loadPreset(preset)}>
+                    {t('pipelineLoadPreset', locale)}
+                  </Button>
                   <Button
                     size="sm"
-                    variant="secondary"
+                    variant="ghost"
                     disabled={busy}
-                    onClick={() => loadPreset(preset)}
+                    onClick={() => void deletePreset(preset.id)}
                   >
-                    {t('pipelineLoadPreset', locale)}
+                    <Trash2 size={13} />
                   </Button>
                 </li>
               ))}
             </ul>
-          </div>
-
-          <div>
-            <h3 className="mb-1.5 text-[12px] font-semibold text-[var(--text-muted)]">
-              {t('pipelinePresets', locale)}
-            </h3>
-            {presets.length === 0 ? (
-              <p className="text-[12px] text-[var(--text-muted)]">{t('pipelinePresetEmpty', locale)}</p>
-            ) : (
-              <ul className="divide-y divide-[var(--border-subtle)] rounded-lg border border-[var(--border-subtle)]">
-                {presets.map((preset) => (
-                  <li key={preset.id} className="flex items-center gap-2 px-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-medium">{preset.name}</p>
-                      <p className="text-[11px] text-[var(--text-muted)]">
-                        {preset.steps.length} {t('pipelineStepCount', locale)}
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={busy}
-                      onClick={() => loadPreset(preset)}
-                    >
-                      {t('pipelineLoadPreset', locale)}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => void deletePreset(preset.id)}
-                    >
-                      <Trash2 size={14} />
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </section>
-
-        <section className="space-y-3">
-          <div className="flex items-center justify-between px-0.5">
-            <h2 className="text-[13px] font-semibold text-[var(--text-secondary)]">
-              {t('pipelineSteps', locale)}
-            </h2>
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={busy || palette.length === 0}
-              onClick={() =>
-                setSteps((list) => [...list, newStep(palette[0]?.id ?? 'organize.rotate')])
-              }
-            >
-              <Plus size={14} />
-              {t('pipelineAddStep', locale)}
-            </Button>
-          </div>
-
-          {steps.map((step, index) => {
-            const meta = uiRegistry.tryGet(step.toolId);
-            return (
-              <div key={step.id} className="surface-panel overflow-hidden">
-                <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-3 py-2">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[var(--surface-sunken)] font-mono text-[11px] text-[var(--text-muted)]">
-                    {index + 1}
-                  </span>
-                  <select
-                    className="field-input min-w-0 flex-1 text-[13px]"
-                    value={step.toolId}
-                    disabled={busy}
-                    onChange={(e) => {
-                      const toolId = e.target.value;
-                      const next = uiRegistry.tryGet(toolId);
-                      updateStep(step.id, {
-                        toolId,
-                        params: next ? defaultParams(next.params) : {},
-                        open: true,
-                      });
-                    }}
-                  >
-                    {palette.map((entry) => (
-                      <option key={entry.id} value={entry.id}>
-                        {entry.name[locale]}
-                      </option>
-                    ))}
-                  </select>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="px-2"
-                    disabled={busy}
-                    onClick={() => updateStep(step.id, { open: !step.open })}
-                    aria-label={step.open ? 'collapse' : 'expand'}
-                  >
-                    {step.open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="px-2"
-                    disabled={busy || steps.length <= 1}
-                    onClick={() => setSteps((list) => list.filter((s) => s.id !== step.id))}
-                  >
-                    <Trash2 size={14} />
-                  </Button>
-                </div>
-                {step.open && meta && meta.params.length > 0 && (
-                  <div className="p-4">
-                    <ParamForm
-                      params={meta.params}
-                      values={step.params}
-                      locale={locale}
-                      disabled={busy}
-                      onChange={(params) => updateStep(step.id, { params })}
-                    />
-                  </div>
-                )}
-                {step.open && meta && meta.params.length === 0 && (
-                  <p className="px-4 py-3 text-[12px] text-[var(--text-muted)]">
-                    {t('pipelineNoParams', locale)}
-                  </p>
-                )}
-              </div>
-            );
-          })}
-        </section>
-
-        {job && <MiniJobStatus job={job} onCancel={() => void cancelJob(job.id)} />}
-
-        {job?.status === 'done' && job.result && (
-          <MiniResults
-            result={job.result}
-            savedTo={savedTo}
-            onSaveAll={() => {
-              const outputs = job.result?.files;
-              if (outputs) void saveAll(outputs);
-            }}
-          />
-        )}
-      </div>
-
-      <footer className="flex items-center gap-2 border-t border-[var(--border-subtle)] bg-[var(--surface-panel)] px-6 py-3">
-        <div className="flex-1 text-[12px] text-[var(--text-muted)]">
-          {steps.length} {t('pipelineStepCount', locale)}
+          )}
         </div>
-        {busy ? (
-          <Button variant="danger" size="lg" onClick={() => job && void cancelJob(job.id)}>
-            {t('cancel', locale)}
+      </section>
+
+      <section className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-[12px] font-semibold text-[var(--text-secondary)]">
+            {t('pipelineSteps', locale)}
+          </h3>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy || palette.length === 0}
+            onClick={() =>
+              setSteps((list) => [...list, newStep(palette[0]?.id ?? 'organize.rotate')])
+            }
+          >
+            <Plus size={13} />
+            {t('pipelineAddStep', locale)}
           </Button>
-        ) : (
-          <Button variant="primary" size="lg" disabled={!canRun} onClick={() => void run()}>
-            {t('run', locale)}
-          </Button>
-        )}
-      </footer>
-    </div>
+        </div>
+
+        {steps.map((step, index) => {
+          const meta = uiRegistry.tryGet(step.toolId);
+          return (
+            <div
+              key={step.id}
+              className="overflow-hidden rounded-lg border border-[var(--border-subtle)]"
+            >
+              <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-2 py-1.5">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-[var(--surface-sunken)] font-mono text-[10px] text-[var(--text-muted)]">
+                  {index + 1}
+                </span>
+                <select
+                  className="field-input min-w-0 flex-1 text-[12px]"
+                  value={step.toolId}
+                  disabled={busy}
+                  onChange={(e) => {
+                    const toolId = e.target.value;
+                    const next = uiRegistry.tryGet(toolId);
+                    updateStep(step.id, {
+                      toolId,
+                      params: next ? defaultParams(next.params) : {},
+                      open: true,
+                    });
+                  }}
+                >
+                  {palette.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.name[locale]}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="px-1.5"
+                  disabled={busy}
+                  onClick={() => updateStep(step.id, { open: !step.open })}
+                  aria-label={step.open ? 'collapse' : 'expand'}
+                >
+                  {step.open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="px-1.5"
+                  disabled={busy || steps.length <= 1}
+                  onClick={() => setSteps((list) => list.filter((s) => s.id !== step.id))}
+                >
+                  <Trash2 size={13} />
+                </Button>
+              </div>
+              {step.open && meta && meta.params.length > 0 && (
+                <div className="p-2.5">
+                  <ParamForm
+                    params={meta.params}
+                    values={step.params}
+                    locale={locale}
+                    disabled={busy}
+                    density="compact"
+                    onChange={(params) => updateStep(step.id, { params })}
+                  />
+                </div>
+              )}
+              {step.open && meta && meta.params.length === 0 && (
+                <p className="px-2.5 py-2 text-[11px] text-[var(--text-muted)]">
+                  {t('pipelineNoParams', locale)}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </section>
+
+      {job && <MiniJobStatus job={job} onCancel={() => void cancelJob(job.id)} />}
+
+      {job?.status === 'done' && job.result && (
+        <MiniResults
+          result={job.result}
+          savedTo={savedTo}
+          onSaveAll={() => {
+            const outputs = job.result?.files;
+            if (outputs) void saveAll(outputs);
+          }}
+        />
+      )}
+    </ToolWindow>
   );
 }
 

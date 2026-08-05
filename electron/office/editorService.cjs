@@ -21,10 +21,18 @@ function createEditorService(deps) {
      * `uiTheme` is an ONLYOFFICE id (`theme-system` / `theme-white` / `theme-night`).
      */
     async open(paths, { uiTheme = 'theme-white' } = {}) {
+      // Convert every path first (x2t is independent per work dir), then
+      // publish. Parallel conversion is why opening two files is not 2× one.
+      const prepared = await Promise.all(
+        paths.map(async (sourcePath) => {
+          const session = await sessions.open(sourcePath);
+          const media = await listMedia(session.workDir);
+          return { session, media };
+        }),
+      );
+
       const opened = [];
-      for (const sourcePath of paths) {
-        const session = await sessions.open(sourcePath);
-        const media = await listMedia(session.workDir);
+      for (const { session, media } of prepared) {
         const { url } = await host.publish({
           id: session.id,
           workDir: session.workDir,
@@ -51,6 +59,12 @@ function createEditorService(deps) {
         rememberPaths(paths);
       }
       return opened;
+    },
+
+    /** Starts the editor host and returns static assets to cache in the renderer. */
+    warm() {
+      if (typeof host.warm !== 'function') return Promise.resolve({ origin: '', prefetch: [] });
+      return host.warm();
     },
 
     focus(sessionId) {
@@ -97,8 +111,12 @@ function createEditorService(deps) {
      * Writes the file the engine already produced for "Save copy as".
      *
      * The engine may upload a finished document (PDF, OOXML zip) or still the
-     * editor binary (spreadsheet downloads go that way). Finished files land
+     * editor binary (spreadsheet downloads go that way). Finished OOXML lands
      * as-is; binaries are converted by extension without moving the open tab.
+     *
+     * PDF is never taken from the engine. Its DoctRenderer embeds Japanese
+     * system faces for Chinese text, so every PDF export is re-rendered with
+     * LibreOffice from the current Editor.bin (or from the uploaded binary).
      */
     async writeExport(sessionId, targetPath) {
       if (typeof targetPath !== 'string' || !targetPath) {
@@ -108,6 +126,13 @@ function createEditorService(deps) {
         throw new Error('A file system is required to write an export');
       }
       const taken = host.consumeExport(sessionId);
+      if (isPdfPath(targetPath)) {
+        if (looksLikePdf(taken.bytes)) {
+          // Discard the engine's PDF and render from the session binary.
+          return sessions.exportPdf(sessionId, targetPath);
+        }
+        return sessions.exportTo(sessionId, taken.bytes, targetPath);
+      }
       if (looksLikeFinishedDocument(taken.bytes)) {
         await fs.writeFile(targetPath, taken.bytes);
         return { path: targetPath, name: path.basename(targetPath) };
@@ -117,10 +142,18 @@ function createEditorService(deps) {
   };
 }
 
+function isPdfPath(candidate) {
+  return path.extname(String(candidate)).toLowerCase() === '.pdf';
+}
+
+function looksLikePdf(bytes) {
+  return Boolean(bytes && bytes.length >= 5 && bytes.slice(0, 5).toString('ascii') === '%PDF-');
+}
+
 /** PDF (`%PDF`) or OOXML/ZIP (`PK`) — already the file the user asked for. */
 function looksLikeFinishedDocument(bytes) {
   if (!bytes || bytes.length < 4) return false;
-  if (bytes.slice(0, 5).toString('ascii') === '%PDF-') return true;
+  if (looksLikePdf(bytes)) return true;
   return bytes[0] === 0x50 && bytes[1] === 0x4b;
 }
 

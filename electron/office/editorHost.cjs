@@ -42,6 +42,29 @@ function sessionIdFromUploadPath(route) {
   return String(route).slice(at + UPLOAD_ROUTE.length).split('/')[0] || '';
 }
 
+/**
+ * Assets every open pulls. Prefetching them into Chromium's cache (with long
+ * Cache-Control on the server) is what makes open #2 feel instant.
+ * Session-bound routes (socket stub, /editor/:id) are deliberately absent.
+ */
+const PREFETCH_PATHS = Object.freeze([
+  '/editors/web-apps/apps/api/documents/api.js',
+  '/editors/web-apps/apps/documenteditor/main/app.js',
+  '/editors/web-apps/apps/documenteditor/main/code.js',
+  '/editors/web-apps/apps/documenteditor/main/resources/css/app.css',
+  '/editors/web-apps/apps/spreadsheeteditor/main/app.js',
+  '/editors/web-apps/apps/spreadsheeteditor/main/resources/css/app.css',
+  '/editors/web-apps/apps/presentationeditor/main/app.js',
+  '/editors/web-apps/apps/presentationeditor/main/resources/css/app.css',
+  '/editors/sdkjs/common/AllFonts.js',
+  '/editors/sdkjs/word/sdk-all-min.js',
+  '/editors/sdkjs/cell/sdk-all-min.js',
+  '/editors/sdkjs/slide/sdk-all-min.js',
+  '/editors/web-apps/vendor/requirejs/require.js',
+  '/editors/web-apps/vendor/jquery/jquery.min.js',
+  '/editors/web-apps/vendor/xregexp/xregexp-all-min.js',
+]);
+
 function createEditorHost(deps) {
   const { editorsRoot, listen, onDocumentSaved = async () => {} } = deps;
   const sessions = new Map();
@@ -138,6 +161,16 @@ function createEditorHost(deps) {
 
     if (route.includes(UPLOAD_ROUTE)) return acceptUpload(request);
 
+    // Hidden warm-up page: same origin as the real editor, so Chromium's
+    // cache is shared with every subsequent /editor/<session> frame.
+    if (route === '/warm' || route === '/warm/') {
+      return {
+        status: 200,
+        type: 'text/html; charset=utf-8',
+        body: warmPageSource(PREFETCH_PATHS),
+      };
+    }
+
     // The entry point the renderer's frame is pointed at.
     if (route.startsWith('/editor/')) {
       const session = sessions.get(route.slice('/editor/'.length));
@@ -196,6 +229,20 @@ function createEditorHost(deps) {
   }
 
   return {
+    /**
+     * Starts the loopback server and names the static files worth caching.
+     * Safe to call before any document opens; does not create a session.
+     */
+    async warm() {
+      const started = await ensureServer();
+      return {
+        origin: `http://127.0.0.1:${started.port}`,
+        // Same-origin warm page pulls static assets into the shared HTTP cache.
+        url: `http://127.0.0.1:${started.port}/warm`,
+        prefetch: [...PREFETCH_PATHS],
+      };
+    },
+
     /** Makes a converted document reachable, and returns where to point at it. */
     async publish({
       id, workDir, media, title = '', documentType = 'word', fileType = 'docx',
@@ -262,4 +309,22 @@ function createEditorHost(deps) {
   };
 }
 
-module.exports = { createEditorHost };
+/**
+ * Minimal page that only downloads engine assets (does not start DocsAPI).
+ * link[rel=preload] is enough for Chromium to keep them for the next open.
+ */
+function warmPageSource(paths) {
+  const links = paths
+    .map((route) => {
+      const as = route.endsWith('.css') ? 'style' : 'script';
+      return `<link rel="preload" as="${as}" href="${route}">`;
+    })
+    .join('\n');
+  // Also issue real GETs so the cache is filled even when preload is ignored.
+  const pings = paths
+    .map((route) => `fetch(${JSON.stringify(route)}).catch(function(){});`)
+    .join('\n');
+  return `<!doctype html><html><head><meta charset="utf-8">${links}</head><body><script>${pings}</script></body></html>`;
+}
+
+module.exports = { createEditorHost, warmPageSource };

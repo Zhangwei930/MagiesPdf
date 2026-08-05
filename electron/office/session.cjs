@@ -45,8 +45,24 @@ function describe(session) {
   };
 }
 
+function isPdfPath(candidate) {
+  return path.extname(String(candidate)).toLowerCase() === '.pdf';
+}
+
+/**
+ * Native document extension for a session — what LibreOffice must open.
+ *
+ * PDF export goes through the bundled LibreOffice, not the ONLYOFFICE
+ * converter: DoctRenderer falls back to Japanese system faces for Chinese
+ * text and produces garbled glyphs. LibreOffice embeds real CJK fonts.
+ */
+function nativeSourceExt(session) {
+  const ext = path.extname(session.path).toLowerCase();
+  return editorTypeFor(session.path) ? ext : '.docx';
+}
+
 function createOfficeSessions(deps) {
-  const { x2t, fs, uniqueId } = deps;
+  const { x2t, fs, uniqueId, pdfRenderer = null } = deps;
   const sessions = new Map();
 
   function get(id) {
@@ -64,6 +80,30 @@ function createOfficeSessions(deps) {
     session.name = path.basename(targetPath);
     session.modified = false;
     return describe(session);
+  }
+
+  /**
+   * Editor.bin → native Office file → LibreOffice PDF.
+   *
+   * Does not move the open tab: exporting a PDF is a snapshot, not a Save As
+   * into a format the editor can keep editing.
+   */
+  async function renderPdf(session, binPath, targetPath) {
+    if (!pdfRenderer) {
+      throw new Error('PDF export requires the bundled LibreOffice renderer');
+    }
+    if (typeof targetPath !== 'string' || !path.isAbsolute(targetPath)) {
+      throw new Error('An absolute target path is required');
+    }
+    const intermediate = path.join(session.workDir, `pdf-export${nativeSourceExt(session)}`);
+    await x2t.fromEditorFormat(binPath, intermediate);
+    const { pdfPath, workDir } = await pdfRenderer.toPdf(intermediate);
+    try {
+      await fs.copyFile(pdfPath, targetPath);
+    } finally {
+      await pdfRenderer.discard(workDir);
+    }
+    return { path: targetPath, name: path.basename(targetPath) };
   }
 
   return {
@@ -116,12 +156,22 @@ function createOfficeSessions(deps) {
       if (typeof targetPath !== 'string' || !path.isAbsolute(targetPath)) {
         throw new Error('An absolute target path is required');
       }
+      // PDF is not an editor format — write a snapshot and keep the tab on the
+      // document it can still edit. Moving the path to .pdf would leave the
+      // next ⌘S trying to round-trip through a format the suite cannot open.
+      if (isPdfPath(targetPath)) {
+        await renderPdf(session, session.binPath, targetPath);
+        return describe(session);
+      }
       return restoreTo(session, targetPath);
     },
 
     /**
      * Converts editor-binary bytes to a document file without moving the open
      * session. Used by "Save copy as", which must not rewrite the tab's path.
+     *
+     * PDF is special: it is rendered with LibreOffice so CJK text embeds real
+     * Chinese fonts rather than the Japanese faces DoctRenderer picks.
      */
     async exportTo(id, bytes, targetPath) {
       const session = get(id);
@@ -130,8 +180,20 @@ function createOfficeSessions(deps) {
       }
       const tempBin = path.join(session.workDir, 'Export.bin');
       await fs.writeFile(tempBin, Buffer.from(bytes));
+      if (isPdfPath(targetPath)) {
+        return renderPdf(session, tempBin, targetPath);
+      }
       await x2t.fromEditorFormat(tempBin, targetPath);
       return { path: targetPath, name: path.basename(targetPath) };
+    },
+
+    /**
+     * PDF snapshot from the session's current Editor.bin via LibreOffice.
+     * Used when "Save copy as PDF" delivered a finished (and unusable) OO PDF.
+     */
+    async exportPdf(id, targetPath) {
+      const session = get(id);
+      return renderPdf(session, session.binPath, targetPath);
     },
 
     async close(id) {

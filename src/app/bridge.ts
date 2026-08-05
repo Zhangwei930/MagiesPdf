@@ -310,6 +310,11 @@ export interface MagiesPdfBridge {
     paths: string[],
     options?: { uiTheme?: 'theme-system' | 'theme-white' | 'theme-night' | string },
   ): Promise<PickedFile[]>;
+  /**
+   * Starts the loopback editor host and lists static assets to pull into the
+   * Chromium HTTP cache before the user opens a document.
+   */
+  warmEditor(): Promise<{ origin: string; url?: string; prefetch: string[] }>;
   focusEditor(sessionId: string): Promise<{ focused: boolean }>;
   /** `bytes` is the engine's own binary, base64 encoded. */
   saveEditor(sessionId: string, bytes: string): Promise<{ path: string; name: string }>;

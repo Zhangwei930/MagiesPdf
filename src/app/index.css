@@ -49,6 +49,9 @@
     --shadow-card: 0 1px 2px oklch(0.2 0.02 265 / 0.06), 0 4px 12px oklch(0.2 0.02 265 / 0.05);
     /* Modal / palette scrim — light mode must not read as a black sheet. */
     --overlay-scrim: oklch(0.35 0.02 265 / 0.28);
+    /* WPS-style PDF desk: dark board under a white page. */
+    --pdf-desk: oklch(0.32 0.01 265);
+    --pdf-page-shadow: 0 2px 8px oklch(0 0 0 / 0.18), 0 12px 32px oklch(0 0 0 / 0.22);
   }
 
   .dark {
@@ -71,6 +74,8 @@
     --success-soft: oklch(0.28 0.05 155);
     --shadow-card: 0 1px 2px oklch(0 0 0 / 0.3), 0 6px 18px oklch(0 0 0 / 0.28);
     --overlay-scrim: oklch(0 0 0 / 0.5);
+    --pdf-desk: oklch(0.22 0.01 265);
+    --pdf-page-shadow: 0 2px 8px oklch(0 0 0 / 0.35), 0 16px 40px oklch(0 0 0 / 0.4);
   }
 
   * {

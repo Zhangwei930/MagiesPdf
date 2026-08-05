@@ -37,6 +37,26 @@ function contentType(filePath) {
   return CONTENT_TYPES.get(path.extname(filePath).toLowerCase()) ?? 'application/octet-stream';
 }
 
+/**
+ * How long Chromium may keep an editor asset.
+ *
+ * Session pages and document bytes change every open. The engine's scripts,
+ * styles and fonts do not for the life of a running app — caching them is what
+ * makes the second open (and every tab after warm-up) much faster than the first.
+ */
+function cacheControlFor(pathname) {
+  if (
+    pathname.startsWith('/editor/')
+    || pathname.startsWith('/session/')
+    || pathname.startsWith('/media/')
+    || pathname.includes('/downloadas/')
+    || pathname.endsWith('socket.io.min.js')
+  ) {
+    return 'no-store';
+  }
+  return 'public, max-age=31536000, immutable';
+}
+
 /** Serves `handle`'s answers over loopback on a port the OS picks. */
 function listenLoopback(handle) {
   return new Promise((resolve, reject) => {
@@ -80,8 +100,9 @@ function listenLoopback(handle) {
         response.writeHead(answer.status).end();
         return;
       }
+      const cache = { 'Cache-Control': cacheControlFor(url.pathname) };
       if (answer.body !== undefined) {
-        response.writeHead(200, { 'Content-Type': answer.type });
+        response.writeHead(200, { 'Content-Type': answer.type, ...cache });
         response.end(answer.body);
         return;
       }
@@ -105,6 +126,7 @@ function listenLoopback(handle) {
         response.writeHead(200, {
           'Content-Type': contentType(answer.file),
           'Content-Length': body.length,
+          ...cache,
         });
         response.end(body);
         return;
@@ -113,6 +135,7 @@ function listenLoopback(handle) {
       response.writeHead(200, {
         'Content-Type': contentType(answer.file),
         'Content-Length': stat.size,
+        ...cache,
       });
       fs.createReadStream(answer.file).pipe(response);
     });
@@ -136,4 +159,4 @@ function createEditorRuntime({ projectRoot, onDocumentSaved } = {}) {
   });
 }
 
-module.exports = { createEditorRuntime, listenLoopback, contentType };
+module.exports = { createEditorRuntime, listenLoopback, contentType, cacheControlFor };

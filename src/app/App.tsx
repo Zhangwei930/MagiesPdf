@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import type { ToolMeta } from '@core/types.ts';
+import { defaultParams } from '@core/params.ts';
+import type { ToolMeta, ToolOutputFile } from '@core/types.ts';
 import { uiRegistry } from './catalog.ts';
 import {
   bridge,
@@ -8,12 +9,17 @@ import {
   type OfficeCreateKind,
   type PickedFile,
 } from './bridge.ts';
-import { t } from './i18n.ts';
-import { AlertCircle, Bot, Eye, Loader2, Settings } from './icons.ts';
+import { localized, t } from './i18n.ts';
+import { AlertCircle, Bot, Check, Eye, Loader2, Save, Settings, ToolIcon, X } from './icons.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
 import { useApp } from './store.ts';
-import { isDirty, officeCreateKind, type DocumentState } from './documents.ts';
-import { canApplyToDocument } from './toolApply.ts';
+import { isDirty, officeCreateKind, saveAsName, type DocumentState } from './documents.ts';
+import {
+  canApplyInstantly,
+  canOpenFromDocument,
+  canQuickApplyWithConfirm,
+  classifyOutput,
+} from './toolApply.ts';
 import { officeUiThemeFor, partitionDocumentPaths } from './office.ts';
 import { createDefaultBlankPdf } from './pdf/directEdit.ts';
 import { CommandPalette } from './components/CommandPalette.tsx';
@@ -24,6 +30,13 @@ import { Ribbon } from './components/Ribbon.tsx';
 import { ToolPage } from './components/ToolPage.tsx';
 import { UpdatePrompt } from './components/UpdatePrompt.tsx';
 import { Button } from './components/ui.tsx';
+
+/** Brief feedback after a one-shot ribbon tool (WPS-style, no pane). */
+type TaskFeedback =
+  | { kind: 'working'; title: string }
+  | { kind: 'ok'; title: string; detail?: string }
+  | { kind: 'error'; title: string; detail: string }
+  | { kind: 'files'; title: string; summary?: string; files: ToolOutputFile[] };
 
 /**
  * Screens that most sessions never open, kept out of the entry chunk.
@@ -97,6 +110,11 @@ export function App() {
   const [closing, setClosing] = useState<DocumentState | null>(null);
   // The tool being run against the open document, if any.
   const [applying, setApplying] = useState<ToolMeta | null>(null);
+  // Simple default-option tools: confirm once before applying with catalogue defaults.
+  const [quickConfirm, setQuickConfirm] = useState<ToolMeta | null>(null);
+  // One-shot tools: spinner / success / error / save-outputs toast.
+  const [taskFeedback, setTaskFeedback] = useState<TaskFeedback | null>(null);
+  const taskFeedbackTimer = useRef<number | null>(null);
   // Nested dragenter/dragleave pairs fire per child element; counting them is
   // the only reliable way to know the pointer has truly left the window.
   const dragDepth = useRef(0);
@@ -107,6 +125,30 @@ export function App() {
   const [opening, setOpening] = useState<string[]>([]);
 
   const activeDocument = documents.find((d) => d.id === activeDocumentId) ?? null;
+  const applyToolToDocument = useApp((s) => s.applyToolToDocument);
+
+  const clearTaskFeedbackTimer = useCallback(() => {
+    if (taskFeedbackTimer.current !== null) {
+      window.clearTimeout(taskFeedbackTimer.current);
+      taskFeedbackTimer.current = null;
+    }
+  }, []);
+
+  const showTaskFeedback = useCallback(
+    (next: TaskFeedback, autoHideMs?: number) => {
+      clearTaskFeedbackTimer();
+      setTaskFeedback(next);
+      if (autoHideMs !== undefined) {
+        taskFeedbackTimer.current = window.setTimeout(() => {
+          setTaskFeedback(null);
+          taskFeedbackTimer.current = null;
+        }, autoHideMs);
+      }
+    },
+    [clearTaskFeedbackTimer],
+  );
+
+  useEffect(() => () => clearTaskFeedbackTimer(), [clearTaskFeedbackTimer]);
 
   useEffect(() => {
     void initialize();
@@ -120,24 +162,76 @@ export function App() {
     return bridge().onEditorSaved((payload) => engineSaved(payload));
   }, [engineSaved]);
 
+  /** Apply a tool to the active PDF with default params (instant / quick-confirm). */
+  const runAgainstActiveDocument = useCallback(
+    (picked: ToolMeta, documentId: string) => {
+      const title = picked.name[locale];
+      showTaskFeedback({ kind: 'working', title });
+      void (async () => {
+        try {
+          const result = await applyToolToDocument(
+            documentId,
+            picked,
+            defaultParams(picked.params),
+          );
+          const outcome = classifyOutput(result.files);
+          const summary = result.summary ? localized(result.summary, locale) : undefined;
+          if (outcome.kind === 'document') {
+            // Compress etc. put size before/after in summary — surface it, not just the tool name.
+            showTaskFeedback(
+              { kind: 'ok', title, detail: summary },
+              summary ? 4500 : 2200,
+            );
+            return;
+          }
+          if (result.files.length > 0) {
+            showTaskFeedback({
+              kind: 'files',
+              title,
+              summary,
+              files: [...result.files],
+            });
+            return;
+          }
+          showTaskFeedback(
+            {
+              kind: 'ok',
+              title: summary ?? title,
+            },
+            3200,
+          );
+        } catch (cause) {
+          showTaskFeedback({
+            kind: 'error',
+            title,
+            detail: cause instanceof Error ? cause.message : String(cause),
+          });
+        }
+      })();
+    },
+    [applyToolToDocument, locale, showTaskFeedback],
+  );
+
   /**
    * Where picking a tool goes.
    *
-   * With a document in hand there are two cases. A tool that wants one PDF runs
-   * against it right there, with the result landing back in the page — the
-   * document is never found, saved and re-opened just to be worked on. A tool
-   * that needs more than that still needs its full page, but opens with the
-   * document already loaded rather than an empty drop zone.
-   *
-   * `withActiveDocument` is what makes the sidebar behave like a ribbon while a
-   * document is on screen, and like plain navigation when one is not.
+   * With a PDF open: zero-option tools apply immediately; simple default tools
+   * ask once; other tools dock as a right task pane; the rest open a window.
    */
   const routeToTool = useCallback(
     (toolId: string, withActiveDocument: boolean) => {
       const picked = uiRegistry.tryGet(toolId);
 
-      if (withActiveDocument && activeDocument && picked) {
-        if (canApplyToDocument(picked)) {
+      if (withActiveDocument && activeDocument && picked && !activeDocument.editor) {
+        if (canApplyInstantly(picked)) {
+          runAgainstActiveDocument(picked, activeDocument.id);
+          return;
+        }
+        if (canQuickApplyWithConfirm(picked)) {
+          setQuickConfirm(picked);
+          return;
+        }
+        if (canOpenFromDocument(picked)) {
           setApplying(picked);
           return;
         }
@@ -156,7 +250,7 @@ export function App() {
       }
       setMain({ name: 'tool', toolId });
     },
-    [activeDocument],
+    [activeDocument, runAgainstActiveDocument],
   );
 
   const openTool = useCallback(
@@ -402,16 +496,26 @@ export function App() {
   /**
    * What the engine's file menu asks for. The engine only asks; creating,
    * picking a file and choosing where a copy goes are all the shell's.
+   *
+   * WPS-style: 另存为 is one path dialog; 输出为PDF is the same with a .pdf name.
    */
-  const handleEditorRequest = async (document: DocumentState, what: 'createNew' | 'open' | 'saveAs') => {
+  const handleEditorRequest = async (
+    document: DocumentState,
+    what: 'createNew' | 'open' | 'saveAs' | 'exportPdf',
+  ) => {
     if (what === 'open') return openDocumentPicker();
     // Same kind as the open document — derived from the engine type, not the
     // old PDF-preview origin field (hosted tabs do not have one).
     if (what === 'createNew') return createOfficeDocument(officeCreateKind(document));
 
     // Where it goes is settled first; the save that follows lands there
-    // rather than over the original.
-    const target = await bridge().pickEditorSaveAsTarget(document.editor?.sessionId ?? '', document.name);
+    // rather than over the original. PDF uses a .pdf default so the filter
+    // and LibreOffice path kick in without an engine format gallery.
+    const suggested = what === 'exportPdf' ? saveAsName(document) : document.name;
+    const target = await bridge().pickEditorSaveAsTarget(
+      document.editor?.sessionId ?? '',
+      suggested,
+    );
     if (target) await useApp.getState().requestEngineSave(document.id);
     return undefined;
   };
@@ -433,7 +537,11 @@ export function App() {
   // toolbar right below it, and none of these tools apply to what is open —
   // two stacked toolbars where the top one does nothing for the document.
   const officeEditor = view.name === 'document' && Boolean(activeDocument?.editor);
-  const showRibbon = view.name !== 'settings' && view.name !== 'welcome' && !officeEditor;
+  // PDF has its own WPS-style chrome inside Viewer; the toolbox Ribbon only
+  // belongs on tool pages (and the welcome never shows it).
+  const pdfDocumentOpen = view.name === 'document' && Boolean(activeDocument && !activeDocument.editor);
+  const showRibbon =
+    view.name !== 'settings' && view.name !== 'welcome' && !officeEditor && !pdfDocumentOpen;
 
   return (
     <div
@@ -475,7 +583,7 @@ export function App() {
         <button
           type="button"
           onClick={openWelcome}
-          className="no-drag flex items-center gap-2 rounded-md px-2 py-1 text-[13px] font-semibold tracking-tight transition-colors hover:bg-[var(--surface-hover)]"
+          className="no-drag flex shrink-0 items-center gap-2 rounded-md px-2 py-1 text-[13px] font-semibold tracking-tight transition-colors hover:bg-[var(--surface-hover)]"
         >
           <img
             src={`${import.meta.env.BASE_URL}logo.png`}
@@ -488,7 +596,16 @@ export function App() {
           {t('appName', locale)}
         </button>
 
-        <div className="flex-1" />
+        {/* WPS-style: document tabs sit in the title bar, not a second strip. */}
+        <div className="no-drag min-w-0 flex-1 overflow-hidden">
+          <DocumentTabs
+            variant="titlebar"
+            documents={documents}
+            activeId={view.name === 'document' ? activeDocumentId : null}
+            onSelect={selectTab}
+            onClose={requestCloseTab}
+          />
+        </div>
 
         <button
           type="button"
@@ -496,7 +613,7 @@ export function App() {
             setAiMounted(true);
             setAiOpen((open) => !open);
           }}
-          className="no-drag flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+          className="no-drag flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
         >
           <Bot size={15} />
           {t('aiAssistantShort', locale)}
@@ -506,7 +623,7 @@ export function App() {
           type="button"
           onClick={openSettings}
           aria-label={t('settings', locale)}
-          className="no-drag rounded-md p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+          className="no-drag shrink-0 rounded-md p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
         >
           <Settings size={15} />
         </button>
@@ -529,13 +646,6 @@ export function App() {
 
       <div className="flex min-h-0 flex-1">
         <div className="flex min-h-0 w-0 min-w-0 flex-1 flex-col">
-          <DocumentTabs
-            documents={documents}
-            activeId={view.name === 'document' ? activeDocumentId : null}
-            onSelect={selectTab}
-            onClose={requestCloseTab}
-          />
-
           <main
             className={clsx(
               'min-h-0 flex-1 bg-[var(--surface-app)]',
@@ -548,60 +658,52 @@ export function App() {
             <Suspense fallback={<ScreenFallback />}>
             {view.name === 'settings' && <SettingsPanel onBack={openWelcome} />}
 
-            {view.name === 'document' && activeDocument && (
-              activeDocument.editor ? (
-                /* Held by the engine: the frame is the document. */
-                <OfficeEditor
-                  key={activeDocument.id}
-                  document={activeDocument}
-                  onModifiedChange={(modified) => setEngineModified(activeDocument.id, modified)}
-                  saveRequestedAt={
-                    engineSaveRequest?.id === activeDocument.id ? engineSaveRequest.at : 0
-                  }
-                  onRequest={(what) => void handleEditorRequest(activeDocument, what)}
-                  onExportReady={(title) => void handleEditorExport(activeDocument, title)}
-                />
-              ) : (
-                /* Keyed by document id so switching tabs remounts the viewer's
-                   own view state — scroll, zoom, mode — per document, while the
-                   bytes and history stay in the store. */
-                <Viewer
-                  key={activeDocument.id}
-                  document={activeDocument}
-                  onChooseTool={openToolPickerForDocument}
-                />
-              )
+            {/*
+              Office engines stay mounted for every open tab. Switching only
+              toggles visibility — remounting the iframe reloads the whole
+              editor (fonts, sdkjs, document) and is far too slow for tab flips.
+            */}
+            {documents.map((doc) => {
+              if (!doc.editor) return null;
+              const active = view.name === 'document' && doc.id === activeDocumentId;
+              return (
+                <div
+                  key={doc.id}
+                  className={clsx('h-full w-full', active ? 'block' : 'hidden')}
+                  // Inactive editors stay in the tree so their frames keep state.
+                  aria-hidden={!active}
+                >
+                  <OfficeEditor
+                    document={doc}
+                    onModifiedChange={(modified) => setEngineModified(doc.id, modified)}
+                    saveRequestedAt={
+                      engineSaveRequest?.id === doc.id ? engineSaveRequest.at : 0
+                    }
+                    onRequest={(what) => void handleEditorRequest(doc, what)}
+                    onExportReady={(title) => void handleEditorExport(doc, title)}
+                  />
+                </div>
+              );
+            })}
+
+            {view.name === 'document' && activeDocument && !activeDocument.editor && (
+              /* Keyed by document id so switching tabs remounts the viewer's
+                 own view state — scroll, zoom, mode — per document, while the
+                 bytes and history stay in the store. */
+              <Viewer
+                key={activeDocument.id}
+                document={activeDocument}
+                onChooseTool={openToolPickerForDocument}
+                onRunTool={(toolId) => openTool(toolId)}
+                onOpenDocument={() => void openDocumentPicker()}
+                onOpenRecent={(path) => void openPaths([path])}
+                onOpenSettings={openSettings}
+              />
             )}
 
-            {view.name === 'tool' &&
-              (tool ? (
-                tool.id === 'advanced.pipeline' ? (
-                  <PipelinePage key={tool.id} tool={tool} onBack={openWelcome} />
-                ) : tool.id === 'advanced.batch' ? (
-                  <BatchPage key={tool.id} tool={tool} onBack={openWelcome} />
-                ) : tool.id === 'security.add-signature' ? (
-                  <SignPage key={tool.id} tool={tool} onBack={openWelcome} />
-                ) : (
-                  <ToolPage
-                    key={tool.id}
-                    tool={tool}
-                    onBack={openWelcome}
-                    initialFile={view.initialFile}
-                    onPreviewFile={showDocument}
-                  />
-                )
-              ) : (
-                <Home
-                  onOpenTool={openTool}
-                  onOpenDocument={openDocumentPicker}
-                  onCreateOffice={createOfficeDocument}
-                  onCreatePdf={createPdfDocument}
-                  onOpenRecent={(path) => openPaths([path])}
-                  onOpenAi={openAi}
-                />
-              ))}
-
-            {view.name === 'welcome' && (
+            {/* Keep the start centre under tool dialogs so closing feels like
+                dismissing a WPS window, not navigating away from a full page. */}
+            {(view.name === 'welcome' || view.name === 'tool') && (
               <Home
                 onOpenTool={openTool}
                 onOpenDocument={openDocumentPicker}
@@ -631,6 +733,26 @@ export function App() {
         )}
       </div>
 
+      {view.name === 'tool' && tool && (
+        <Suspense fallback={null}>
+          {tool.id === 'advanced.pipeline' ? (
+            <PipelinePage key={tool.id} tool={tool} onBack={openWelcome} />
+          ) : tool.id === 'advanced.batch' ? (
+            <BatchPage key={tool.id} tool={tool} onBack={openWelcome} />
+          ) : tool.id === 'security.add-signature' ? (
+            <SignPage key={tool.id} tool={tool} onBack={openWelcome} />
+          ) : (
+            <ToolPage
+              key={tool.id}
+              tool={tool}
+              onBack={openWelcome}
+              initialFile={view.initialFile}
+              onPreviewFile={showDocument}
+            />
+          )}
+        </Suspense>
+      )}
+
       {paletteOpen && (
         <CommandPalette
           onClose={closePalette}
@@ -646,6 +768,72 @@ export function App() {
           onClose={() => setApplying(null)}
         />
       )}
+
+      {quickConfirm && activeDocument && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4"
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={quickConfirm.name[locale]}
+            className="w-full max-w-sm space-y-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-panel)] p-4 shadow-2xl"
+          >
+            <div className="flex items-start gap-2.5">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)]">
+                <ToolIcon name={quickConfirm.icon} size={16} className="text-[var(--accent)]" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-[13px] font-semibold">{quickConfirm.name[locale]}</h2>
+                <p className="mt-1 text-[12px] leading-relaxed text-[var(--text-secondary)]">
+                  {t('pdfTaskQuickBody', locale)}
+                </p>
+                <p className="mt-1 truncate text-[11px] text-[var(--text-muted)]">
+                  {activeDocument.name}
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label={t('close', locale)}
+                className="rounded p-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                onClick={() => setQuickConfirm(null)}
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setQuickConfirm(null)}>
+                {t('cancel', locale)}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  const tool = quickConfirm;
+                  setQuickConfirm(null);
+                  setApplying(tool);
+                }}
+              >
+                {t('pdfTaskMoreOptions', locale)}
+              </Button>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  const tool = quickConfirm;
+                  const docId = activeDocument.id;
+                  setQuickConfirm(null);
+                  runAgainstActiveDocument(tool, docId);
+                }}
+              >
+                {t('pdfTaskOk', locale)}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <UpdatePrompt />
 
       {dropping && (
@@ -692,6 +880,92 @@ export function App() {
           >
             ✕
           </button>
+        </div>
+      )}
+
+      {taskFeedback && (
+        <div
+          className={clsx(
+            'fixed bottom-4 left-1/2 z-50 flex max-w-md -translate-x-1/2 items-start gap-2 rounded-xl border px-3 py-2.5 shadow-lg',
+            taskFeedback.kind === 'error'
+              ? 'border-[var(--danger)] bg-[var(--danger-soft)] text-[var(--danger)]'
+              : taskFeedback.kind === 'ok'
+                ? 'border-[var(--success)] bg-[var(--success-soft)] text-[var(--text-primary)]'
+                : 'border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[var(--text-primary)]',
+          )}
+          role="status"
+          aria-live="polite"
+        >
+          {taskFeedback.kind === 'working' && (
+            <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin text-[var(--accent)]" />
+          )}
+          {taskFeedback.kind === 'ok' && (
+            <Check size={14} className="mt-0.5 shrink-0 text-[var(--success)]" />
+          )}
+          {taskFeedback.kind === 'error' && (
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          )}
+          {taskFeedback.kind === 'files' && (
+            <Save size={14} className="mt-0.5 shrink-0 text-[var(--accent)]" />
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[12px] font-medium">{taskFeedback.title}</p>
+            {taskFeedback.kind === 'working' && (
+              <p className="text-[11px] text-[var(--text-muted)]">{t('running', locale)}</p>
+            )}
+            {taskFeedback.kind === 'ok' && taskFeedback.detail && (
+              <p className="mt-0.5 break-words text-[11px] text-[var(--text-secondary)]">
+                {taskFeedback.detail}
+              </p>
+            )}
+            {taskFeedback.kind === 'ok' && !taskFeedback.detail && (
+              <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">
+                {t('pdfTaskAppliedSaveHint', locale)}
+              </p>
+            )}
+            {taskFeedback.kind === 'error' && (
+              <p className="mt-0.5 break-words text-[11px] opacity-90">{taskFeedback.detail}</p>
+            )}
+            {taskFeedback.kind === 'files' && (
+              <>
+                {taskFeedback.summary && (
+                  <p className="mt-0.5 truncate text-[11px] text-[var(--text-muted)]">
+                    {taskFeedback.summary}
+                  </p>
+                )}
+                <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">
+                  {taskFeedback.files.length} {t('fileCount', locale)}
+                </p>
+              </>
+            )}
+          </div>
+          {taskFeedback.kind === 'files' && (
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => {
+                void bridge().saveOutputs(taskFeedback.files).then(() => {
+                  showTaskFeedback({ kind: 'ok', title: t('savedTo', locale) }, 2200);
+                });
+              }}
+            >
+              <Save size={12} />
+              {t('saveAll', locale)}
+            </Button>
+          )}
+          {taskFeedback.kind !== 'working' && (
+            <button
+              type="button"
+              aria-label={t('close', locale)}
+              className="shrink-0 rounded p-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              onClick={() => {
+                clearTaskFeedbackTimer();
+                setTaskFeedback(null);
+              }}
+            >
+              <X size={13} />
+            </button>
+          )}
         </div>
       )}
 

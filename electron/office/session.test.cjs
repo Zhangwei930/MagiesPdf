@@ -3,7 +3,15 @@ const { describe, it } = require('node:test');
 const { createOfficeSessions, editorTypeFor } = require('./session.cjs');
 
 function dependencies(overrides = {}) {
-  const calls = { converted: [], restored: [], discarded: [], written: [] };
+  const calls = {
+    converted: [],
+    restored: [],
+    discarded: [],
+    written: [],
+    copied: [],
+    pdf: [],
+    pdfDiscarded: [],
+  };
   let nextId = 0;
   const deps = {
     x2t: {
@@ -17,9 +25,17 @@ function dependencies(overrides = {}) {
       },
       discard: async (workDir) => calls.discarded.push(workDir),
     },
+    pdfRenderer: {
+      toPdf: async (sourcePath) => {
+        calls.pdf.push(sourcePath);
+        return { pdfPath: `${sourcePath}.lo.pdf`, workDir: `/tmp/magies/pdf${calls.pdf.length}` };
+      },
+      discard: async (workDir) => calls.pdfDiscarded.push(workDir),
+    },
     fs: {
       writeFile: async (target, bytes) => calls.written.push([target, bytes]),
       readFile: async () => Buffer.from('bin-bytes'),
+      copyFile: async (from, to) => calls.copied.push([from, to]),
       stat: async () => ({ isFile: () => true }),
     },
     uniqueId: () => `s${nextId += 1}`,
@@ -126,6 +142,39 @@ describe('Office sessions', () => {
     const sessions = createOfficeSessions(deps);
     const session = await sessions.open('/docs/report.docx');
     await assert.rejects(() => sessions.saveAs(session.id, '/docs/copy.exe'), /unsupported/i);
+  });
+
+  /**
+   * PDF is a snapshot, not a format the editor keeps open. Rendering goes
+   * through LibreOffice so Chinese text embeds real CJK fonts.
+   */
+  it('exports PDF through LibreOffice without moving the tab', async () => {
+    const { calls, deps } = dependencies();
+    const sessions = createOfficeSessions(deps);
+    const session = await sessions.open('/docs/报告.docx');
+
+    const saved = await sessions.saveAs(session.id, '/docs/报告.pdf');
+
+    assert.equal(saved.path, '/docs/报告.docx', 'the open document stays a Word file');
+    assert.equal(calls.restored.length, 1);
+    assert.match(calls.restored[0][1], /pdf-export\.docx$/);
+    assert.deepEqual(calls.pdf, [calls.restored[0][1]]);
+    assert.deepEqual(calls.copied, [[`${calls.restored[0][1]}.lo.pdf`, '/docs/报告.pdf']]);
+    assert.deepEqual(calls.pdfDiscarded, ['/tmp/magies/pdf1']);
+  });
+
+  it('re-renders a binary export to PDF through LibreOffice', async () => {
+    const { calls, deps } = dependencies();
+    const sessions = createOfficeSessions(deps);
+    const session = await sessions.open('/docs/report.docx');
+
+    const written = await sessions.exportTo(session.id, Buffer.from('bin'), '/out/copy.pdf');
+
+    assert.equal(written.path, '/out/copy.pdf');
+    assert.equal(written.name, 'copy.pdf');
+    assert.equal(calls.written[0][0], `${session.workDir}/Export.bin`);
+    assert.match(calls.restored[0][1], /pdf-export\.docx$/);
+    assert.equal(calls.pdf.length, 1);
   });
 
   it('discards the work directory when a document is closed', async () => {

@@ -36,6 +36,8 @@ const api = {
       paths,
       uiTheme: options && typeof options.uiTheme === 'string' ? options.uiTheme : undefined,
     }),
+  /** Starts the editor host and returns static URLs to prefetch into the HTTP cache. */
+  warmEditor: () => ipcRenderer.invoke('office:editorWarm'),
   focusEditor: (sessionId) => ipcRenderer.invoke('office:editorFocus', { sessionId }),
   saveEditor: (sessionId, bytes) => ipcRenderer.invoke('office:editorSave', { sessionId, bytes }),
   pickEditorSaveAsTarget: (sessionId, name) =>

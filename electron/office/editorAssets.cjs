@@ -208,12 +208,50 @@ html,body{margin:0;height:100%;overflow:hidden;background:#fff;color:#222}
    * which are redistributed byte for byte.
    */
   // White chrome: dark theme left black text on black toolbars in this embed.
+  // File menu is a compact top-left list over the live document (WPS-like),
+  // not a full-screen panel with 返回 + 下载为/信息 on the right.
   var CHROME_CSS = [
-    '#header-logo, #header-logo *, .btn-current-user { display: none !important; }',
+    '#header-logo, #header-logo *, .btn-current-user, #slot-btn-share, .btn-header-share { display: none !important; }',
     'html, body, #viewport, .layout-region, .toolbar, .toolbar-full, #toolbar,',
-    '.panel-left, .left-panel, #left-menu, .file-menu, #file-menu-panel,',
+    '.panel-left, .left-panel, #left-menu, .file-menu,',
     '.asc-window, .modals-mask, .loadmask, #loading-mask { background-color: #fff !important; color: #222 !important; }',
     '.toolbar, .toolbar * { color: #222 !important; }',
+    /* Drop portal / unused file-menu rows */
+    '#fm-btn-return, #fm-btn-download, #fm-btn-rename, #fm-btn-protect, #fm-btn-info,',
+    '#fm-btn-history, #fm-btn-rights, #fm-btn-help, #fm-btn-suggest,',
+    '#fm-btn-settings, #fm-btn-back, #fm-btn-recent, #fm-btn-edit,',
+    '#fm-btn-switchmobile, #fm-btn-exit, #fm-btn-close { display: none !important; }',
+    '#file-menu-panel .panel-menu .devider,',
+    '#file-menu-panel .panel-menu .devider-small,',
+    '#file-menu-panel .panel-menu .devider-last { display: none !important; }',
+    /* No right-hand "下载为 / 信息" column — document stays visible underneath */
+    '#file-menu-panel .panel-context { display: none !important; }',
+    /* Floating top-left menu: only as wide as the list so the document shows. */
+    '#file-menu-panel.toolbar-fullview-panel {',
+    '  top: 0 !important; left: 0 !important; right: auto !important; bottom: auto !important;',
+    '  width: 240px !important; height: auto !important; max-height: none !important;',
+    '  background: transparent !important; border: 0 !important;',
+    '  overflow: visible !important; z-index: 1005 !important;',
+    '  pointer-events: auto !important;',
+    '}',
+    '#file-menu-panel.toolbar-fullview-panel > div {',
+    '  height: auto !important; width: auto !important;',
+    '}',
+    '#file-menu-panel .panel-menu {',
+    '  float: none !important; display: flex !important; flex-direction: column;',
+    '  width: 220px !important; max-height: min(70vh, 520px); overflow-x: hidden !important; overflow-y: auto !important;',
+    '  margin: 48px 0 12px 8px; padding: 6px 0 8px !important;',
+    '  border: 1px solid rgba(0,0,0,.1) !important; border-radius: 8px;',
+    '  background: #fff !important; box-shadow: 0 8px 28px rgba(0,0,0,.16);',
+    '  pointer-events: auto !important;',
+    '}',
+    '#file-menu-panel .panel-menu .fm-btn { pointer-events: auto !important; cursor: pointer !important; }',
+    '#fm-btn-create { order: 1; }',
+    '#fm-btn-local-open { order: 2; }',
+    '#fm-btn-save { order: 3; }',
+    '#fm-btn-save-copy, #fm-btn-save-desktop { order: 4; }',
+    '#fm-btn-export-pdf { order: 5; }',
+    '#fm-btn-print, #fm-btn-print-with-preview { order: 6; }',
   ].join('\\n');
 
   function hideEngineChrome() {
@@ -221,11 +259,15 @@ html,body{margin:0;height:100%;overflow:hidden;background:#fff;color:#222}
     for (var i = 0; i < frames.length; i += 1) {
       try {
         var doc = frames[i].contentDocument;
-        if (!doc || !doc.head || doc.getElementById('magies-chrome')) continue;
-        var style = doc.createElement('style');
-        style.id = 'magies-chrome';
-        style.textContent = CHROME_CSS;
-        doc.head.appendChild(style);
+        if (!doc || !doc.head) continue;
+        var style = doc.getElementById('magies-chrome');
+        if (!style) {
+          style = doc.createElement('style');
+          style.id = 'magies-chrome';
+          doc.head.appendChild(style);
+        }
+        // Always refresh: layout fixes must land without reopening the document.
+        if (style.textContent !== CHROME_CSS) style.textContent = CHROME_CSS;
       } catch (error) { /* another origin: not the engine's */ }
     }
   }
@@ -469,6 +511,19 @@ html,body{margin:0;height:100%;overflow:hidden;background:#fff;color:#222}
     var original = api.downloadAs.bind(api);
     api.downloadAs = function (actionType, options) {
       options = options || new w.Asc.asc_CDownloadOptions();
+      // PDF from the engine embeds Japanese faces for Chinese text. Ask for
+      // the editor binary instead; the host re-renders with LibreOffice and
+      // keeps the .pdf title so "Save copy as" still lands as a PDF.
+      try {
+        var fileTypes = w.Asc && w.Asc.c_oAscFileType;
+        var pdf = fileTypes ? fileTypes.PDF : 0x0201;
+        var pdfa = fileTypes ? fileTypes.PDFA : 0x0209;
+        if (options.fileType === pdf || options.fileType === pdfa) {
+          var engineFormat = ENGINE_FORMAT[${JSON.stringify(documentType)}] || ENGINE_FORMAT.word;
+          if (typeof options.asc_setFileType === 'function') options.asc_setFileType(engineFormat);
+          else options.fileType = engineFormat;
+        }
+      } catch (error) { /* keep the original request if the enum is missing */ }
       if (!options.callback) {
         var downloadType = w.AscCommon && w.AscCommon.DownloadType
           ? (options.isDownloadEvent
@@ -502,12 +557,89 @@ html,body{margin:0;height:100%;overflow:hidden;background:#fff;color:#222}
     };
   }
 
+  /** Replace a caption string inside a menu row without dropping its icon. */
+  function replaceMenuText(root, from, to) {
+    if (!root) return;
+    var walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    var node;
+    while ((node = walker.nextNode())) {
+      if (node.nodeValue && node.nodeValue.indexOf(from) >= 0) {
+        node.nodeValue = node.nodeValue.split(from).join(to);
+      }
+    }
+  }
+
+  function closeFileMenu(doc) {
+    try {
+      var ret = doc.getElementById('fm-btn-return');
+      if (ret) ret.click();
+    } catch (error) { /* menu may already be gone */ }
+  }
+
+  /**
+   * WPS-style file menu actions.
+   *
+   * 另存为 → one OS path dialog (format from the extension filter).
+   * 输出为PDF → same path, defaulting to .pdf and LibreOffice rendering.
+   * No share, no engine format gallery.
+   */
+  function patchFileMenu(w) {
+    var doc = w && w.document;
+    if (!doc) return;
+
+    var saveCopy = doc.getElementById('fm-btn-save-copy');
+    if (saveCopy) {
+      replaceMenuText(saveCopy, '另存副本为', '另存为');
+      replaceMenuText(saveCopy, 'Save Copy as', 'Save As');
+    }
+
+    // Inject “输出为PDF” once the Save As row exists.
+    if (saveCopy && !doc.getElementById('fm-btn-export-pdf')) {
+      var pdfRow = saveCopy.cloneNode(true);
+      pdfRow.id = 'fm-btn-export-pdf';
+      pdfRow.classList.remove('active');
+      replaceMenuText(pdfRow, '另存为', '输出为PDF');
+      replaceMenuText(pdfRow, 'Save As', 'Export as PDF');
+      replaceMenuText(pdfRow, '另存副本为', '输出为PDF');
+      replaceMenuText(pdfRow, 'Save Copy as', 'Export as PDF');
+      saveCopy.parentNode.insertBefore(pdfRow, saveCopy.nextSibling);
+    }
+
+    if (doc.__magiesSaveAsMenu) return;
+    doc.__magiesSaveAsMenu = true;
+    doc.addEventListener('click', function (event) {
+      var target = event.target;
+      if (!target || typeof target.closest !== 'function') return;
+
+      var exportPdf = target.closest('#fm-btn-export-pdf');
+      if (exportPdf) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+        parent.postMessage({ magies: 'requestExportPdf' }, '*');
+        closeFileMenu(doc);
+        return;
+      }
+
+      var saveAs = target.closest('#fm-btn-save-copy, #fm-btn-save-desktop');
+      if (!saveAs) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+      parent.postMessage({ magies: 'requestSaveAs' }, '*');
+      closeFileMenu(doc);
+    }, true);
+  }
+
   function patchEngine() {
     bindShortcut();
     var frames = document.querySelectorAll('iframe');
     for (var i = 0; i < frames.length; i += 1) {
       try {
-        if (frames[i].contentWindow) patchDownloadAs(frames[i].contentWindow);
+        if (frames[i].contentWindow) {
+          patchDownloadAs(frames[i].contentWindow);
+          patchFileMenu(frames[i].contentWindow);
+        }
       } catch (error) { /* another origin */ }
     }
   }

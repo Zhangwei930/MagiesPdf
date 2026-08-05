@@ -16,9 +16,16 @@ const { createOfficeSessions } = require('./office/session.cjs');
 const { createEditorService } = require('./office/editorService.cjs');
 const { createEditorRuntime } = require('./office/editorRuntime.cjs');
 const { createEngineX2t } = require('./office/engine.cjs');
-const { DOCUMENT_EXTENSIONS } = require('./office/formats.cjs');
+const { createLibreOfficeRenderer } = require('./office/libreOfficeRender.cjs');
+const {
+  officeRuntimeRoot,
+  resolveLibreOfficeExecutable,
+} = require('./office/libreOffice.cjs');
+const { DOCUMENT_EXTENSIONS, officeSaveAsDialogOptions } = require('./office/formats.cjs');
 const { createOfficeAutomationProvider } = require('./office/automationProvider.cjs');
 const { runUnoOperation } = require('./office/unoRunner.cjs');
+const os = require('node:os');
+const { execFile } = require('node:child_process');
 const { createAiService } = require('./ai/service.cjs');
 const { createAiHistoryStore } = require('./ai/history.cjs');
 const { createAutomationStore } = require('./ai/automationStore.cjs');
@@ -120,11 +127,37 @@ function readCatalog() {
   return catalogCache;
 }
 
+function runLibreOffice(executable, args, { timeout } = {}) {
+  return new Promise((resolve) => {
+    execFile(executable, args, { timeout }, (error, stdout, stderr) => {
+      resolve({ code: error ? (error.code ?? 1) : 0, stdout, stderr });
+    });
+  });
+}
+
 function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl }) {
   const office = createOfficeService();
   const editorX2t = createEngineX2t();
+  // PDF export and the office preview both go through LibreOffice. The
+  // ONLYOFFICE converter's PDF path substitutes Japanese faces for Chinese
+  // text; LO embeds real CJK fonts from the machine.
+  const editorPdfRenderer = createLibreOfficeRenderer({
+    executable: resolveLibreOfficeExecutable({
+      bundledRoot: officeRuntimeRoot({
+        packaged: app?.isPackaged ?? false,
+        resourcesPath: process.resourcesPath ?? '',
+      }),
+      configured: settings.read().office?.libreOfficeExecutable ?? '',
+      packaged: app?.isPackaged ?? false,
+    }),
+    tempRoot: path.join(os.tmpdir(), 'magies-office'),
+    fs,
+    run: runLibreOffice,
+    uniqueId: () => crypto.randomUUID(),
+  });
   const editorSessions = createOfficeSessions({
     x2t: editorX2t,
+    pdfRenderer: editorPdfRenderer,
     fs,
     uniqueId: () => crypto.randomUUID(),
   });
@@ -206,6 +239,11 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
       { uiTheme: typeof uiTheme === 'string' ? uiTheme : 'theme-white' },
     ),
   );
+  // Start the loopback host early and name the static files the renderer
+  // should pull into Chromium's cache before the user opens a document.
+  handle('office:editorWarm', () => editor.warm());
+  // Do not block IPC registration; a failure just means the first open pays.
+  void editor.warm().catch(() => {});
   handle('office:editorFocus', (_event, { sessionId }) => {
     editor.focus(String(sessionId));
     return { focused: true };
@@ -214,18 +252,20 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     editor.save(String(sessionId), String(bytes)),
   );
   /**
-   * The file menu's "save as".
+   * The file menu's "save as" — one OS dialog, like WPS.
    *
    * The renderer has none of the document — it is in the engine — so this
    * only asks where it should go and remembers that. The save that follows
    * takes the ordinary path out of the engine, and lands there instead of
-   * over the original. The extension the user typed decides the format, so
-   * one dialog covers saving a copy and exporting to PDF or another format.
+   * over the original. Filters cover the common formats; the extension
+   * decides conversion (PDF through LibreOffice for correct CJK).
    */
   handle('office:editorSaveAsTarget', async (_event, { sessionId, name }) => {
-    const result = await dialog.showSaveDialog(getWindow(), {
-      defaultPath: safeFileName(String(name || '')),
-    });
+    const suggested = safeFileName(String(name || ''));
+    const result = await dialog.showSaveDialog(
+      getWindow(),
+      officeSaveAsDialogOptions(suggested),
+    );
     if (result.canceled || !result.filePath) return null;
 
     pendingSaveAs.set(String(sessionId), result.filePath);
@@ -234,16 +274,17 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   });
 
   /**
-   * The engine's "Save copy as" (另存副本为).
+   * Fallback when the engine has already produced a copy (format panel path).
    *
-   * The engine has already converted and uploaded the file; this only asks
-   * where it should land and writes those bytes. It must not re-trigger an
-   * engine save — that path expects the editor binary, not a finished export.
+   * The preferred path is path-first via office:editorSaveAsTarget. This still
+   * runs if a finished export arrives from an unpatched engine menu click.
    */
   handle('office:editorSaveExport', async (_event, { sessionId, name }) => {
-    const result = await dialog.showSaveDialog(getWindow(), {
-      defaultPath: safeFileName(String(name || '')),
-    });
+    const suggested = safeFileName(String(name || ''));
+    const result = await dialog.showSaveDialog(
+      getWindow(),
+      officeSaveAsDialogOptions(suggested),
+    );
     if (result.canceled || !result.filePath) return null;
 
     writableTargets.remember(result.filePath);

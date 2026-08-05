@@ -77,7 +77,30 @@ describe('an open Office document', () => {
    * nothing for the document being looked at.
    */
   it('does not stack the pdf ribbon above the editor', () => {
-    assert.match(appSource, /showRibbon = [^;]*officeEditor/s);
+    assert.match(appSource, /showRibbon/);
+    assert.match(appSource, /officeEditor/);
+    assert.match(appSource, /pdfDocumentOpen/);
+  });
+
+  /** PDF opens with its own WPS-style chrome, not the toolbox ribbon. */
+  it('hides the toolbox ribbon while a PDF document is open', () => {
+    assert.match(appSource, /!pdfDocumentOpen/);
+  });
+
+  /**
+   * Switching tabs must not remount the engine iframe. Reloading sdkjs + fonts
+   * + the document for every click is what made tab switches feel broken.
+   */
+  it('keeps every open Office editor mounted and only hides the inactive ones', () => {
+    assert.match(appSource, /documents\.map/);
+    assert.match(appSource, /hidden/);
+    assert.match(appSource, /Office engines stay mounted|stay mounted/i);
+    // Must not key a single OfficeEditor on the active document id alone —
+    // that unmounts the previous frame on every switch.
+    assert.doesNotMatch(
+      appSource,
+      /activeDocument\.editor\s*\?\s*\([\s\S]*?<OfficeEditor[\s\S]*?key=\{activeDocument\.id\}/,
+    );
   });
 });
 

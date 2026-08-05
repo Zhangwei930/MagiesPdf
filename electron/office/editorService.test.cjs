@@ -201,37 +201,99 @@ describe('saving from the editor', () => {
   });
 
   /**
-   * "Save copy as" has already produced the file the user wants. Writing it
-   * must not go through the converter — the bytes are a finished PDF or DOCX.
+   * "Save copy as" DOCX/XLSX has already produced the file the user wants.
+   * Writing it must not go through the converter again.
    */
-  it('writes a finished export straight to disk', async () => {
+  it('writes a finished OOXML export straight to disk', async () => {
     const written = [];
+    const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]);
     const service = createEditorService({
       sessions: {
         open: async () => ({}),
         close: async () => ({}),
         save: async () => ({}),
         writeEditorBin: async () => { throw new Error('export is not the editor binary'); },
-        exportTo: async () => { throw new Error('PDF should not be converted'); },
+        exportTo: async () => { throw new Error('OOXML should not be converted'); },
+        exportPdf: async () => { throw new Error('not a PDF target'); },
       },
       host: {
         publish: async () => ({ url: '' }),
         withdraw: () => {},
         consumeExport: (id) => {
           assert.equal(id, 'sess1');
-          return { bytes: Buffer.from('%PDF-export'), title: 'a.pdf' };
+          return { bytes: zip, title: 'a.docx' };
         },
       },
       listMedia: async () => [],
       fs: {
-        writeFile: async (target, bytes) => { written.push([target, bytes.toString()]); },
+        writeFile: async (target, bytes) => { written.push([target, Buffer.from(bytes)]); },
       },
     });
 
+    const result = await service.writeExport('sess1', '/docs/copy.docx');
+    assert.equal(written.length, 1);
+    assert.equal(written[0][0], '/docs/copy.docx');
+    assert.deepEqual(written[0][1], zip);
+    assert.equal(result.path, '/docs/copy.docx');
+    assert.equal(result.name, 'copy.docx');
+  });
+
+  /**
+   * The engine's own PDF embeds Japanese faces for Chinese text. A finished
+   * PDF upload must be discarded and re-rendered through LibreOffice.
+   */
+  it('re-renders a finished PDF export through LibreOffice', async () => {
+    const service = createEditorService({
+      sessions: {
+        open: async () => ({}),
+        close: async () => ({}),
+        save: async () => ({}),
+        exportTo: async () => { throw new Error('engine PDF must not be converted as a bin'); },
+        exportPdf: async (id, target) => {
+          assert.equal(id, 'sess1');
+          assert.equal(target, '/docs/copy.pdf');
+          return { path: target, name: 'copy.pdf' };
+        },
+      },
+      host: {
+        publish: async () => ({ url: '' }),
+        withdraw: () => {},
+        consumeExport: () => ({ bytes: Buffer.from('%PDF-export'), title: 'a.pdf' }),
+      },
+      listMedia: async () => [],
+      fs: { writeFile: async () => { throw new Error('must not write the engine PDF'); } },
+    });
+
     const result = await service.writeExport('sess1', '/docs/copy.pdf');
-    assert.deepEqual(written, [['/docs/copy.pdf', '%PDF-export']]);
     assert.equal(result.path, '/docs/copy.pdf');
     assert.equal(result.name, 'copy.pdf');
+  });
+
+  it('converts an editor-binary PDF export through LibreOffice', async () => {
+    const service = createEditorService({
+      sessions: {
+        open: async () => ({}),
+        close: async () => ({}),
+        save: async () => ({}),
+        exportTo: async (id, bytes, target) => {
+          assert.equal(id, 'sess1');
+          assert.equal(bytes.toString(), 'DOCY;bin');
+          assert.equal(target, '/docs/copy.pdf');
+          return { path: target, name: 'copy.pdf' };
+        },
+        exportPdf: async () => { throw new Error('binary path uses exportTo'); },
+      },
+      host: {
+        publish: async () => ({ url: '' }),
+        withdraw: () => {},
+        consumeExport: () => ({ bytes: Buffer.from('DOCY;bin'), title: 'a.pdf' }),
+      },
+      listMedia: async () => [],
+      fs: { writeFile: async () => { throw new Error('must convert, not write raw'); } },
+    });
+
+    const result = await service.writeExport('sess1', '/docs/copy.pdf');
+    assert.equal(result.path, '/docs/copy.pdf');
   });
 
   it('converts an editor-binary export through the session without moving the tab', async () => {

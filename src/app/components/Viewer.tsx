@@ -8,24 +8,15 @@ import {
   ChevronLeft,
   ChevronRight,
   Eraser,
-  FileOutput,
   FilePenLine,
   Loader2,
   Lock,
-  Maximize,
-  MoveHorizontal,
   PenLine,
-  Redo2,
   RotateCw,
   Search,
-  Save,
   Stamp,
   Trash2,
-  Undo2,
-  Wrench,
   X,
-  ZoomIn,
-  ZoomOut,
 } from '../icons.ts';
 import { clampRect, rectFromDrag, toPdfPoint, type Point, type Size } from '../pdf/geometry.ts';
 import {
@@ -60,12 +51,22 @@ import {
   type PdfDocumentHandle,
 } from '../pdf/renderer.ts';
 import { Button } from './ui.tsx';
+import { PdfChrome, type PdfPageLayout, type PdfPointerTool } from './PdfChrome.tsx';
+import { PdfFileMenu } from './PdfFileMenu.tsx';
+import { PdfQuickConvert } from './PdfQuickConvert.tsx';
+import { PdfStatusBar } from './PdfStatusBar.tsx';
 
 interface ViewerProps {
   /** Which open document to show. Its state lives in the store, not here. */
   document: DocumentState;
   /** Opens the tool picker for the document as it stands. */
   onChooseTool(): void;
+  /** Runs a tool id against this document (WPS-style quick convert). */
+  onRunTool?(toolId: string): void;
+  /** System open dialog / open recent path (File menu). */
+  onOpenDocument?(): void;
+  onOpenRecent?(path: string): void;
+  onOpenSettings?(): void;
 }
 
 /** Pages kept rendered on each side of the viewport so scrolling never shows blanks. */
@@ -108,8 +109,21 @@ function devicePixels(): number {
  * tool applied from the toolbar lands in the same history as a rotate, and so
  * switching tabs does not throw the document away.
  */
-export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
+export function Viewer({
+  document: openDocument,
+  onChooseTool,
+  onRunTool,
+  onOpenDocument,
+  onOpenRecent,
+  onOpenSettings,
+}: ViewerProps) {
   const locale = useApp((s) => s.locale);
+  const [thumbsOpen, setThumbsOpen] = useState(true);
+  const [fileMenuOpen, setFileMenuOpen] = useState(false);
+  /** WPS 手型 / 选择 — hand pans without holding Space. */
+  const [pointerTool, setPointerTool] = useState<PdfPointerTool>('select');
+  /** Continuous scroll column vs one page at a time. */
+  const [pageLayout, setPageLayout] = useState<PdfPageLayout>('continuous');
   const editDocument = useApp((s) => s.editDocument);
   const undoDocument = useApp((s) => s.undoDocument);
   const redoDocument = useApp((s) => s.redoDocument);
@@ -237,13 +251,25 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
 
   const offsets = useMemo(() => pageOffsets(sizes, scale, PAGE_GAP), [sizes, scale]);
   const contentTop = scrollTop - PAGE_PADDING;
-  const page = pageAtOffset(offsets, contentTop, viewport.height);
-  const range = visibleRange(offsets, contentTop, viewport.height, OVERSCAN);
+  const continuousPage = pageAtOffset(offsets, contentTop, viewport.height);
+  const [singlePage, setSinglePage] = useState(1);
+  const page =
+    pageLayout === 'single'
+      ? Math.min(Math.max(1, singlePage), Math.max(1, pageCount || 1))
+      : continuousPage;
+  const range =
+    pageLayout === 'single'
+      ? { first: page, last: page }
+      : visibleRange(offsets, contentTop, viewport.height, OVERSCAN);
   const columnWidth = useMemo(
     () => sizes.reduce((widest, size) => Math.max(widest, size.width), 0) * scale,
     [sizes, scale],
   );
-  const columnHeight = (offsets[offsets.length - 1] ?? 0) + PAGE_PADDING * 2;
+  const columnHeight =
+    pageLayout === 'single'
+      ? PAGE_PADDING * 2 + (sizes[page - 1]?.height ?? 0) * scale
+      : (offsets[offsets.length - 1] ?? 0) + PAGE_PADDING * 2;
+  const panningActive = pointerTool === 'hand' || spaceHeld;
 
   useLayoutEffect(() => {
     const element = scrollRef.current;
@@ -354,11 +380,18 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
    */
   const goToPage = useCallback(
     (target: number) => {
+      const clamped = Math.max(1, Math.min(pageCount || 1, target));
+      if (pageLayout === 'single') {
+        setSinglePage(clamped);
+        const element = scrollRef.current;
+        if (element) element.scrollTop = 0;
+        return;
+      }
       const element = scrollRef.current;
       if (!element) return;
-      element.scrollTop = scrollTopForPage(offsets, target) + PAGE_PADDING;
+      element.scrollTop = scrollTopForPage(offsets, clamped) + PAGE_PADDING;
     },
-    [offsets],
+    [offsets, pageCount, pageLayout],
   );
 
   // ---- find ---------------------------------------------------------------
@@ -400,9 +433,11 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
 
   // Stepping to a match is only useful if you can see it.
   useEffect(() => {
-    if (currentMatch) goToPage(currentMatch.page);
-    // `goToPage` changes with every zoom; re-scrolling then would fight the
-    // zoom anchor, so only a change of match should move the view.
+    if (!currentMatch) return;
+    // Scroll / page jump is a response to the match index changing, not to
+    // layout — do not re-run when zoom recomputes goToPage.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional navigation
+    goToPage(currentMatch.page);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentMatch]);
 
@@ -791,34 +826,104 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full min-h-0 flex-col">
+      <PdfChrome
+        locale={locale}
+        busy={busy}
+        edited={edited}
+        saved={saved}
+        page={page}
+        pageCount={pageCount}
+        scale={scale}
+        fit={fit}
+        mode={mode}
+        pointerTool={pointerTool}
+        pageLayout={pageLayout}
+        canRedo={canRedo(openDocument)}
+        onZoomIn={() => zoomBy(1)}
+        onZoomOut={() => zoomBy(-1)}
+        onZoomActual={() => zoomTo(1, viewport.height / 2)}
+        onFitWidth={() => setFit('width')}
+        onFitPage={() => setFit('page')}
+        onPrevPage={() => goToPage(page - 1)}
+        onNextPage={() => goToPage(page + 1)}
+        onRotatePage={() => rotatePage(page)}
+        onUndo={undo}
+        onRedo={redo}
+        onSave={() => void save()}
+        onSaveAs={() => void saveAs()}
+        onFind={() => setFindOpen(true)}
+        onMode={(next) => {
+          if (next === 'stamp' && mode !== 'stamp') void enterStampMode();
+          else switchMode(next);
+        }}
+        onPointerTool={setPointerTool}
+        onPageLayout={(layout) => {
+          setPageLayout(layout);
+          if (layout === 'single') setSinglePage(page);
+        }}
+        onChooseTool={onChooseTool}
+        onOpenFileMenu={() => setFileMenuOpen(true)}
+        onRunTool={(toolId) => onRunTool?.(toolId)}
+      />
+
+      <div className="relative flex min-h-0 flex-1">
+      <PdfFileMenu
+        locale={locale}
+        open={fileMenuOpen}
+        onClose={() => setFileMenuOpen(false)}
+        onOpen={() => onOpenDocument?.()}
+        onSave={() => void save()}
+        onSaveAs={() => void saveAs()}
+        onPrint={() => window.print()}
+        onSettings={() => onOpenSettings?.()}
+        onRunTool={(toolId) => onRunTool?.(toolId)}
+        onOpenRecent={(path) => onOpenRecent?.(path)}
+      />
+      {/* Narrow WPS-style rail; expands to thumbnails. */}
       <aside
-        className="w-28 shrink-0 space-y-2 overflow-y-auto border-r border-[var(--border-subtle)] p-2"
+        className={clsx(
+          'flex shrink-0 flex-col border-r border-[var(--border-subtle)] bg-[var(--surface-panel)]',
+          thumbsOpen ? 'w-[7.5rem]' : 'w-10',
+        )}
         title={t('viewerDragHint', locale)}
       >
-        {doc &&
-          sizes.map((size, index) => (
-            <Thumbnail
-              key={index + 1}
-              doc={doc}
-              pageNumber={index + 1}
-              size={size}
-              epoch={epochs[index] ?? 0}
-              active={index + 1 === page}
-              disabled={busy}
-              dragging={dragPage === index + 1}
-              locale={locale}
-              onClick={() => goToPage(index + 1)}
-              onRotate={() => rotatePage(index + 1)}
-              onDelete={() => deletePage(index + 1)}
-              onDragStart={() => setDragPage(index + 1)}
-              onDragEnd={() => setDragPage(0)}
-              onDropOn={() => {
-                if (dragPage) movePage(dragPage, index + 1);
-                setDragPage(0);
-              }}
-            />
-          ))}
+        <button
+          type="button"
+          onClick={() => setThumbsOpen((open) => !open)}
+          className="flex h-9 items-center justify-center border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+          title={t('pdfThumbs', locale)}
+          aria-expanded={thumbsOpen}
+        >
+          {thumbsOpen ? t('pdfThumbs', locale) : '⋮'}
+        </button>
+        {thumbsOpen && (
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+            {doc &&
+              sizes.map((size, index) => (
+                <Thumbnail
+                  key={index + 1}
+                  doc={doc}
+                  pageNumber={index + 1}
+                  size={size}
+                  epoch={epochs[index] ?? 0}
+                  active={index + 1 === page}
+                  disabled={busy}
+                  dragging={dragPage === index + 1}
+                  locale={locale}
+                  onClick={() => goToPage(index + 1)}
+                  onRotate={() => rotatePage(index + 1)}
+                  onDelete={() => deletePage(index + 1)}
+                  onDragStart={() => setDragPage(index + 1)}
+                  onDragEnd={() => setDragPage(0)}
+                  onDropOn={() => {
+                    if (dragPage) movePage(dragPage, index + 1);
+                    setDragPage(0);
+                  }}
+                />
+              ))}
+          </div>
+        )}
       </aside>
 
       {/* min-w-0 matters: without it a flex item cannot shrink below its
@@ -826,147 +931,7 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
           appearing after the first edit — would push this column past the
           window, widen the page area, and re-solve fit-width. The whole
           document would visibly re-zoom on the first rotate. */}
-      <div className="flex min-h-0 w-0 min-w-0 flex-1 flex-col">
-        <header className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-4 py-2.5">
-          <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={name}>
-            {name}
-          </span>
-
-          {edited && (
-            <span
-              className={clsx(
-                'shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium',
-                saved
-                  ? 'bg-[var(--success-soft)] text-[var(--success)]'
-                  : 'bg-[var(--accent-soft)] text-[var(--accent)]',
-              )}
-            >
-              {t(saved ? 'viewerSaved' : 'viewerEdited', locale)}
-            </span>
-          )}
-
-          {busy && <Loader2 size={14} className="shrink-0 animate-spin text-[var(--text-muted)]" />}
-
-          <div className="flex shrink-0 items-center gap-1">
-            <ToolbarButton
-              label={t('viewerZoomOut', locale)}
-              disabled={!doc}
-              onClick={() => zoomBy(-1)}
-            >
-              <ZoomOut size={15} />
-            </ToolbarButton>
-            <button
-              type="button"
-              title={t('viewerActualSize', locale)}
-              disabled={!doc}
-              onClick={() => zoomTo(1, viewport.height / 2)}
-              className="min-w-[52px] rounded-md px-1 py-1 font-mono text-[11px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] disabled:opacity-30"
-            >
-              {Math.round(scale * 100)}%
-            </button>
-            <ToolbarButton
-              label={t('viewerZoomIn', locale)}
-              disabled={!doc}
-              onClick={() => zoomBy(1)}
-            >
-              <ZoomIn size={15} />
-            </ToolbarButton>
-            <ToolbarButton
-              label={t('viewerFitWidth', locale)}
-              active={fit === 'width'}
-              disabled={!doc}
-              onClick={() => setFit('width')}
-            >
-              <MoveHorizontal size={15} />
-            </ToolbarButton>
-            <ToolbarButton
-              label={t('viewerFitPage', locale)}
-              active={fit === 'page'}
-              disabled={!doc}
-              onClick={() => setFit('page')}
-            >
-              <Maximize size={15} />
-            </ToolbarButton>
-            <ToolbarButton
-              label={t('viewerUndo', locale)}
-              disabled={!edited || busy}
-              onClick={undo}
-            >
-              <Undo2 size={15} />
-            </ToolbarButton>
-            <ToolbarButton
-              label={t('viewerRedo', locale)}
-              disabled={!canRedo(openDocument) || busy}
-              onClick={redo}
-            >
-              <Redo2 size={15} />
-            </ToolbarButton>
-          </div>
-
-          {/* The mode switches are icons, the way a toolbar is: their labels
-              are long in both languages and would crowd out the filename.
-              Whichever mode is on says so in the banner under the toolbar. */}
-          <div className="flex shrink-0 items-center gap-1 border-l border-[var(--border-subtle)] pl-2">
-            <ToolbarButton
-              label={t(mode === 'text' ? 'viewerTextExit' : 'viewerTextMode', locale)}
-              active={mode === 'text'}
-              disabled={!doc || busy}
-              onClick={() => switchMode('text')}
-            >
-              <PenLine size={15} />
-            </ToolbarButton>
-            <ToolbarButton
-              label={t(mode === 'form' ? 'viewerFormExit' : 'viewerFormMode', locale)}
-              active={mode === 'form'}
-              disabled={!doc || busy}
-              onClick={() => switchMode('form')}
-            >
-              <FilePenLine size={15} />
-            </ToolbarButton>
-            <ToolbarButton
-              label={t(mode === 'stamp' ? 'viewerStampExit' : 'viewerStampMode', locale)}
-              active={mode === 'stamp'}
-              disabled={!doc || busy}
-              onClick={() => {
-                if (mode === 'stamp') switchMode('stamp');
-                else void enterStampMode();
-              }}
-            >
-              <Stamp size={15} />
-            </ToolbarButton>
-            <ToolbarButton
-              label={t(mode === 'redact' ? 'viewerRedactExit' : 'viewerRedactMode', locale)}
-              active={mode === 'redact'}
-              tone="danger"
-              disabled={!doc || busy}
-              onClick={() => switchMode('redact')}
-            >
-              <Eraser size={15} />
-            </ToolbarButton>
-          </div>
-
-          <Button size="sm" variant="secondary" disabled={!doc || busy} onClick={() => void save()}>
-            <Save size={13} />
-            {t('viewerSave', locale)}
-          </Button>
-
-          <ToolbarButton
-            label={t('viewerSaveAs', locale)}
-            disabled={!doc || busy}
-            onClick={() => void saveAs()}
-          >
-            <FileOutput size={15} />
-          </ToolbarButton>
-
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={onChooseTool}
-          >
-            <Wrench size={13} />
-            {t('viewerChooseTool', locale)}
-          </Button>
-        </header>
+      <div className="relative flex min-h-0 w-0 min-w-0 flex-1 flex-col">
 
         {findOpen && (
           <form
@@ -1074,7 +1039,9 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
           onScroll={onScroll}
           title={mode === 'view' ? t('viewerPanHint', locale) : undefined}
           onPointerDown={(e) => {
-            if (!spaceHeld || !scrollRef.current) return;
+            if (!panningActive || !scrollRef.current) return;
+            // Select tool keeps text selection; only left-button pan for hand.
+            if (pointerTool === 'select' && !spaceHeld) return;
             e.preventDefault();
             e.currentTarget.setPointerCapture(e.pointerId);
             panFrom.current = {
@@ -1097,8 +1064,8 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
             setGrabbing(false);
           }}
           className={clsx(
-            'min-h-0 flex-1 overflow-auto bg-[var(--surface-sunken)]',
-            spaceHeld && (grabbing ? 'cursor-grabbing' : 'cursor-grab'),
+            'min-h-0 flex-1 overflow-auto bg-[var(--pdf-desk)]',
+            panningActive && (grabbing ? 'cursor-grabbing' : 'cursor-grab'),
           )}
         >
           {failure ? (
@@ -1119,6 +1086,10 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
               {sizes.map((size, index) => {
                 const pageNumber = index + 1;
                 if (pageNumber < range.first || pageNumber > range.last) return null;
+                const top =
+                  pageLayout === 'single'
+                    ? PAGE_PADDING
+                    : PAGE_PADDING + (offsets[index] ?? 0);
                 return (
                   <PageView
                     key={pageNumber}
@@ -1130,10 +1101,10 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
                     mode={mode}
                     modeEpoch={modeEpoch}
                     busy={busy}
-                    panning={spaceHeld}
+                    panning={panningActive}
                     drafts={drafts}
                     fields={fieldsByPage.get(pageNumber)}
-                    top={PAGE_PADDING + (offsets[index] ?? 0)}
+                    top={top}
                     epoch={epochs[index] ?? 0}
                     hits={hitsByPage.get(pageNumber) ?? NO_HITS}
                     currentHits={currentHitsByPage.get(pageNumber) ?? NO_HITS}
@@ -1151,23 +1122,37 @@ export function Viewer({ document: openDocument, onChooseTool }: ViewerProps) {
           )}
         </div>
 
-        {pageCount > 0 && (
-          <footer className="flex shrink-0 items-center justify-center gap-2 border-t border-[var(--border-subtle)] py-1.5">
-            <input
-              type="number"
-              min={1}
-              max={pageCount}
-              value={page}
-              aria-label={t('viewerGoToPage', locale)}
-              onChange={(e) => {
-                const target = Number(e.target.value);
-                if (Number.isFinite(target)) goToPage(target);
-              }}
-              className="w-14 rounded-md border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-1.5 py-0.5 text-center font-mono text-[11px] outline-none focus:border-[var(--accent)]"
-            />
-            <span className="font-mono text-[11px] text-[var(--text-muted)]">/ {pageCount}</span>
-          </footer>
+        {onRunTool && (
+          <PdfQuickConvert
+            locale={locale}
+            disabled={!doc || busy}
+            onConvert={(toolId) => onRunTool(toolId)}
+          />
         )}
+
+        <PdfStatusBar
+          locale={locale}
+          page={page}
+          pageCount={pageCount}
+          scale={scale}
+          pageLayout={pageLayout}
+          byteLength={bytes.length}
+          disabled={!doc || busy}
+          onPrevPage={() => goToPage(page - 1)}
+          onNextPage={() => goToPage(page + 1)}
+          onGoToPage={goToPage}
+          onZoomIn={() => zoomBy(1)}
+          onZoomOut={() => zoomBy(-1)}
+          onZoomTo={(next) => {
+            setFit(null);
+            zoomTo(next, viewport.height / 2);
+          }}
+          onPageLayout={(layout) => {
+            setPageLayout(layout);
+            if (layout === 'single') setSinglePage(page);
+          }}
+        />
+      </div>
       </div>
     </div>
   );
@@ -1415,7 +1400,11 @@ function PageView({
           setMarquee(null);
         }}
       >
-        <canvas ref={canvasRef} className="block bg-white shadow-lg" />
+        <canvas
+          ref={canvasRef}
+          className="block bg-white"
+          style={{ boxShadow: 'var(--pdf-page-shadow)' }}
+        />
 
         {/* Selection would fight the marquee and the stamp click, so the text
             layer only takes the pointer while plain reading is going on. */}

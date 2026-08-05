@@ -365,6 +365,47 @@ describe('the page the frame is pointed at', () => {
     assert.match(page, /0x1003/);
   });
 
+  /**
+   * PDF from the engine embeds Japanese faces for Chinese. The patch rewrites
+   * PDF/PDFA downloads to the editor binary so the host can re-render with LO.
+   */
+  it('rewrites PDF downloads to the editor binary', () => {
+    assert.match(page, /c_oAscFileType/);
+    assert.match(page, /0x0201|fileTypes\.PDF/);
+    assert.match(page, /asc_setFileType|options\.fileType = engineFormat/);
+  });
+
+  /**
+   * WPS-style file menu: 另存为 + 输出为PDF, no share / format gallery.
+   */
+  it('routes Save As and Export PDF to the shell path dialog', () => {
+    assert.match(page, /patchFileMenu|__magiesSaveAsMenu/);
+    assert.match(page, /fm-btn-save-copy/);
+    assert.match(page, /fm-btn-export-pdf/);
+    assert.match(page, /requestSaveAs/);
+    assert.match(page, /requestExportPdf/);
+    assert.match(page, /输出为PDF|Export as PDF/);
+  });
+
+  it('hides share and portal chrome from the file menu', () => {
+    assert.match(page, /fm-btn-rights/);
+    assert.match(page, /slot-btn-share|btn-header-share/);
+    assert.match(page, /fm-btn-download/);
+  });
+
+  /**
+   * File menu sits as a compact list top-left over the live document — no
+   * full-screen 返回 / 下载为 / 信息 layout.
+   */
+  it('pins the file menu top-left and keeps the document visible', () => {
+    assert.match(page, /fm-btn-return/);
+    assert.match(page, /panel-context/);
+    assert.match(page, /toolbar-fullview-panel/);
+    assert.match(page, /width:\s*240px/);
+    assert.match(page, /pointer-events:\s*auto/);
+    assert.match(page, /box-shadow/);
+  });
+
   it('reports back when the engine says the document changed', () => {
     assert.match(page, /postMessage/);
     assert.match(page, /modified/);
