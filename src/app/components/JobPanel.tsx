@@ -126,7 +126,7 @@ function JobRow({ job }: { job: JobEntry }) {
           {job.savedTo ? (
             <button
               type="button"
-              onClick={() => void bridge().revealPath(job.savedTo!)}
+              onClick={() => void bridge().revealPath(job.savedTo ?? '')}
               className="inline-flex shrink-0 items-center gap-1 text-[11px] text-[var(--accent)] hover:underline"
             >
               <FolderOpen size={11} />

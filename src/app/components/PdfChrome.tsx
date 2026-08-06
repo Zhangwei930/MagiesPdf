@@ -21,6 +21,9 @@ import {
   Search,
   Square,
   Stamp,
+  Sun,
+  Moon,
+  Printer,
   ToolIcon,
   Undo2,
   Wrench,
@@ -34,7 +37,7 @@ import {
   type PdfRibbonViewerAction,
 } from '../pdf/pdfRibbonCatalog.ts';
 
-export type PdfViewMode = 'view' | 'text' | 'redact' | 'stamp' | 'form';
+export type PdfViewMode = 'view' | 'text' | 'redact' | 'stamp' | 'form' | 'draw';
 export type PdfFitMode = 'width' | 'page' | null;
 export type PdfPointerTool = 'hand' | 'select';
 export type PdfPageLayout = 'continuous' | 'single';
@@ -49,6 +52,7 @@ export interface PdfChromeProps {
   scale: number;
   fit: PdfFitMode;
   mode: PdfViewMode;
+  nightMode: boolean;
   pointerTool: PdfPointerTool;
   pageLayout: PdfPageLayout;
   canRedo: boolean;
@@ -60,6 +64,8 @@ export interface PdfChromeProps {
   onPrevPage(): void;
   onNextPage(): void;
   onRotatePage(): void;
+  onToggleNightMode(): void;
+  onPrint(): void;
   onUndo(): void;
   onRedo(): void;
   onSave(): void;
@@ -175,6 +181,7 @@ export function PdfChrome(props: PdfChromeProps) {
               item={item}
               props={props}
               disabled={disabled}
+              nightMode={props.nightMode}
               pointerTool={pointerTool}
               pageLayout={pageLayout}
               mode={mode}
@@ -197,6 +204,7 @@ function ActionChip({
   item: PdfRibbonActionItem;
   props: PdfChromeProps;
   disabled: boolean;
+  nightMode: boolean;
   pointerTool: PdfPointerTool;
   pageLayout: PdfPageLayout;
   mode: PdfViewMode;
@@ -257,6 +265,12 @@ function ActionChip({
       case 'saveAs':
         props.onSaveAs();
         break;
+      case 'print':
+        props.onPrint();
+        break;
+      case 'nightMode':
+        props.onToggleNightMode();
+        break;
       case 'modeText':
         props.onMode('text');
         break;
@@ -268,6 +282,9 @@ function ActionChip({
         break;
       case 'modeRedact':
         props.onMode('redact');
+        break;
+      case 'modeDraw':
+        props.onMode('draw');
         break;
       case 'chooseTool':
         props.onChooseTool();
@@ -341,6 +358,12 @@ function ActionChip({
       ),
     },
     saveAs: { label: t('viewerSaveAs', locale), icon: <FileOutput size={15} /> },
+    print: { label: t('pdfFilePrint', locale), icon: <Printer size={15} /> },
+    nightMode: { 
+      label: t('pdfNightMode', locale), 
+      icon: props.nightMode ? <Sun size={15} /> : <Moon size={15} />,
+      active: props.nightMode 
+    },
     modeText: {
       label: t('viewerTextMode', locale),
       icon: (
@@ -381,6 +404,16 @@ function ActionChip({
       ),
       active: mode === 'redact',
       tone: 'danger',
+    },
+    modeDraw: {
+      label: locale === 'zh' ? '自由画笔' : 'Freehand Draw',
+      icon: (
+        <>
+          <PenLine size={15} />
+          <span className="ml-1 text-[11px]">{locale === 'zh' ? '自由画笔' : 'Draw'}</span>
+        </>
+      ),
+      active: mode === 'draw',
     },
     chooseTool: {
       label: t('viewerChooseTool', locale),

@@ -11,6 +11,12 @@ import {
   type PickedFile,
 } from './bridge.ts';
 import { loadCatalog } from './catalog.ts';
+import {
+  DEFAULT_DARK_THEME_ID,
+  DEFAULT_LIGHT_THEME_ID,
+  resolveTheme,
+  themeVariables,
+} from './theme/themes.ts';
 import * as docs from './documents.ts';
 import type { DocumentState } from './documents.ts';
 import type { Locale } from './i18n.ts';
@@ -56,6 +62,11 @@ interface AppState {
 
   /** Opens a file, or focuses the tab already holding it. Returns its id. */
   openDocument(file: PickedFile): string;
+  /**
+   * Puts `file` in the tab `id` occupies. Used when a document is rewritten on
+   * disk and has to be reopened without the tab ever leaving the strip.
+   */
+  replaceDocument(id: string, file: PickedFile): string;
   closeDocument(id: string): void;
   setActiveDocument(id: string): void;
   editDocument(id: string, bytes: Uint8Array): void;
@@ -114,7 +125,17 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
   externalConverter: { executable: '', argumentTemplate: '', timeoutMs: 120000 },
   office: { libreOfficeExecutable: '' },
-  ai: { baseUrl: 'http://127.0.0.1:11434/v1', model: '', maxSteps: 6 },
+  themeLight: DEFAULT_LIGHT_THEME_ID,
+  themeDark: DEFAULT_DARK_THEME_ID,
+  ai: {
+    providers: [],
+    activeProviderId: '',
+    maxSteps: 6,
+    permissionMode: 'confirm',
+    cliModels: {},
+    strictLocalPrivacy: false,
+    webSearch: { enabled: false, provider: 'tavily', endpoint: '' },
+  },
   pipelinePresets: [],
 };
 
@@ -128,8 +149,28 @@ function resolveDark(theme: AppSettings['theme']): boolean {
   return theme === 'system' ? prefersDark() : theme === 'dark';
 }
 
-function applyTheme(dark: boolean): void {
-  document.documentElement.classList.toggle('dark', dark);
+/**
+ * Paints the chosen theme.
+ *
+ * The `.dark` class still drives Tailwind's dark variant; the custom properties
+ * are what actually recolour the app, so a theme can differ from the built-in
+ * palette without touching the stylesheet.
+ */
+function applyTheme(dark: boolean, settings?: AppSettings): void {
+  const root = document.documentElement;
+  root.classList.toggle('dark', dark);
+
+  const theme = resolveTheme(
+    settings?.theme ?? (dark ? 'dark' : 'light'),
+    prefersDark(),
+    {
+      light: settings?.themeLight ?? DEFAULT_LIGHT_THEME_ID,
+      dark: settings?.themeDark ?? DEFAULT_DARK_THEME_ID,
+    },
+  );
+  for (const [name, value] of Object.entries(themeVariables(theme))) {
+    root.style.setProperty(name, value);
+  }
 }
 
 /** Replaces one document in the list, leaving the others' identities alone. */
@@ -160,12 +201,22 @@ export const useApp = create<AppState>((set, get) => ({
     return activeId;
   },
 
+  replaceDocument(id, file) {
+    const incoming = docs.createDocument(file);
+    set((state) => ({
+      documents: docs.replaceDocument(state.documents, id, incoming),
+      // The tab under the user stays the tab under the user.
+      activeDocumentId: state.activeDocumentId === id ? incoming.id : state.activeDocumentId,
+    }));
+    return incoming.id;
+  },
+
   closeDocument(id) {
     // An engine-held document has a session and a work directory behind it;
     // dropping the tab without telling the engine would leave both running and
     // a copy of the user's document in temp.
     const held = get().documents.find((d) => d.id === id)?.editor;
-    if (held) void bridge().closeEditor(held.sessionId).catch(() => {});
+    if (held) void bridge().closeEditor(held.sessionId).catch((e) => console.warn('[store] closeEditor failed:', e));
 
     set((state) => ({
       documents: docs.closeDocument(state.documents, id),
@@ -184,7 +235,7 @@ export const useApp = create<AppState>((set, get) => ({
     // nothing to say which document that was, so it has to be told which one is
     // in front.
     const held = get().documents.find((d) => d.id === id)?.editor;
-    if (held) void bridge().focusEditor(held.sessionId).catch(() => {});
+    if (held) void bridge().focusEditor(held.sessionId).catch((e) => console.warn('[store] focusEditor failed:', e));
     set({ activeDocumentId: id });
   },
 
@@ -324,7 +375,7 @@ export const useApp = create<AppState>((set, get) => ({
   async initialize() {
     if (!hasBridge()) {
       const dark = prefersDark();
-      applyTheme(dark);
+      applyTheme(dark, get().settings);
       set({ ready: true, darkMode: dark });
       return;
     }
@@ -337,7 +388,7 @@ export const useApp = create<AppState>((set, get) => ({
       // Without this the promise just rejects, `ready` stays false and the app
       // spins on its loading indicator forever with nothing to act on.
       const dark = prefersDark();
-      applyTheme(dark);
+      applyTheme(dark, get().settings);
       set({
         ready: true,
         darkMode: dark,
@@ -349,7 +400,7 @@ export const useApp = create<AppState>((set, get) => ({
     loadCatalog(catalog);
 
     const dark = resolveDark(settings.theme);
-    applyTheme(dark);
+    applyTheme(dark, settings);
 
     // Warm the Office editor host and pull its static assets into Chromium's
     // cache while the user is still on the home screen. First open still has
@@ -375,7 +426,7 @@ export const useApp = create<AppState>((set, get) => ({
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
       if (get().settings.theme !== 'system') return;
       const next = prefersDark();
-      applyTheme(next);
+      applyTheme(next, get().settings);
       set({ darkMode: next });
     });
 
@@ -410,7 +461,8 @@ export const useApp = create<AppState>((set, get) => ({
       : { ...get().settings, ...patch };
 
     const dark = resolveDark(settings.theme);
-    applyTheme(dark);
+    // The freshly saved settings, not the store's — the set below has not run.
+    applyTheme(dark, settings);
     set({ settings, locale: settings.locale, darkMode: dark });
   },
 

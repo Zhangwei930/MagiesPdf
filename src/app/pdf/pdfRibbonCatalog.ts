@@ -43,10 +43,13 @@ export type PdfRibbonViewerAction =
   | 'find'
   | 'save'
   | 'saveAs'
+  | 'print'
+  | 'nightMode'
   | 'modeText'
   | 'modeForm'
   | 'modeStamp'
   | 'modeRedact'
+  | 'modeDraw'
   | 'chooseTool';
 
 export interface PdfRibbonActionItem {
@@ -108,6 +111,9 @@ export const PDF_RIBBON_TABS: readonly PdfRibbonTab[] = [
       action('layoutContinuous'),
       sep(),
       action('find'),
+      sep(),
+      action('print'),
+      action('nightMode'),
       sep(),
       action('save'),
       action('saveAs'),
@@ -174,6 +180,7 @@ export const PDF_RIBBON_TABS: readonly PdfRibbonTab[] = [
       action('modeRedact'),
       action('modeStamp'),
       action('modeText'),
+      action('modeDraw'),
       sep(),
       tool('security.redact'),
       tool('security.add-signature'),

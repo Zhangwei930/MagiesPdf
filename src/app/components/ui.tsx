@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, ReactNode, Ref } from 'react';
 import { clsx } from 'clsx';
 import { Loader2 } from '../icons.ts';
 
@@ -21,6 +21,8 @@ const SIZES: Record<Size, string> = {
 };
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  /** React 19 hands function components a ref like any other prop. */
+  ref?: Ref<HTMLButtonElement>;
   variant?: Variant;
   size?: Size;
   loading?: boolean;
@@ -82,11 +84,11 @@ export function Field({
 }) {
   return (
     <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="block text-[13px] font-medium text-[var(--text-primary)]">
+      <label htmlFor={htmlFor} className="block text-[14px] font-medium text-[var(--text-primary)]">
         {label}
       </label>
       {children}
-      {help && <p className="text-xs leading-relaxed text-[var(--text-muted)]">{help}</p>}
+      {help && <p className="text-[12.5px] leading-relaxed text-[var(--text-muted)]">{help}</p>}
     </div>
   );
 }

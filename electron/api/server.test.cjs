@@ -96,6 +96,17 @@ describe('REST API handler', () => {
   /** @type {ReturnType<typeof createHandler>} */
   let handler;
 
+  /** @type {ReturnType<typeof createHandler>} */
+  let officeHandler;
+  /** Same provider, no approver wired — as a build that forgot to pass one. */
+  /** @type {ReturnType<typeof createHandler>} */
+  let bareOfficeHandler;
+  /** @type {Array<[string, object]>} */
+  let officeCalls;
+  /** @type {Array<object>} */
+  const approvalRequests = [];
+  let approvalAnswer = true;
+
   before(async () => {
     // Ensure catalogue + worker bundle exist.
     const catalogPath = path.join(__dirname, '..', '..', 'dist-electron', 'catalog.json');
@@ -111,6 +122,53 @@ describe('REST API handler', () => {
     }
     pool = new JobPool({ size: 1 });
     handler = createHandler({ pool });
+
+    officeCalls = [];
+    let workspace = { configured: false, path: '' };
+    const officeProvider = {
+      describeTools: () => ([
+        {
+          functionName: 'office_excel_write',
+          toolId: 'office:excel:write',
+          description: 'Write Excel',
+          parameters: { type: 'object', properties: {} },
+          unattended: true,
+        },
+        {
+          functionName: 'office_macro_run',
+          toolId: 'office:macro:run',
+          description: 'Macro',
+          parameters: { type: 'object', properties: {} },
+          unattended: false,
+        },
+      ]),
+      getWorkspaceStatus: () => workspace,
+      setWorkspaceRoot: async (candidate) => {
+        workspace = { configured: true, path: candidate };
+        return workspace;
+      },
+      setWorkspaceFromDocumentPath: async (documentPath) => {
+        workspace = { configured: true, path: path.dirname(documentPath) };
+        return workspace;
+      },
+      clearWorkspace: () => {
+        workspace = { configured: false, path: '' };
+        return workspace;
+      },
+      callTool: async (functionName, args) => {
+        officeCalls.push([functionName, args]);
+        return { written: 'Magies Office Output/out.xlsx', cellsWritten: 2 };
+      },
+    };
+    bareOfficeHandler = createHandler({ pool, officeProvider });
+    officeHandler = createHandler({
+      pool,
+      officeProvider,
+      requestApproval: async (request) => {
+        approvalRequests.push(request);
+        return approvalAnswer;
+      },
+    });
   });
 
   after(async () => {
@@ -214,6 +272,227 @@ describe('REST API handler', () => {
       assert.ok(json.files[0].name.endsWith('.pdf'));
     } finally {
       await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('lists Office automation tools and grants a workspace over REST', async () => {
+    const listed = mockReqRes({
+      method: 'GET',
+      url: '/v1/office/tools',
+      headers: AUTH,
+    });
+    await officeHandler(listed.req, listed.res);
+    const listedResponse = await listed.result();
+    assert.equal(listedResponse.statusCode, 200);
+    assert.ok(listedResponse.body.tools.some((tool) => tool.functionName === 'office_excel_write'));
+    assert.equal(listedResponse.body.workspace.configured, false);
+
+    const grant = mockReqRes({
+      method: 'POST',
+      url: '/v1/office/workspace',
+      headers: AUTH,
+      body: JSON.stringify({ path: path.join(__dirname) }),
+    });
+    await officeHandler(grant.req, grant.res);
+    const grantResponse = await grant.result();
+    assert.equal(grantResponse.statusCode, 200);
+    assert.equal(grantResponse.body.configured, true);
+  });
+
+  it('calls Office automation tools and refuses interactive-only macros', async () => {
+    const grant = mockReqRes({
+      method: 'POST',
+      url: '/v1/office/workspace',
+      headers: AUTH,
+      body: JSON.stringify({ path: path.join(__dirname) }),
+    });
+    await officeHandler(grant.req, grant.res);
+
+    officeCalls.length = 0;
+    const write = mockReqRes({
+      method: 'POST',
+      url: '/v1/office/tools/office_excel_write',
+      headers: AUTH,
+      body: JSON.stringify({ path: '555.xlsx', start_cell: 'A1', values: [['a']] }),
+    });
+    await officeHandler(write.req, write.res);
+    const writeResponse = await write.result();
+    assert.equal(writeResponse.statusCode, 200);
+    assert.equal(writeResponse.body.ok, true);
+    assert.equal(writeResponse.body.result.cellsWritten, 2);
+    assert.deepEqual(officeCalls[0][0], 'office_excel_write');
+
+    const macro = mockReqRes({
+      method: 'POST',
+      url: '/v1/office/tools/office_macro_run',
+      headers: AUTH,
+      body: JSON.stringify({ path: 'a.ods', script_uri: 'vnd.sun.star.script:x' }),
+    });
+    await officeHandler(macro.req, macro.res);
+    const macroResponse = await macro.result();
+    // Default settings carry no permission mode, which normalises to confirm —
+    // where a person is asked, so the call is allowed to reach the tool.
+    assert.equal(macroResponse.statusCode, 200);
+    assert.deepEqual(officeCalls.at(-1)[0], 'office_macro_run');
+
+    // With nobody to ask, an interactive-only tool is still refused.
+    const previousSettings = testSettings;
+    withSettings({ ai: { ...(testSettings.ai || {}), permissionMode: 'auto' } });
+    try {
+      const unattended = mockReqRes({
+        method: 'POST',
+        url: '/v1/office/tools/office_macro_run',
+        headers: AUTH,
+        body: JSON.stringify({ path: 'a.ods', script_uri: 'vnd.sun.star.script:x' }),
+      });
+      await officeHandler(unattended.req, unattended.res);
+      const refused = await unattended.result();
+      assert.equal(refused.statusCode, 403);
+      assert.equal(refused.body.error, 'interactive_only');
+    } finally {
+      testSettings = previousSettings;
+    }
+  });
+
+  it('returns 503 for Office routes when no provider is wired', async () => {
+    const bare = mockReqRes({
+      method: 'GET',
+      url: '/v1/office/tools',
+      headers: AUTH,
+    });
+    await handler(bare.req, bare.res);
+    const response = await bare.result();
+    assert.equal(response.statusCode, 503);
+  });
+
+  it('observer mode lists only read Office tools and blocks writes', async () => {
+    const previous = testSettings;
+    withSettings({ ai: { ...(testSettings.ai || {}), permissionMode: 'observer' } });
+    try {
+      const listed = mockReqRes({
+        method: 'GET',
+        url: '/v1/office/tools',
+        headers: AUTH,
+      });
+      await officeHandler(listed.req, listed.res);
+      const listedResponse = await listed.result();
+      assert.equal(listedResponse.statusCode, 200);
+      assert.equal(listedResponse.body.permissionMode, 'observer');
+      // Mock provider only exposes write tools — observer filters them out.
+      assert.equal(listedResponse.body.tools.length, 0);
+
+      const grant = mockReqRes({
+        method: 'POST',
+        url: '/v1/office/workspace',
+        headers: AUTH,
+        body: JSON.stringify({ path: path.join(__dirname) }),
+      });
+      await officeHandler(grant.req, grant.res);
+
+      const write = mockReqRes({
+        method: 'POST',
+        url: '/v1/office/tools/office_excel_write',
+        headers: AUTH,
+        body: JSON.stringify({ path: '555.xlsx', start_cell: 'A1', values: [['a']] }),
+      });
+      await officeHandler(write.req, write.res);
+      const writeResponse = await write.result();
+      assert.equal(writeResponse.statusCode, 403);
+      assert.equal(writeResponse.body.error, 'observer_mode');
+    } finally {
+      testSettings = previous;
+    }
+  });
+
+  /** Grant the workspace the Office routes need, on whichever handler is used. */
+  async function grantWorkspace(target) {
+    const grant = mockReqRes({
+      method: 'POST',
+      url: '/v1/office/workspace',
+      headers: AUTH,
+      body: JSON.stringify({ path: path.join(__dirname) }),
+    });
+    await target(grant.req, grant.res);
+    await grant.result();
+  }
+
+  async function callExcelWrite(target) {
+    const write = mockReqRes({
+      method: 'POST',
+      url: '/v1/office/tools/office_excel_write',
+      headers: AUTH,
+      body: JSON.stringify({ path: '555.xlsx', start_cell: 'A1', values: [['a']] }),
+    });
+    await target(write.req, write.res);
+    return write.result();
+  }
+
+  it('asks the user in confirm mode before running an Office tool over REST', async () => {
+    const previous = testSettings;
+    withSettings({ ai: { ...(testSettings.ai || {}), permissionMode: 'confirm' } });
+    approvalRequests.length = 0;
+    officeCalls.length = 0;
+    approvalAnswer = true;
+    try {
+      await grantWorkspace(officeHandler);
+      const response = await callExcelWrite(officeHandler);
+      assert.equal(response.statusCode, 200);
+      assert.equal(approvalRequests.length, 1);
+      assert.equal(approvalRequests[0].functionName, 'office_excel_write');
+      assert.equal(approvalRequests[0].toolId, 'office:excel:write');
+      assert.equal(approvalRequests[0].path, '555.xlsx');
+      assert.equal(officeCalls.length, 1);
+    } finally {
+      testSettings = previous;
+    }
+  });
+
+  it('refuses the call when the user declines', async () => {
+    const previous = testSettings;
+    withSettings({ ai: { ...(testSettings.ai || {}), permissionMode: 'confirm' } });
+    approvalRequests.length = 0;
+    officeCalls.length = 0;
+    approvalAnswer = false;
+    try {
+      await grantWorkspace(officeHandler);
+      const response = await callExcelWrite(officeHandler);
+      assert.equal(response.statusCode, 403);
+      assert.equal(response.body.error, 'approval_denied');
+      assert.equal(officeCalls.length, 0);
+    } finally {
+      approvalAnswer = true;
+      testSettings = previous;
+    }
+  });
+
+  it('denies Office calls in confirm mode when nothing can ask the user', async () => {
+    const previous = testSettings;
+    withSettings({ ai: { ...(testSettings.ai || {}), permissionMode: 'confirm' } });
+    officeCalls.length = 0;
+    try {
+      await grantWorkspace(bareOfficeHandler);
+      const response = await callExcelWrite(bareOfficeHandler);
+      assert.equal(response.statusCode, 403);
+      assert.equal(response.body.error, 'approval_denied');
+      assert.equal(officeCalls.length, 0);
+    } finally {
+      testSettings = previous;
+    }
+  });
+
+  it('runs without asking in automatic mode', async () => {
+    const previous = testSettings;
+    withSettings({ ai: { ...(testSettings.ai || {}), permissionMode: 'auto' } });
+    approvalRequests.length = 0;
+    officeCalls.length = 0;
+    try {
+      await grantWorkspace(officeHandler);
+      const response = await callExcelWrite(officeHandler);
+      assert.equal(response.statusCode, 200);
+      assert.equal(approvalRequests.length, 0);
+      assert.equal(officeCalls.length, 1);
+    } finally {
+      testSettings = previous;
     }
   });
 });

@@ -69,6 +69,20 @@ function createOfficeWorkspace({ fileSystem = fs } = {}) {
 
   const getStatus = () => ({ configured: root !== '', path: root });
 
+  /**
+   * Grant the parent directory of a saved document. Used when the user asks
+   * the AI to work on the open tab without first picking a folder.
+   */
+  const setRootFromDocumentPath = async (documentPath) => {
+    if (typeof documentPath !== 'string' || !path.isAbsolute(documentPath)) {
+      throw new Error('An absolute document path is required to grant its folder');
+    }
+    const resolvedFile = await fileSystem.realpath(documentPath);
+    const stat = await fileSystem.stat(resolvedFile);
+    if (!stat.isFile()) throw new Error('The document path is not a file');
+    return setRoot(path.dirname(resolvedFile));
+  };
+
   const resolveInput = async (relativePath) => {
     const workspaceRoot = requireRoot();
     const normalized = relativeCandidate(relativePath, 'Document path');
@@ -186,6 +200,7 @@ function createOfficeWorkspace({ fileSystem = fs } = {}) {
     listDocuments,
     resolveInput,
     setRoot,
+    setRootFromDocumentPath,
     uniqueOutputPath,
   };
 }

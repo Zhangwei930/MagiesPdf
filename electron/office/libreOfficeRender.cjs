@@ -1,5 +1,6 @@
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { withEngineLock } = require('./engineLock.cjs');
 const { editorTypeFor } = require('./session.cjs');
 
 /**
@@ -17,7 +18,7 @@ const { editorTypeFor } = require('./session.cjs');
 const CONVERT_TIMEOUT_MS = 120000;
 
 function createLibreOfficeRenderer(deps) {
-  const { executable, tempRoot, fs, run, uniqueId } = deps;
+  const { executable, tempRoot, fs, run, uniqueId, withLock = withEngineLock } = deps;
 
   return {
     async toPdf(sourcePath) {
@@ -38,7 +39,9 @@ function createLibreOfficeRenderer(deps) {
       // opening at once into a failure. Each conversion gets its own, inside
       // the work directory that is about to be thrown away anyway.
       const profile = pathToFileURL(path.join(workDir, 'profile')).href;
-      const result = await run(
+      // Serialised with every other engine call: a second LibreOffice while
+      // one is live fails to start, and the error names none of that.
+      const result = await withLock(() => run(
         executable,
         [
           '--headless',
@@ -54,7 +57,7 @@ function createLibreOfficeRenderer(deps) {
           sourcePath,
         ],
         { timeout: CONVERT_TIMEOUT_MS },
-      );
+      ));
       if (result.code !== 0) {
         throw new Error(`LibreOffice failed with exit ${result.code}: ${result.stderr ?? ''}`.trim());
       }

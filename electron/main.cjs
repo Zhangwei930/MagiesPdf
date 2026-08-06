@@ -7,6 +7,7 @@ const { registerIpc } = require('./ipc.cjs');
 const settings = require('./settings.cjs');
 const { startUpdater } = require('./updater/index.cjs');
 const { syncApiServer, stopApiServer } = require('./api/server.cjs');
+const { createApprovalGate } = require('./api/approvalGate.cjs');
 const { MAIN_WINDOW_WEB_PREFERENCES, isTrustedRendererUrl } = require('./security.cjs');
 
 /**
@@ -31,6 +32,19 @@ let mainWindow = null;
 /** @type {JobPool | null} */
 let pool = null;
 let ipcServices = null;
+
+/**
+ * Office tools reached over the local REST API (which is how the magies-office
+ * MCP server talks to this app) ask here in "confirm" mode. Without it a CLI
+ * agent holding the API token would edit documents with no in-app question,
+ * which is the one thing the permission mode is supposed to prevent.
+ */
+const restApprovals = createApprovalGate({
+  // The question is drawn in the AI panel, next to the work it is about — see
+  // electron/api/rendererApprovalPrompt.cjs. Before the window exists there is
+  // nobody to ask, and the gate's own answer for that is no.
+  prompt: (request) => ipcServices?.requestToolApproval?.(request) ?? Promise.resolve('deny'),
+});
 
 /**
  * Documents asked for before the renderer could receive them.
@@ -173,7 +187,14 @@ if (!app.requestSingleInstanceLock()) {
       getWindow: () => mainWindow,
       trustedRendererUrl: RENDERER_URL,
       onSettingsChanged: () => {
-        void syncApiServer({ pool }).catch((error) => {
+        // Changing the permission mode (or the token) starts a fresh run:
+        // tools allowed "for this run" have to be asked about again.
+        restApprovals.reset();
+        void syncApiServer({
+          pool,
+          officeProvider: ipcServices?.officeAutomation ?? null,
+          requestApproval: restApprovals.request,
+        }).catch((error) => {
           console.error('[magiespdf] REST API failed to start:', error.message);
         });
       },
@@ -184,7 +205,12 @@ if (!app.requestSingleInstanceLock()) {
     requestOpen(documentPathsFromArgv(process.argv, { isPackaged: app.isPackaged }));
 
     // Honour a previously-enabled API setting from the last session.
-    void syncApiServer({ pool }).catch((error) => {
+    // Office automation is the same provider the built-in AI uses.
+    void syncApiServer({
+      pool,
+      officeProvider: ipcServices?.officeAutomation ?? null,
+      requestApproval: restApprovals.request,
+    }).catch((error) => {
       console.error('[magiespdf] REST API failed to start:', error.message);
     });
 

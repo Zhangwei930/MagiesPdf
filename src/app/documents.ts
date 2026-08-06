@@ -42,6 +42,9 @@ export interface EditorSession {
   editorType?: string;
 }
 
+import type { TextHighlight } from './pdf/highlights.ts';
+import type { InkAnnotation } from './pdf/inkAnnotation.ts';
+
 export interface DocumentState {
   id: string;
   name: string;
@@ -66,6 +69,10 @@ export interface DocumentState {
   editor: EditorSession | null;
   /** What the engine last said about unsaved changes. Meaningless without one. */
   engineModified: boolean;
+  /** Highlights added to the document via the viewer */
+  highlights?: Record<number, TextHighlight[]>;
+  /** Ink annotations added to the document via the viewer */
+  inkAnnotations?: Record<number, InkAnnotation[]>;
 }
 
 /** Undo steps kept, at most. Each one is a whole copy of the document. */
@@ -114,6 +121,8 @@ export function createDocument(file: PickedFile): DocumentState {
     origin,
     editor: file.editor ?? null,
     engineModified: false,
+    highlights: {},
+    inkAnnotations: {},
   };
 }
 
@@ -284,6 +293,31 @@ export function openDocument(
 
   if (existing) return { documents: [...documents], activeId: existing.id };
   return { documents: [...documents, incoming], activeId: incoming.id };
+}
+
+/**
+ * Swaps one document for another, keeping its place in the tab strip.
+ *
+ * An AI write rewrites a file the engine already holds, so the old session dies
+ * and a fresh one takes over the same path. Closing the tab and opening it again
+ * empties the list for a moment — the shell falls back to the welcome screen and
+ * the whole window appears to restart. Replacing in place never does that.
+ *
+ * Any other tab left on the same file goes with it: the document was reopened,
+ * not duplicated.
+ */
+export function replaceDocument(
+  documents: readonly DocumentState[],
+  id: string,
+  incoming: DocumentState,
+): DocumentState[] {
+  const index = documents.findIndex((document) => document.id === id);
+  if (index < 0) return [...documents, incoming];
+  return documents.flatMap((document, at) => {
+    if (at === index) return [incoming];
+    if (incoming.path !== '' && document.path === incoming.path) return [];
+    return [document];
+  });
 }
 
 export function closeDocument(

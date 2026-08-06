@@ -5,15 +5,39 @@ const {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } = require('@modelcontextprotocol/sdk/types.js');
-const { buildMcpTools } = require('./adapter.cjs');
+const { buildMcpTools, buildOfficeMcpTools } = require('./adapter.cjs');
 
-function createMcpServer({ catalog, callTool }) {
-  const definitions = buildMcpTools(catalog);
-  const toolsByName = new Map();
-  for (const definition of definitions) {
+/**
+ * MCP server exposing both PDF catalog tools and Office automation tools.
+ *
+ * Catalog tools keep their encoded names (edit__get-info). Office tools use
+ * the automation function names (office_excel_write) so agents call the same
+ * surface as the built-in runtime.
+ */
+function createMcpServer({
+  catalog = [],
+  officeTools = [],
+  callTool,
+  callOfficeTool,
+}) {
+  const catalogDefinitions = buildMcpTools(catalog);
+  const officeDefinitions = buildOfficeMcpTools(officeTools);
+
+  const catalogByName = new Map();
+  for (const definition of catalogDefinitions) {
     const tool = catalog.find((entry) => entry.id === definition.toolId);
-    if (tool) toolsByName.set(definition.name, tool);
+    if (tool) catalogByName.set(definition.name, tool);
   }
+
+  const officeByName = new Map();
+  for (const definition of officeDefinitions) {
+    officeByName.set(definition.name, definition);
+  }
+
+  const listed = [
+    ...catalogDefinitions.map(({ toolId: _toolId, ...definition }) => definition),
+    ...officeDefinitions.map(({ toolId: _toolId, kind: _kind, functionName: _fn, ...definition }) => definition),
+  ];
 
   const server = new Server(
     { name: 'magies-office', version: require('../../package.json').version },
@@ -21,19 +45,33 @@ function createMcpServer({ catalog, callTool }) {
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: definitions.map(({ toolId: _toolId, ...definition }) => definition),
+    tools: listed,
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const tool = toolsByName.get(request.params.name);
-    if (!tool) {
-      return {
-        content: [{ type: 'text', text: `Unknown Magies Office tool: ${request.params.name}` }],
-        isError: true,
-      };
-    }
+    const name = request.params.name;
+    const args = request.params.arguments || {};
+
     try {
-      const result = await callTool(tool, request.params.arguments || {});
+      if (officeByName.has(name)) {
+        if (typeof callOfficeTool !== 'function') {
+          throw new Error('Office automation is not available on this Magies Office MCP server');
+        }
+        const definition = officeByName.get(name);
+        const result = await callOfficeTool(definition, args);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      const tool = catalogByName.get(name);
+      if (!tool) {
+        return {
+          content: [{ type: 'text', text: `Unknown Magies Office tool: ${name}` }],
+          isError: true,
+        };
+      }
+      const result = await callTool(tool, args);
       return {
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
       };

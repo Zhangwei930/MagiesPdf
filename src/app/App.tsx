@@ -21,6 +21,13 @@ import {
   classifyOutput,
 } from './toolApply.ts';
 import { officeUiThemeFor, partitionDocumentPaths } from './office.ts';
+import {
+  EMPTY_APPROVAL_STATE,
+  withDecision,
+  withRequest,
+  withTimeout,
+  type ApprovalDecision,
+} from './ai/officeApprovals.ts';
 import { createDefaultBlankPdf } from './pdf/directEdit.ts';
 import { CommandPalette } from './components/CommandPalette.tsx';
 import { ApplyToolPanel } from './components/ApplyToolPanel.tsx';
@@ -58,6 +65,9 @@ const PipelinePage = lazy(() =>
 const SettingsPanel = lazy(() =>
   import('./components/SettingsPanel.tsx').then((module) => ({ default: module.SettingsPanel })),
 );
+const OnboardingWizard = lazy(() =>
+  import('./components/OnboardingWizard.tsx').then((module) => ({ default: module.OnboardingWizard })),
+);
 const SignPage = lazy(() =>
   import('./components/SignPage.tsx').then((module) => ({ default: module.SignPage })),
 );
@@ -67,6 +77,13 @@ const OfficeEditor = lazy(() =>
 const AIChatPanel = lazy(() =>
   import('./components/AIChatPanel.tsx').then((module) => ({ default: module.AIChatPanel })),
 );
+
+/**
+ * How long a rewritten document waits for the next write before the editor is
+ * reopened. One AI request often rewrites the same file several times, and each
+ * reopen is a full engine boot — long enough to look like the app restarting.
+ */
+const REOPEN_SETTLE_MS = 900;
 
 /** Shown while one of the screens above is being fetched. */
 function ScreenFallback() {
@@ -80,12 +97,12 @@ function ScreenFallback() {
 type MainView =
   | { name: 'welcome' }
   | { name: 'tool'; toolId: string; initialFile?: PickedFile }
-  | { name: 'document' }
-  | { name: 'settings' };
+  | { name: 'document' };
 
 export function App() {
   const ready = useApp((s) => s.ready);
   const locale = useApp((s) => s.locale);
+  const updateSettings = useApp((s) => s.updateSettings);
   const startupError = useApp((s) => s.startupError);
   const initialize = useApp((s) => s.initialize);
   const documents = useApp((s) => s.documents);
@@ -123,6 +140,28 @@ export function App() {
   // The Office files being rendered right now. Rendering is seconds of silence
   // otherwise, which reads as the app having ignored the click.
   const [opening, setOpening] = useState<string[]>([]);
+
+  /**
+   * Clears the drop overlay whatever swallowed the event.
+   *
+   * A tool's own drop zone calls `stopPropagation`, so dropping on one never
+   * reaches the window handler below and the depth counter would stay above
+   * zero — leaving "release to open" on screen for good. These listeners are
+   * on the capture phase, which a child cannot stop, and `dragend` covers a
+   * drag abandoned outside the window.
+   */
+  useEffect(() => {
+    const clear = () => {
+      dragDepth.current = 0;
+      setDropping(false);
+    };
+    window.addEventListener('drop', clear, true);
+    window.addEventListener('dragend', clear, true);
+    return () => {
+      window.removeEventListener('drop', clear, true);
+      window.removeEventListener('dragend', clear, true);
+    };
+  }, []);
 
   const activeDocument = documents.find((d) => d.id === activeDocumentId) ?? null;
   const applyToolToDocument = useApp((s) => s.applyToolToDocument);
@@ -267,8 +306,28 @@ export function App() {
   }, []);
 
   const openWelcome = useCallback(() => setMain({ name: 'welcome' }), []);
-  const openSettings = useCallback(() => setMain({ name: 'settings' }), []);
+  /**
+   * Settings is a dialog over whatever is open, not a screen of its own: it is
+   * a place you visit for one change and leave, and losing your document view
+   * to reach it costs more than the dialog does.
+   */
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const [pendingAiPrompt, setPendingAiPrompt] = useState<string | null>(null);
+  /** Closed for this session, whether or not the user asked to keep it away. */
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  /** Tabs whose engine session the AI closed, waiting for the rewritten file. */
+  const [reloadingIds, setReloadingIds] = useState<string[]>([]);
+  /** Confirm-mode questions from outside this window, and what was decided. */
+  const [officeApprovals, setOfficeApprovals] = useState(EMPTY_APPROVAL_STATE);
+
   const openAi = useCallback(() => {
+    setAiMounted(true);
+    setAiOpen(true);
+  }, []);
+
+  const handleAiPrompt = useCallback((prompt: string) => {
+    setPendingAiPrompt(prompt);
     setAiMounted(true);
     setAiOpen(true);
   }, []);
@@ -320,6 +379,106 @@ export function App() {
     const paths = await bridge().pickDocumentPaths(false);
     await openPaths(paths);
   }, [openPaths]);
+
+  /**
+   * Reopens a path the AI just rewrote, into the tab that already held it.
+   *
+   * The engine session behind that tab was closed before the write (a stale
+   * Editor.bin would otherwise overwrite the result on the next save), so the
+   * document has to come back through a new session either way. What must not
+   * happen is the tab disappearing in between: with one document open the shell
+   * falls back to the welcome screen, and the window looks like it restarted.
+   */
+  const reopenApplied = useCallback(
+    async (absolutePath: string) => {
+      const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase();
+      const target = norm(absolutePath);
+      const held = useApp
+        .getState()
+        .documents.find((doc) => doc.path && norm(doc.path) === target && doc.editor);
+      try {
+        if (!held) {
+          // Not open here — the AI wrote a file the user is not looking at.
+          await openPaths([absolutePath]);
+          return;
+        }
+        const uiTheme = officeUiThemeFor(settings.theme, darkMode);
+        const [file] = await bridge().openInEditor([absolutePath], { uiTheme });
+        if (file) useApp.getState().replaceDocument(held.id, file);
+      } catch (cause) {
+        console.warn('[app] failed to reload AI-updated document:', cause);
+      } finally {
+        setReloadingIds([]);
+      }
+    },
+    [darkMode, openPaths, settings.theme],
+  );
+
+  useEffect(() => {
+    if (!hasBridge()) return undefined;
+    /** Set while a write is in flight, so the reopen can be coalesced. */
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    const unsubClosed = bridge().onOfficeSessionsClosed(({ sessions }) => {
+      const closedIds = new Set(sessions.map((session) => session.sessionId));
+      if (closedIds.size === 0) return;
+      if (pending) {
+        clearTimeout(pending);
+        pending = null;
+      }
+      // The tab stays; only its editor is replaced by a "reloading" panel,
+      // because the frame behind it no longer has a session to talk to.
+      setReloadingIds(
+        useApp
+          .getState()
+          .documents.filter((doc) => doc.editor && closedIds.has(doc.editor.sessionId))
+          .map((doc) => doc.id),
+      );
+    });
+    const unsubApplied = bridge().onOfficeDocumentApplied(({ path: absolutePath }) => {
+      if (!absolutePath) return;
+      if (pending) clearTimeout(pending);
+      // One AI request often writes the same file several times over. Waiting
+      // for the writes to stop reopens the editor once instead of once per
+      // write — each reopen is a full engine boot.
+      pending = setTimeout(() => {
+        pending = null;
+        void reopenApplied(absolutePath);
+      }, REOPEN_SETTLE_MS);
+    });
+    return () => {
+      if (pending) clearTimeout(pending);
+      unsubClosed();
+      unsubApplied();
+    };
+  }, [reopenApplied]);
+
+  /**
+   * Confirm-mode questions about Office tools called from outside this window.
+   *
+   * The subscription lives here rather than in the panel: the panel is lazy, and
+   * a request nobody draws is a request that times out denied. Arriving with the
+   * panel closed opens it — the answer belongs next to the work being watched.
+   */
+  const answerOfficeApproval = useCallback((approvalId: string, decision: ApprovalDecision) => {
+    setOfficeApprovals((current) => withDecision(current, approvalId, decision, Date.now()));
+    void bridge().respondOfficeToolApproval(approvalId, decision).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!hasBridge()) return undefined;
+    const unsubRequest = bridge().onOfficeToolApproval((request) => {
+      setOfficeApprovals((current) => withRequest(current, request));
+      setAiMounted(true);
+      setAiOpen(true);
+    });
+    const unsubCleared = bridge().onOfficeToolApprovalCleared(({ approvalId }) => {
+      setOfficeApprovals((current) => withTimeout(current, approvalId, Date.now()));
+    });
+    return () => {
+      unsubRequest();
+      unsubCleared();
+    };
+  }, []);
 
   const createOfficeDocument = useCallback(
     async (kind: OfficeCreateKind) => {
@@ -540,8 +699,7 @@ export function App() {
   // PDF has its own WPS-style chrome inside Viewer; the toolbox Ribbon only
   // belongs on tool pages (and the welcome never shows it).
   const pdfDocumentOpen = view.name === 'document' && Boolean(activeDocument && !activeDocument.editor);
-  const showRibbon =
-    view.name !== 'settings' && view.name !== 'welcome' && !officeEditor && !pdfDocumentOpen;
+  const showRibbon = view.name !== 'welcome' && !officeEditor && !pdfDocumentOpen;
 
   return (
     <div
@@ -577,20 +735,20 @@ export function App() {
         });
       }}
     >
-      <header className="drag-region flex h-11 shrink-0 items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-3">
+      <header className="drag-region flex h-12 shrink-0 items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-3">
         <div className="w-[68px] shrink-0" />
 
         <button
           type="button"
           onClick={openWelcome}
-          className="no-drag flex shrink-0 items-center gap-2 rounded-md px-2 py-1 text-[13px] font-semibold tracking-tight transition-colors hover:bg-[var(--surface-hover)]"
+          className="no-drag flex shrink-0 items-center gap-2 rounded-md px-2 py-1 text-[14.5px] font-semibold tracking-tight transition-colors hover:bg-[var(--surface-hover)]"
         >
           <img
             src={`${import.meta.env.BASE_URL}logo.png`}
             alt=""
-            width={18}
-            height={18}
-            className="h-[18px] w-[18px] select-none"
+            width={24}
+            height={24}
+            className="h-6 w-6 select-none"
             draggable={false}
           />
           {t('appName', locale)}
@@ -649,15 +807,11 @@ export function App() {
           <main
             className={clsx(
               'min-h-0 flex-1 bg-[var(--surface-app)]',
-              view.name === 'settings' || view.name === 'document'
-                ? 'overflow-hidden'
-                : 'overflow-y-auto',
+              view.name === 'document' ? 'overflow-hidden' : 'overflow-y-auto',
             )}
           >
             {/* One boundary for every lazily-loaded screen below. */}
             <Suspense fallback={<ScreenFallback />}>
-            {view.name === 'settings' && <SettingsPanel onBack={openWelcome} />}
-
             {/*
               Office engines stay mounted for every open tab. Switching only
               toggles visibility — remounting the iframe reloads the whole
@@ -673,15 +827,38 @@ export function App() {
                   // Inactive editors stay in the tree so their frames keep state.
                   aria-hidden={!active}
                 >
+                  {reloadingIds.includes(doc.id) ? (
+                    /* Its engine session is gone: the frame has nothing left to
+                       talk to, so it is replaced rather than left looking live. */
+                    <div
+                      className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[var(--bg)]"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <Loader2 size={24} className="animate-spin text-[var(--accent)]" />
+                      <p className="text-sm font-medium">{t('officeApplyingAiEdit', locale)}</p>
+                      <p className="max-w-sm truncate text-xs text-[var(--text-muted)]">{doc.name}</p>
+                    </div>
+                  ) : (
                   <OfficeEditor
                     document={doc}
-                    onModifiedChange={(modified) => setEngineModified(doc.id, modified)}
+                    onModifiedChange={(modified) => {
+                      setEngineModified(doc.id, modified);
+                      // The main process refuses AI writes to a dirty document,
+                      // so it has to hear about the edit as it happens.
+                      if (doc.editor && hasBridge()) {
+                        void bridge()
+                          .setEditorModified(doc.editor.sessionId, modified)
+                          .catch(() => {});
+                      }
+                    }}
                     saveRequestedAt={
                       engineSaveRequest?.id === doc.id ? engineSaveRequest.at : 0
                     }
                     onRequest={(what) => void handleEditorRequest(doc, what)}
                     onExportReady={(title) => void handleEditorExport(doc, title)}
                   />
+                  )}
                 </div>
               );
             })}
@@ -698,6 +875,7 @@ export function App() {
                 onOpenDocument={() => void openDocumentPicker()}
                 onOpenRecent={(path) => void openPaths([path])}
                 onOpenSettings={openSettings}
+                onAiPrompt={handleAiPrompt}
               />
             )}
 
@@ -716,18 +894,25 @@ export function App() {
             </Suspense>
           </main>
         </div>
+
         {aiMounted && (
           <Suspense fallback={null}>
             <AIChatPanel
               open={aiOpen}
               locale={locale}
               activeDocument={activeDocument}
+              pendingPrompt={pendingAiPrompt}
+              onClearPendingPrompt={() => setPendingAiPrompt(null)}
               onClose={() => setAiOpen(false)}
               onOpenSettings={() => {
                 setAiOpen(false);
                 openSettings();
               }}
               onPreviewFile={showDocument}
+              onOpenPaths={(paths) => { void openPaths(paths); }}
+              officeApprovals={officeApprovals.pending}
+              officeApprovalRecords={officeApprovals.records}
+              onAnswerOfficeApproval={answerOfficeApproval}
             />
           </Suspense>
         )}
@@ -1021,6 +1206,29 @@ export function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {settingsOpen && (
+        <Suspense fallback={null}>
+          <SettingsPanel onBack={() => setSettingsOpen(false)} />
+        </Suspense>
+      )}
+
+
+      {ready && settings.onboardingComplete !== true && !onboardingDismissed && (
+        <Suspense fallback={null}>
+          <OnboardingWizard
+            open={true}
+            locale={locale}
+            // Closing always ends the tour for this session; the checkbox is
+            // what decides whether it also ends for the next launch.
+            onClose={(dontShowAgain) => {
+              setOnboardingDismissed(true);
+              if (dontShowAgain) void updateSettings({ onboardingComplete: true });
+            }}
+            onOpenSettings={openSettings}
+          />
+        </Suspense>
       )}
     </div>
   );

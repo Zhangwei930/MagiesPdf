@@ -7,10 +7,13 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFile, spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
+const { withEngineLock } = require('./engineLock.cjs');
 
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const MAX_RESULT_BYTES = 2 * 1024 * 1024;
 const UNO_TIMEOUT_MS = 120000;
+/** One retry, because the engine's refusal to accept is not about the request. */
+const ACCEPTOR_ATTEMPTS = 2;
 
 function libreOfficePythonCandidates(soffice, platform = process.platform) {
   if (platform === 'win32') {
@@ -63,6 +66,24 @@ function officeAcceptArgs(pipeName, profileUrl) {
 
 function officeLaunch(soffice, args) {
   return { command: soffice, args };
+}
+
+/**
+ * Where LibreOffice puts the socket backing a named pipe.
+ *
+ * Not inside the user-installation directory, so tearing the profile down
+ * leaves it behind: one file in /tmp per Office operation, for the life of the
+ * machine, and LibreOffice takes longer to start the more of them it finds.
+ * Windows named pipes have no filesystem entry, so there is nothing to remove.
+ */
+function officePipeSocketPath(pipeName, {
+  platform = process.platform,
+  pipeDirectory = '/tmp',
+  uid,
+} = {}) {
+  if (platform === 'win32') return '';
+  const owner = uid ?? (typeof process.getuid === 'function' ? process.getuid() : '');
+  return path.join(pipeDirectory, `OSL_PIPE_${owner}_${pipeName}`);
 }
 
 function unpackedWorkerPath(candidate) {
@@ -118,15 +139,15 @@ function createUnoRunner({
   executePython = defaultExecutePython,
   randomId = crypto.randomUUID,
   resolvePython = resolveLibreOfficePython,
+  /** Where the pipe socket lands; injected so the cleanup can be tested. */
+  pipeDirectory = '/tmp',
   spawnOffice = spawn,
   workerPath = unpackedWorkerPath(path.join(__dirname, 'uno_worker.py')),
   platform = process.platform,
   environment = process.env,
+  withLock = withEngineLock,
 } = {}) {
-  const run = async (request) => {
-    if (!request || typeof request !== 'object' || !request.executable) {
-      throw new Error('A LibreOffice executable and UNO request are required');
-    }
+  const execute = async (request) => {
     const { executable, signal, ...operation } = request;
     const pipeName = `magies_${String(randomId()).replace(/[^A-Za-z0-9_]/g, '_')}`;
     const workerRequest = { ...operation, pipeName };
@@ -184,6 +205,9 @@ function createUnoRunner({
         // LibreOffice may already have exited after the document closed.
       }
       await waitForOfficeExit(office, 1500);
+      // Only once it is gone: a live LibreOffice recreates its own socket.
+      const socketPath = officePipeSocketPath(pipeName, { platform, pipeDirectory });
+      if (socketPath) await fileSystem.rm(socketPath, { force: true });
       await fileSystem.rm(temporaryDirectory, {
         recursive: true,
         force: true,
@@ -191,6 +215,34 @@ function createUnoRunner({
         retryDelay: 100,
       });
     }
+  };
+
+  /**
+   * Serialised: a second LibreOffice while one is live never opens its
+   * acceptor, and the caller sees `couldn't connect to pipe` instead of
+   * anything that names the contention.
+   */
+  const run = async (request) => {
+    if (!request || typeof request !== 'object' || !request.executable) {
+      throw new Error('A LibreOffice executable and UNO request are required');
+    }
+    return withLock(async () => {
+      let refused;
+      for (let attempt = 0; attempt < ACCEPTOR_ATTEMPTS; attempt += 1) {
+        try {
+          return await execute(request);
+        } catch (error) {
+          // LibreOffice intermittently starts without accepting on the pipe it
+          // was given. Nothing in the request causes it and nothing in the
+          // profile clears it; an entirely fresh instance does. Anything else
+          // is the engine's answer about this document, and repeating it would
+          // double the wait and change nothing.
+          if (!/Unable to connect to LibreOffice/.test(String(error?.message))) throw error;
+          refused = error;
+        }
+      }
+      throw refused;
+    });
   };
 
   return { run };
@@ -210,6 +262,7 @@ module.exports = {
   libreOfficePythonCandidates,
   officeAcceptArgs,
   officeLaunch,
+  officePipeSocketPath,
   pythonEnvironment,
   resolveLibreOfficePython,
   runUnoOperation,

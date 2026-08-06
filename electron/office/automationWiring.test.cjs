@@ -15,6 +15,11 @@ describe('Office Agent wiring', () => {
   it('shares one local Office provider with the Agent and folder-grant IPC handlers', () => {
     assert.match(ipcSource, /createOfficeAutomationProvider/);
     assert.match(ipcSource, /officeToolProvider:\s*officeAutomation/);
+    // REST/MCP share the same provider instance as the built-in AI.
+    assert.match(ipcSource, /officeAutomation,/);
+    const mainSource = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'utf8');
+    assert.match(mainSource, /officeProvider:\s*ipcServices\?\.officeAutomation/);
+    assert.match(ipcSource, /onBeforeDocumentWrite|closeEditorsForPath|office:documentApplied/);
     assert.match(ipcSource, /ai:workspaceStatus/);
     assert.match(ipcSource, /ai:pickWorkspace/);
     assert.match(ipcSource, /ai:clearWorkspace/);
@@ -22,9 +27,50 @@ describe('Office Agent wiring', () => {
     assert.match(ipcSource, /filter\(\(\{ unattended \}\) => unattended !== false\)/);
   });
 
+  it('refuses to overwrite a document whose open tab has unsaved edits', () => {
+    // The renderer owns the dirty flag; the main process cannot refuse a write
+    // it never hears about, and closing the session would drop those edits.
+    const appSource = fs.readFileSync(path.join(root, 'src', 'app', 'App.tsx'), 'utf8');
+    assert.match(appSource, /setEditorModified/);
+    assert.match(preloadSource, /setEditorModified/);
+    assert.match(ipcSource, /office:editorModified/);
+    assert.match(ipcSource, /session\.modified/);
+  });
+
+  it('gates REST/MCP Office calls behind the in-app approval prompt', () => {
+    const mainSource = fs.readFileSync(path.join(root, 'electron', 'main.cjs'), 'utf8');
+    assert.match(mainSource, /createApprovalGate/);
+    // Both start paths — first launch and every settings change — must pass it,
+    // or confirm mode silently stops asking.
+    assert.equal(mainSource.match(/requestApproval:\s*restApprovals\.request/g)?.length, 2);
+    assert.match(mainSource, /restApprovals\.reset\(\)/);
+    // The question is drawn in the AI panel, not in an OS dialog that steals
+    // focus and cannot say which document it means.
+    assert.match(mainSource, /requestToolApproval/);
+    assert.doesNotMatch(mainSource, /showMessageBox/);
+  });
+
+  it('asks in the AI panel, and keeps the answer where the user can see it', () => {
+    const appSource = fs.readFileSync(path.join(root, 'src', 'app', 'App.tsx'), 'utf8');
+    const panelSource = fs.readFileSync(
+      path.join(root, 'src', 'app', 'components', 'AIChatPanel.tsx'), 'utf8',
+    );
+    // App owns the subscription because the panel is lazy: a request nobody
+    // draws is a request that times out denied.
+    assert.match(appSource, /onOfficeToolApproval\(/);
+    assert.match(appSource, /setAiOpen\(true\)/);
+    assert.match(appSource, /officeApprovals=\{officeApprovals\.pending\}/);
+    assert.match(panelSource, /<OfficeApprovalCard/);
+    assert.match(panelSource, /<OfficeApprovalTrail/);
+    assert.match(ipcSource, /office:toolApprovalResponse/);
+    assert.match(preloadSource, /onOfficeToolApproval\b/);
+    assert.match(preloadSource, /respondOfficeToolApproval/);
+  });
+
   it('exposes only status, explicit folder selection, and clear actions to the renderer', () => {
     assert.match(preloadSource, /getAiWorkspaceStatus/);
     assert.match(preloadSource, /pickAiWorkspace/);
+    assert.match(preloadSource, /grantAiWorkspaceForPath/);
     assert.match(preloadSource, /clearAiWorkspace/);
     assert.doesNotMatch(preloadSource, /setAiWorkspaceRoot/);
   });
@@ -40,6 +86,24 @@ describe('Office Agent wiring', () => {
     assert.match(workerSource, /'presentation_add_slide':/);
     assert.match(workerSource, /'presentation_duplicate_slide':/);
     assert.match(workerSource, /'presentation_delete_slide':/);
+  });
+
+  it('allow-lists the authoring and styling operations a generated document needs', () => {
+    // Without these the agent can only replace text that is already there, and
+    // a deck it builds keeps the template default — the "unreadable output"
+    // this set exists to fix.
+    assert.match(workerSource, /'word_append':/);
+    assert.match(workerSource, /'word_format_text':/);
+    assert.match(workerSource, /'excel_compose_table':/);
+    assert.match(workerSource, /'presentation_format_text':/);
+    assert.match(workerSource, /'presentation_set_background':/);
+    // Paragraph styles are what make a heading a heading.
+    assert.match(workerSource, /WORD_BLOCK_STYLES = \{/);
+    assert.match(workerSource, /'heading1': 'Heading 1'/);
+    // VertJustify takes the enum; the constant group of the same name throws.
+    assert.match(workerSource, /uno\.Enum\(\s*'com\.sun\.star\.table\.CellVertJustify'/);
+    assert.match(workerSource, /EXCEL_TABLE_THEMES = \{/);
+    assert.match(workerSource, /com\.sun\.star\.drawing\.Background/);
   });
 
   it('allow-lists the V3 media, notes, header-footer, and template operations', () => {
@@ -140,5 +204,78 @@ describe('Office Agent wiring', () => {
 
   it('returns Excel range styles so the Agent can verify formatting', () => {
     assert.match(workerSource, /'styles': style_summary/);
+  });
+
+  it('waits for LibreOffice as long as the Node side is willing to', () => {
+    // The bridge used to give up after a fixed 300 × 0.1s while the Node side
+    // was still willing to wait two minutes, so a slow start — several
+    // instances coming up at once, which is what back-to-back tool calls
+    // produce — failed outright instead of merely taking longer.
+    const budget = /CONNECT_TIMEOUT_SECONDS = (\d+)/.exec(workerSource);
+    assert.ok(budget, 'the bridge names its connection budget');
+    const runnerSource = fs.readFileSync(path.join(root, 'electron', 'office', 'unoRunner.cjs'), 'utf8');
+    const timeout = Number(/UNO_TIMEOUT_MS = (\d+)/.exec(runnerSource)[1]);
+    assert.ok(
+      Number(budget[1]) * 1000 < timeout,
+      'the bridge must give up before the process that is waiting on it',
+    );
+    assert.ok(Number(budget[1]) >= 30, 'and not before a loaded machine can start');
+    // The runner starts a second instance after a refusal, so the user waits
+    // this twice before hearing that nothing worked.
+    const attempts = Number(/ACCEPTOR_ATTEMPTS = (\d+)/.exec(runnerSource)[1]);
+    assert.ok(Number(budget[1]) * attempts <= 120, 'two attempts must still answer inside two minutes');
+  });
+
+  it('draws a worksheet chart the way it was asked for, beside its data', () => {
+    // BarDiagram.Vertical means "bars run horizontally", so a column chart is
+    // Vertical=False. The deck composer had it right and the worksheet chart had
+    // it inverted, which turned every requested column chart into a bar chart.
+    const orientations = workerSource.match(/diagram\.Vertical = chart_type == '(\w+)'/g) || [];
+    assert.equal(orientations.length, 2, 'both chart paths set the orientation');
+    assert.deepEqual([...new Set(orientations)].length, 1, 'and they must agree');
+    assert.match(workerSource, /diagram\.Vertical = chart_type == 'bar'/);
+
+    // Anchored to the data instead of a constant corner: a fixed rectangle at
+    // the top left drops every chart on top of the table it describes.
+    assert.match(workerSource, /rectangle\.X = int\(anchor\.Position\.X\)/);
+    assert.doesNotMatch(workerSource, /rectangle\.X = 1000/);
+  });
+
+  it('leaves ratio columns out of a composed table\'s totals row', () => {
+    // Three months at 62% do not add up to 187%. Summing whatever has a number
+    // format catches the percentage columns too, and the reader bounces on it.
+    assert.match(workerSource, /if '%' in code:\n\s+continue/);
+  });
+
+  it('composes a whole Word document in one call, styled through the style family', () => {
+    assert.match(workerSource, /'word_compose':/);
+    assert.match(workerSource, /WORD_THEMES = \{/);
+    // Restyling the named styles is what a heading actually is: the navigator,
+    // the table of contents and the PDF bookmarks all read the style. Formatting
+    // each paragraph instead leaves a document that only looks like it has
+    // headings, and the user finds out when they generate the contents page.
+    assert.match(workerSource, /ParagraphStyles/);
+    assert.match(workerSource, /com\.sun\.star\.text\.ContentIndex/);
+    assert.match(workerSource, /com\.sun\.star\.text\.TextField\.PageNumber/);
+  });
+
+  it('composes a presentable deck with no picture file and no configuration', () => {
+    // Most installations will never have a picture provider configured, so the
+    // deck has to stand up without one. Three things decide whether it does,
+    // and none of them needs an asset, a key or a network call.
+
+    // An image slide with nothing to place draws a themed figure rather than
+    // silently collapsing into one more bullet list.
+    assert.match(workerSource, /def theme_figure\(/);
+    assert.match(workerSource, /theme_figure\(\s*document, slide/);
+
+    // Content is centred in its band. Top-anchored text in a fixed band is what
+    // leaves the bottom half of every slide empty — the single thing that makes
+    // a generated deck look generated.
+    assert.match(workerSource, /TextVerticalAdjust/);
+
+    // A long CJK headline is stepped down instead of running into the subtitle.
+    assert.match(workerSource, /def fitted_size\(/);
+    assert.match(workerSource, /def text_weight\(/);
   });
 });

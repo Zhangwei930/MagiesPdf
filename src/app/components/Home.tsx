@@ -201,15 +201,16 @@ export function Home({
           open, and where the things you already have are. Making something is
           one button with the kinds behind it, rather than a grid of cards
           competing with the customer's own files for the middle of the page. */}
-      <aside className="hidden w-[188px] shrink-0 flex-col gap-2 border-r border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-3 py-4 md:flex">
+      <aside className="hidden w-[272px] shrink-0 flex-col gap-2.5 border-r border-[var(--border-subtle)] bg-[var(--surface-app)] px-4 py-5 md:flex">
         <div ref={createRef} className="relative">
           <Button
             variant="primary"
-            className="w-full justify-center"
+            size="lg"
+            className="w-full justify-center text-[14px]"
             onClick={() => setCreateOpen((open) => !open)}
             aria-expanded={createOpen}
           >
-            <Plus size={15} />
+            <Plus size={17} />
             {t('newDocument', locale)}
           </Button>
 
@@ -248,11 +249,12 @@ export function Home({
         </div>
 
         <Button
-          className="w-full justify-center"
+          size="lg"
+          className="w-full justify-center text-[14px]"
           disabled={busy !== ''}
           onClick={() => void run('open', onOpenDocument, true)}
         >
-          {busy === 'open' ? <Loader2 size={15} className="animate-spin" /> : <FolderOpen size={15} />}
+          {busy === 'open' ? <Loader2 size={17} className="animate-spin" /> : <FolderOpen size={17} />}
           {t('openDocument', locale)}
         </Button>
 
@@ -262,9 +264,9 @@ export function Home({
               key={entry.id}
               type="button"
               onClick={() => selectRail(entry)}
-              className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-panel)] hover:text-[var(--text)]"
+              className="flex items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-left text-[13.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-panel)] hover:text-[var(--text)]"
             >
-              <entry.icon size={15} className="shrink-0 text-[var(--text-muted)]" />
+              <entry.icon size={17} className="shrink-0 text-[var(--text-muted)]" />
               <span className="truncate">{t(entry.labelKey, locale)}</span>
             </button>
           ))}
@@ -288,17 +290,17 @@ export function Home({
         {/* The customer's documents in the middle, what can be done to them at
             the side. A start centre that leads with its own features makes
             someone scroll past them to reach the file they came for. */}
-        <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_252px] lg:gap-12">
           <section data-home-region="documents" data-home-section="recent" className="min-w-0">
             <div className="mb-2.5 flex items-center justify-between gap-3">
-              <h2 className="text-[14px] font-semibold">{t('recentDocuments', locale)}</h2>
-              <label className="flex w-full max-w-[220px] items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-2.5 py-1.5 focus-within:border-[var(--accent)]">
+              <h2 className="text-[16px] font-semibold">{t('recentDocuments', locale)}</h2>
+              <label className="flex w-full max-w-[360px] items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-3 py-2 focus-within:border-[var(--accent)]">
                 <Search size={13} className="text-[var(--text-muted)]" />
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder={t('searchRecentDocuments', locale)}
-                  className="min-w-0 flex-1 bg-transparent text-[11px] outline-none placeholder:text-[var(--text-muted)]"
+                  className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-[var(--text-muted)]"
                 />
                 {query && <button type="button" onClick={() => setQuery('')} aria-label={t('clear', locale)}><X size={12} /></button>}
               </label>
@@ -317,14 +319,14 @@ export function Home({
                         onClick={() => void run(`open:${document.path}`, () => onOpenRecent(document.path), true)}
                         className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:opacity-60"
                       >
-                        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${tone.className}`}>
-                          {busy === `open:${document.path}` ? <Loader2 size={16} className="animate-spin" /> : <ToolIcon name={tone.icon} size={17} />}
+                        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${tone.className}`}>
+                          {busy === `open:${document.path}` ? <Loader2 size={16} className="animate-spin" /> : <ToolIcon name={tone.icon} size={19} />}
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[12px] font-medium">{document.name}</span>
-                          <span className="mt-0.5 block truncate text-[9.5px] text-[var(--text-muted)]">{folder}</span>
+                          <span className="block truncate text-[13.5px] font-medium">{document.name}</span>
+                          <span className="mt-0.5 block truncate text-[11px] text-[var(--text-muted)]">{folder}</span>
                         </span>
-                        <span className="hidden shrink-0 text-[9.5px] text-[var(--text-muted)] sm:block">{formatDate(document.modifiedAt, locale)}</span>
+                        <span className="hidden shrink-0 text-[11px] text-[var(--text-muted)] sm:block">{formatDate(document.modifiedAt, locale)}</span>
                       </button>
 
                       <div className="ml-2 flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
@@ -339,8 +341,8 @@ export function Home({
               ) : (
                 <div className="flex min-h-[150px] flex-col items-center justify-center px-4 text-center">
                   <FolderOpen size={24} strokeWidth={1.5} className="text-[var(--text-muted)]" />
-                  <p className="mt-2 text-[12px] font-medium text-[var(--text-secondary)]">{query ? t('noRecentSearchResults', locale) : t('recentDocumentsEmpty', locale)}</p>
-                  <p className="mt-1 text-[10.5px] text-[var(--text-muted)]">{t('recentDocumentsEmptyHint', locale)}</p>
+                  <p className="mt-2 text-[13.5px] font-medium text-[var(--text-secondary)]">{query ? t('noRecentSearchResults', locale) : t('recentDocumentsEmpty', locale)}</p>
+                  <p className="mt-1 text-[12px] text-[var(--text-muted)]">{t('recentDocumentsEmptyHint', locale)}</p>
                 </div>
               )}
             </div>
@@ -351,20 +353,17 @@ export function Home({
               opened here to become; the toolbox below it, by category. */}
           <aside data-home-region="tools" className="space-y-5">
             <section data-home-section="convert">
-              <div className="mb-2 flex items-baseline justify-between">
-                <h2 className="text-[12px] font-semibold">{t('quickConversions', locale)}</h2>
-                <span className="text-[9.5px] text-[var(--text-muted)]">{t('localOnly', locale)}</span>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
+              <h2 className="mb-2 text-[14px] font-semibold">{t('quickConversions', locale)}</h2>
+              <div className="grid grid-cols-1 gap-2">
                 {conversions.map((tool) => (
                   <button
                     key={tool.id}
                     type="button"
                     onClick={() => onOpenTool(tool.id)}
-                    className="surface-panel flex min-h-16 items-center gap-2 p-2.5 text-left transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]"
+                    className="surface-panel flex items-center gap-2.5 px-3 py-3 text-left transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]"
                   >
-                    <ToolIcon name={tool.icon} size={15} className="shrink-0 text-[var(--accent)]" />
-                    <span className="text-[10.5px] leading-snug">{tool.name[locale]}</span>
+                    <ToolIcon name={tool.icon} size={17} className="shrink-0 text-[var(--accent)]" />
+                    <span className="text-[12.5px] leading-snug">{tool.name[locale]}</span>
                   </button>
                 ))}
               </div>

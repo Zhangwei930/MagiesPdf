@@ -68,4 +68,54 @@ describe('MCP protocol server', () => {
       await server.close();
     }
   });
+
+  it('lists and calls Office automation tools beside the PDF catalogue', async () => {
+    const officeCalls = [];
+    const server = createMcpServer({
+      catalog: [tool],
+      officeTools: [{
+        functionName: 'office_excel_write',
+        toolId: 'office:excel:write',
+        description: 'Write Excel range',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: { type: 'string' },
+            start_cell: { type: 'string' },
+            values: { type: 'array' },
+          },
+          required: ['path', 'start_cell', 'values'],
+        },
+        unattended: true,
+      }],
+      callTool: async () => ({ ok: true }),
+      callOfficeTool: async (definition, args) => {
+        officeCalls.push([definition.functionName, args]);
+        return { written: 'Magies Office Output/555.xlsx', cellsWritten: 4 };
+      },
+    });
+    const client = new Client({ name: 'test-client', version: '1.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    try {
+      const listed = await client.listTools();
+      const names = listed.tools.map((entry) => entry.name).sort();
+      assert.deepEqual(names, ['edit__get-info', 'office_excel_write']);
+
+      const result = await client.callTool({
+        name: 'office_excel_write',
+        arguments: { path: '555.xlsx', start_cell: 'A1', values: [['n']] },
+      });
+      assert.equal(result.isError, undefined);
+      assert.match(result.content[0].text, /cellsWritten/);
+      assert.deepEqual(officeCalls, [[
+        'office_excel_write',
+        { path: '555.xlsx', start_cell: 'A1', values: [['n']] },
+      ]]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
 });

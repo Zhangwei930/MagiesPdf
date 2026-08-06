@@ -15,6 +15,7 @@ import {
   officeCreateKind,
   openDocument,
   redo,
+  replaceDocument,
   saveAsName,
   saveTarget,
   setEngineModified,
@@ -193,6 +194,31 @@ describe('openDocument', () => {
     const two = createDocument(picked('result.pdf', ''));
     const { documents } = openDocument([one], two);
     assert.equal(documents.length, 2, 'in-memory results are not the same document');
+  });
+});
+
+describe('replaceDocument', () => {
+  const a = createDocument(picked('a.pdf', '/docs/a.pdf'));
+  const b = createDocument(picked('b.pdf', '/docs/b.pdf'));
+  const c = createDocument(picked('c.pdf', '/docs/c.pdf'));
+
+  it('takes the old tab position rather than moving to the end', () => {
+    const rewritten = createDocument(picked('b.pdf', '/docs/b.pdf', 9));
+    const documents = replaceDocument([a, b, c], b.id, rewritten);
+    assert.deepEqual(documents.map((d) => d.id), [a.id, rewritten.id, c.id]);
+  });
+
+  it('drops another tab left on the same file, so the swap cannot duplicate it', () => {
+    const stale = createDocument(picked('b.pdf', '/docs/b.pdf', 2));
+    const rewritten = createDocument(picked('b.pdf', '/docs/b.pdf', 9));
+    const documents = replaceDocument([a, b, stale], b.id, rewritten);
+    assert.deepEqual(documents.map((d) => d.id), [a.id, rewritten.id]);
+  });
+
+  it('appends when the tab it should replace is already gone', () => {
+    const rewritten = createDocument(picked('d.pdf', '/docs/d.pdf'));
+    const documents = replaceDocument([a], 'missing-id', rewritten);
+    assert.deepEqual(documents.map((d) => d.id), [a.id, rewritten.id]);
   });
 });
 

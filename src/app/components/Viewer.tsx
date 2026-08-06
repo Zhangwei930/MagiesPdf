@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { bridge, type PickedFile } from '../bridge.ts';
-import { t, type Locale } from '../i18n.ts';
+import { t } from '../i18n.ts';
 import { useApp } from '../store.ts';
 import {
   AlertCircle,
@@ -12,11 +12,10 @@ import {
   Loader2,
   Lock,
   PenLine,
-  RotateCw,
   Search,
   Stamp,
-  Trash2,
   X,
+  ListTree,
 } from '../icons.ts';
 import { clampRect, rectFromDrag, toPdfPoint, type Point, type Size } from '../pdf/geometry.ts';
 import {
@@ -41,12 +40,9 @@ import { canRedo, canUndo, type DocumentState } from '../documents.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from '../shortcuts.ts';
 import { reorderedPages } from '../pdf/pageOrder.ts';
 import {
-  getFormFields,
   getPageSizes,
   getPageTextItems,
   loadPdfDocument,
-  renderPageToCanvas,
-  renderTextLayer,
   type FormFieldBox,
   type PdfDocumentHandle,
 } from '../pdf/renderer.ts';
@@ -55,6 +51,13 @@ import { PdfChrome, type PdfPageLayout, type PdfPointerTool } from './PdfChrome.
 import { PdfFileMenu } from './PdfFileMenu.tsx';
 import { PdfQuickConvert } from './PdfQuickConvert.tsx';
 import { PdfStatusBar } from './PdfStatusBar.tsx';
+import { OutlinePanel } from './OutlinePanel.tsx';
+import { PageView } from './PageView.tsx';
+import { Thumbnail } from './Thumbnail.tsx';
+import { HighlightToolbar } from './HighlightToolbar.tsx';
+import type { HighlightColor } from '../pdf/highlights.ts';
+
+import { TextSelectionMenu } from './TextSelectionMenu.tsx';
 
 interface ViewerProps {
   /** Which open document to show. Its state lives in the store, not here. */
@@ -67,16 +70,13 @@ interface ViewerProps {
   onOpenDocument?(): void;
   onOpenRecent?(path: string): void;
   onOpenSettings?(): void;
+  onAiPrompt?(prompt: string): void;
 }
 
 /** Pages kept rendered on each side of the viewport so scrolling never shows blanks. */
 const OVERSCAN = 1;
-/** Thumbnails are laid out to a fixed width, so their scale follows the page. */
-const THUMB_WIDTH = 88;
-/** Beyond 2× the extra pixels cost memory without being visible. */
-const MAX_DPR = 2;
 
-type ViewMode = 'view' | 'text' | 'redact' | 'stamp' | 'form';
+type ViewMode = 'view' | 'text' | 'redact' | 'stamp' | 'form' | 'draw';
 type FitMode = 'width' | 'page' | null;
 
 /** Shared empty map, so a document with no widgets yet does not remount overlays. */
@@ -89,9 +89,7 @@ interface DocumentMatch extends ItemRange {
   page: number;
 }
 
-function devicePixels(): number {
-  return Math.min(MAX_DPR, window.devicePixelRatio || 1);
-}
+
 
 /**
  * PDF viewer with page-level editing.
@@ -116,9 +114,28 @@ export function Viewer({
   onOpenDocument,
   onOpenRecent,
   onOpenSettings,
+  onAiPrompt,
 }: ViewerProps) {
   const locale = useApp((s) => s.locale);
-  const [thumbsOpen, setThumbsOpen] = useState(true);
+
+  const handleAiAction = (action: 'summarize' | 'translate' | 'polish', text: string) => {
+    let prompt = '';
+    if (action === 'summarize') {
+      prompt = locale === 'zh'
+        ? `请对以下选中文本进行核心要点总结：\n\n"${text}"`
+        : `Please summarize the key points of the following text:\n\n"${text}"`;
+    } else if (action === 'translate') {
+      prompt = locale === 'zh'
+        ? `请将以下选中文本翻译为中文（如果原文本已是中文则翻译为英文）：\n\n"${text}"`
+        : `Please translate the following text into English (or into Chinese if already English):\n\n"${text}"`;
+    } else if (action === 'polish') {
+      prompt = locale === 'zh'
+        ? `请对以下选中文本进行结构化提炼与语言润色：\n\n"${text}"`
+        : `Please refine and polish the language of the following text:\n\n"${text}"`;
+    }
+    onAiPrompt?.(prompt);
+  };
+  const [sidebarTab, setSidebarTab] = useState<'thumbs' | 'outline' | 'none'>('thumbs');
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
   /** WPS 手型 / 选择 — hand pans without holding Space. */
   const [pointerTool, setPointerTool] = useState<PdfPointerTool>('select');
@@ -144,6 +161,7 @@ export function Viewer({
   const [dragPage, setDragPage] = useState(0);
   const [passwordDraft, setPasswordDraft] = useState('');
   const [mode, setMode] = useState<ViewMode>('view');
+  const [nightMode, setNightMode] = useState(false);
   const [modeEpoch, setModeEpoch] = useState(0);
   /**
    * Form widgets per page, filled in by the pages that have rendered. Tagged
@@ -182,6 +200,7 @@ export function Viewer({
   const [matches, setMatches] = useState<DocumentMatch[]>([]);
   const [matchIndex, setMatchIndex] = useState(0);
   const [searching, setSearching] = useState(false);
+  const [highlightColor, setHighlightColor] = useState<HighlightColor | null>('yellow');
 
   const scrollRef = useRef<HTMLDivElement>(null);
   /** A scroll position to apply once the new scale has been laid out. */
@@ -745,6 +764,9 @@ export function Viewer({
         case 'fitPage':
           setFit('page');
           break;
+        case 'print':
+          void bridge().printPdf();
+          break;
         case 'nextPage':
           goToPage(page + 1);
           break;
@@ -837,6 +859,7 @@ export function Viewer({
         scale={scale}
         fit={fit}
         mode={mode}
+        nightMode={nightMode}
         pointerTool={pointerTool}
         pageLayout={pageLayout}
         canRedo={canRedo(openDocument)}
@@ -845,6 +868,8 @@ export function Viewer({
         onZoomActual={() => zoomTo(1, viewport.height / 2)}
         onFitWidth={() => setFit('width')}
         onFitPage={() => setFit('page')}
+        onToggleNightMode={() => setNightMode((v) => !v)}
+        onPrint={() => void bridge().printPdf()}
         onPrevPage={() => goToPage(page - 1)}
         onNextPage={() => goToPage(page + 1)}
         onRotatePage={() => rotatePage(page)}
@@ -884,21 +909,37 @@ export function Viewer({
       <aside
         className={clsx(
           'flex shrink-0 flex-col border-r border-[var(--border-subtle)] bg-[var(--surface-panel)]',
-          thumbsOpen ? 'w-[7.5rem]' : 'w-10',
+          sidebarTab !== 'none' ? 'w-48' : 'w-10',
         )}
-        title={t('viewerDragHint', locale)}
       >
-        <button
-          type="button"
-          onClick={() => setThumbsOpen((open) => !open)}
-          className="flex h-9 items-center justify-center border-b border-[var(--border-subtle)] text-[11px] text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
-          title={t('pdfThumbs', locale)}
-          aria-expanded={thumbsOpen}
-        >
-          {thumbsOpen ? t('pdfThumbs', locale) : '⋮'}
-        </button>
-        {thumbsOpen && (
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+        <div className="flex h-9 border-b border-[var(--border-subtle)]">
+          <button
+            type="button"
+            onClick={() => setSidebarTab((current) => (current === 'thumbs' ? 'none' : 'thumbs'))}
+            className={clsx(
+              'flex flex-1 items-center justify-center text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]',
+              sidebarTab === 'thumbs' && 'bg-[var(--surface-hover)] text-[var(--accent)]',
+            )}
+            title={t('pdfThumbs', locale)}
+          >
+            {sidebarTab !== 'none' ? 'T' : '⋮'}
+          </button>
+          {sidebarTab !== 'none' && (
+            <button
+              type="button"
+              onClick={() => setSidebarTab('outline')}
+              className={clsx(
+                'flex flex-1 items-center justify-center text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]',
+                sidebarTab === 'outline' && 'bg-[var(--surface-hover)] text-[var(--accent)]',
+              )}
+              title={t('pdfOutline', locale)}
+            >
+              <ListTree size={15} />
+            </button>
+          )}
+        </div>
+        {sidebarTab === 'thumbs' && (
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2" title={t('viewerDragHint', locale)}>
             {doc &&
               sizes.map((size, index) => (
                 <Thumbnail
@@ -924,6 +965,7 @@ export function Viewer({
               ))}
           </div>
         )}
+        {sidebarTab === 'outline' && <OutlinePanel doc={doc} locale={locale} onGoToPage={goToPage} />}
       </aside>
 
       {/* min-w-0 matters: without it a flex item cannot shrink below its
@@ -1020,6 +1062,27 @@ export function Viewer({
           </Banner>
         )}
 
+        {mode === 'draw' && (
+          <Banner tone="accent" icon={<PenLine size={13} className="shrink-0" />}>
+            <span className="min-w-0 flex-1">
+              {locale === 'zh' ? '自由画笔模式：在页面上按住拖拽即可绘图。' : 'Freehand draw mode: click and drag on pages to draw.'}
+            </span>
+          </Banner>
+        )}
+
+        {mode === 'text' && (
+          <div className="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-1.5 text-xs">
+            <span className="text-[var(--text-muted)]">
+              {locale === 'zh' ? '点击页面插入文本，或选择颜色应用高亮：' : 'Click page to insert text, or choose color to highlight:'}
+            </span>
+            <HighlightToolbar
+              locale={locale}
+              activeColor={highlightColor}
+              onChangeColor={(color) => setHighlightColor(color)}
+            />
+          </div>
+        )}
+
         {password !== '' && (
           <Banner tone="muted" icon={<Lock size={13} className="shrink-0" />}>
             <span className="min-w-0 flex-1">{t('viewerDecryptNotice', locale)}</span>
@@ -1083,6 +1146,7 @@ export function Viewer({
               className="relative mx-auto"
               style={{ width: columnWidth, minWidth: '100%', height: columnHeight }}
             >
+              <TextSelectionMenu containerRef={scrollRef} locale={locale} onAiAction={handleAiAction} />
               {sizes.map((size, index) => {
                 const pageNumber = index + 1;
                 if (pageNumber < range.first || pageNumber > range.last) return null;
@@ -1099,15 +1163,18 @@ export function Viewer({
                     scale={scale}
                     locale={locale}
                     mode={mode}
+                    nightMode={nightMode}
                     modeEpoch={modeEpoch}
                     busy={busy}
                     panning={panningActive}
                     drafts={drafts}
                     fields={fieldsByPage.get(pageNumber)}
+                    onGoToPage={goToPage}
                     top={top}
                     epoch={epochs[index] ?? 0}
                     hits={hitsByPage.get(pageNumber) ?? NO_HITS}
                     currentHits={currentHitsByPage.get(pageNumber) ?? NO_HITS}
+                    inkAnnotations={openDocument.inkAnnotations?.[pageNumber] ?? []}
                     onFields={onPageFields}
                     onDraftChange={(name, value) =>
                       setDrafts((current) => ({ ...current, [name]: value }))
@@ -1215,420 +1282,6 @@ function Banner({
     >
       {icon}
       {children}
-    </div>
-  );
-}
-
-/**
- * One page in the scroll column: its canvas, and whatever the current mode
- * overlays on it. Absolutely positioned at the offset the layout computed, so
- * the column's height never depends on what has finished rendering.
- */
-function PageView({
-  doc,
-  pageNumber,
-  size,
-  scale,
-  locale,
-  mode,
-  modeEpoch,
-  busy,
-  panning,
-  drafts,
-  fields,
-  top,
-  epoch,
-  hits,
-  currentHits,
-  onFields,
-  onDraftChange,
-  onRedact,
-  onStamp,
-  onText,
-}: {
-  doc: PdfDocumentHandle;
-  pageNumber: number;
-  size: Size;
-  scale: number;
-  locale: Locale;
-  mode: ViewMode;
-  modeEpoch: number;
-  busy: boolean;
-  panning: boolean;
-  drafts: Record<string, string>;
-  fields: FormFieldBox[] | undefined;
-  top: number;
-  /** Bumped when this page's content changed; unchanged means keep the pixels. */
-  epoch: number;
-  /** Text-run indices on this page that a search matched. */
-  hits: readonly number[];
-  /** The subset of `hits` belonging to the match currently stepped to. */
-  currentHits: readonly number[];
-  onFields(source: PdfDocumentHandle, pageNumber: number, fields: FormFieldBox[]): void;
-  onDraftChange(name: string, value: string): void;
-  onRedact(pageNumber: number, from: Point, to: Point, box: Size): void;
-  onStamp(pageNumber: number, at: Point, box: Size): void;
-  onText(pageNumber: number, text: string, at: Point, box: Size): void;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const textLayerRef = useRef<HTMLDivElement>(null);
-  /** The span per text run, as returned by the last text-layer render. */
-  const textDivs = useRef<HTMLElement[]>([]);
-  const [textVersion, setTextVersion] = useState(0);
-  const [marquee, setMarquee] = useState<{ from: Point; to: Point } | null>(null);
-  const [textEditor, setTextEditor] = useState<{
-    at: Point;
-    value: string;
-    epoch: number;
-  } | null>(null);
-
-  /**
-   * What is currently on the canvas and in the text layer. An edit hands over a
-   * new document object, but a page it did not touch is the same picture — so
-   * this is what decides whether there is any work to do.
-   */
-  const drawn = useRef({ epoch: -1, scale: 0 });
-  const laidOut = useRef({ epoch: -1, scale: 0 });
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    if (drawn.current.epoch === epoch && drawn.current.scale === scale) return;
-
-    let stale = false;
-    void renderPageToCanvas(doc, pageNumber, canvas, scale, devicePixels(), () => stale)
-      .then(() => {
-        if (!stale) drawn.current = { epoch, scale };
-      })
-      .catch(() => {
-        // A page that will not draw leaves the previous image up; the load
-        // failure the document itself reports is the one worth surfacing.
-      });
-    return () => {
-      stale = true;
-    };
-  }, [doc, epoch, pageNumber, scale]);
-
-  // The text layer has to be laid out again at every zoom, since pdf.js sizes
-  // the container from the scale rather than letting CSS stretch it.
-  useEffect(() => {
-    const container = textLayerRef.current;
-    if (!container) return;
-    if (laidOut.current.epoch === epoch && laidOut.current.scale === scale) return;
-
-    let stale = false;
-    void renderTextLayer(doc, pageNumber, container, scale)
-      .then((divs) => {
-        if (stale) return;
-        laidOut.current = { epoch, scale };
-        textDivs.current = divs;
-        // Highlights are applied to these spans, so re-applying them has to
-        // wait for the spans to exist.
-        setTextVersion((version) => version + 1);
-      })
-      .catch(() => {
-        // A page whose text will not extract is still readable and printable;
-        // it simply cannot be selected or found.
-      });
-    return () => {
-      stale = true;
-    };
-  }, [doc, epoch, pageNumber, scale]);
-
-  useEffect(() => {
-    const marked = new Set(hits);
-    const current = new Set(currentHits);
-    for (const [index, span] of textDivs.current.entries()) {
-      span.classList.toggle('find-hit', marked.has(index) && !current.has(index));
-      span.classList.toggle('find-hit-current', current.has(index));
-    }
-  }, [hits, currentHits, textVersion]);
-
-  useEffect(() => {
-    if (mode !== 'form' || fields) return;
-    let cancelled = false;
-    void getFormFields(doc, pageNumber).then((found) => {
-      if (!cancelled) onFields(doc, pageNumber, found);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [doc, pageNumber, mode, fields, onFields]);
-
-  const fillable = (fields ?? []).filter(
-    (field) => !field.readOnly && !field.name.includes('=') && !/[\r\n]/.test(field.name),
-  );
-  const interactive = mode !== 'view' && !busy && !panning;
-
-  return (
-    <div
-      className="absolute left-1/2 -translate-x-1/2"
-      style={{ top, width: size.width * scale, height: size.height * scale }}
-    >
-      <div
-        className={clsx('relative h-full w-full', interactive && 'cursor-crosshair')}
-        onClick={(e) => {
-          if (!interactive) return;
-          const box = e.currentTarget.getBoundingClientRect();
-          const at = { x: e.clientX - box.left, y: e.clientY - box.top };
-          if (mode === 'text') setTextEditor({ at, value: '', epoch: modeEpoch });
-          if (mode === 'stamp') {
-            onStamp(pageNumber, at, { width: box.width, height: box.height });
-          }
-        }}
-        onPointerDown={(e) => {
-          if (mode !== 'redact' || !interactive) return;
-          e.preventDefault();
-          e.currentTarget.setPointerCapture(e.pointerId);
-          const box = e.currentTarget.getBoundingClientRect();
-          const at = { x: e.clientX - box.left, y: e.clientY - box.top };
-          setMarquee({ from: at, to: at });
-        }}
-        onPointerMove={(e) => {
-          if (!marquee) return;
-          const box = e.currentTarget.getBoundingClientRect();
-          const to = { x: e.clientX - box.left, y: e.clientY - box.top };
-          setMarquee((current) => (current ? { ...current, to } : null));
-        }}
-        onPointerUp={(e) => {
-          if (!marquee) return;
-          const box = e.currentTarget.getBoundingClientRect();
-          onRedact(pageNumber, marquee.from, marquee.to, {
-            width: box.width,
-            height: box.height,
-          });
-          setMarquee(null);
-        }}
-      >
-        <canvas
-          ref={canvasRef}
-          className="block bg-white"
-          style={{ boxShadow: 'var(--pdf-page-shadow)' }}
-        />
-
-        {/* Selection would fight the marquee and the stamp click, so the text
-            layer only takes the pointer while plain reading is going on. */}
-        <div
-          ref={textLayerRef}
-          className={clsx('text-layer', mode !== 'view' && 'pointer-events-none')}
-          style={{ '--total-scale-factor': scale } as React.CSSProperties}
-        />
-
-        {marquee && (
-          <div
-            className="pointer-events-none absolute border-2 border-[var(--danger)] bg-[var(--danger)]/30"
-            style={{
-              left: Math.min(marquee.from.x, marquee.to.x),
-              top: Math.min(marquee.from.y, marquee.to.y),
-              width: Math.abs(marquee.from.x - marquee.to.x),
-              height: Math.abs(marquee.from.y - marquee.to.y),
-            }}
-          />
-        )}
-
-        {mode === 'text' && textEditor?.epoch === modeEpoch && (
-          <form
-            onClick={(event) => event.stopPropagation()}
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (textEditor.value.trim() === '') return;
-              onText(
-                pageNumber,
-                textEditor.value,
-                textEditor.at,
-                { width: size.width * scale, height: size.height * scale },
-              );
-              setTextEditor(null);
-            }}
-            className="absolute z-10 flex h-9 w-[240px] items-center gap-1 rounded-lg border border-[var(--accent)] bg-[var(--surface-panel)] p-1 shadow-xl"
-            style={{
-              left: Math.max(0, Math.min(textEditor.at.x, size.width * scale - 240)),
-              top: Math.max(0, Math.min(textEditor.at.y, size.height * scale - 36)),
-            }}
-          >
-            <input
-              autoFocus
-              value={textEditor.value}
-              placeholder={t('viewerTextPlaceholder', locale)}
-              onChange={(event) => setTextEditor({ ...textEditor, value: event.target.value })}
-              onKeyDown={(event) => {
-                if (event.key !== 'Escape') return;
-                event.preventDefault();
-                event.stopPropagation();
-                setTextEditor(null);
-              }}
-              className="min-w-0 flex-1 bg-transparent px-1.5 text-[13px] outline-none placeholder:text-[var(--text-muted)]"
-            />
-            <button
-              type="submit"
-              className="h-7 shrink-0 rounded-md bg-[var(--accent)] px-2 text-[11px] font-medium text-white"
-            >
-              {t('viewerTextAdd', locale)}
-            </button>
-          </form>
-        )}
-
-        {mode === 'form' &&
-          fillable.map((field) => (
-            <div
-              key={field.name}
-              className="absolute"
-              style={{
-                left: `${field.box.x * 100}%`,
-                top: `${field.box.y * 100}%`,
-                width: `${field.box.width * 100}%`,
-                height: `${field.box.height * 100}%`,
-              }}
-            >
-              {field.checkbox ? (
-                <input
-                  type="checkbox"
-                  title={field.name}
-                  checked={/^(1|true|yes|on|y)$/i.test(drafts[field.name] ?? '')}
-                  onChange={(e) => onDraftChange(field.name, e.target.checked ? 'true' : 'false')}
-                  className="h-full w-full accent-[var(--accent)]"
-                />
-              ) : (
-                <input
-                  type="text"
-                  title={field.name}
-                  value={drafts[field.name] ?? ''}
-                  onChange={(e) => onDraftChange(field.name, e.target.value)}
-                  className="h-full w-full rounded-sm border border-[var(--accent)] bg-[var(--accent-soft)] px-1 text-[12px] text-[var(--text-primary)] outline-none focus:bg-[var(--surface-panel)]"
-                />
-              )}
-            </div>
-          ))}
-      </div>
-    </div>
-  );
-}
-
-function Thumbnail({
-  doc,
-  pageNumber,
-  size,
-  epoch,
-  active,
-  disabled,
-  dragging,
-  locale,
-  onClick,
-  onRotate,
-  onDelete,
-  onDragStart,
-  onDragEnd,
-  onDropOn,
-}: {
-  doc: PdfDocumentHandle;
-  pageNumber: number;
-  size: Size;
-  epoch: number;
-  active: boolean;
-  disabled: boolean;
-  dragging: boolean;
-  locale: Locale;
-  onClick(): void;
-  onRotate(): void;
-  onDelete(): void;
-  onDragStart(): void;
-  onDragEnd(): void;
-  onDropOn(): void;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    // Large PDFs would otherwise render every page's thumbnail up front;
-    // only render once the row is about to scroll into view.
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) setVisible(true);
-      },
-      { root: el.closest('aside'), rootMargin: '200px' },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  // Every thumbnail is laid out to the same width, whatever the page's shape.
-  const scale = size.width > 0 ? THUMB_WIDTH / size.width : 0.18;
-
-  const drawn = useRef({ epoch: -1, scale: 0 });
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!visible || !canvas) return;
-    // A strip of a hundred thumbnails would otherwise redraw on every rotate.
-    if (drawn.current.epoch === epoch && drawn.current.scale === scale) return;
-
-    let stale = false;
-    void renderPageToCanvas(doc, pageNumber, canvas, scale, devicePixels(), () => stale)
-      .then(() => {
-        if (!stale) drawn.current = { epoch, scale };
-      })
-      .catch(() => {
-        // Same as the main page: keep whatever was already drawn.
-      });
-    return () => {
-      stale = true;
-    };
-  }, [visible, doc, epoch, pageNumber, scale]);
-
-  return (
-    <div
-      ref={wrapRef}
-      draggable={!disabled}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => {
-        e.preventDefault();
-        onDropOn();
-      }}
-      className={clsx('group relative', dragging && 'opacity-40')}
-    >
-      <button
-        type="button"
-        onClick={onClick}
-        className={clsx(
-          'block w-full overflow-hidden rounded border-2 transition-colors',
-          active
-            ? 'border-[var(--accent)]'
-            : 'border-transparent hover:border-[var(--border-strong)]',
-        )}
-      >
-        <canvas ref={canvasRef} className="mx-auto block bg-white" />
-        <span className="block bg-[var(--surface-panel)] py-0.5 text-center font-mono text-[10px] text-[var(--text-muted)]">
-          {pageNumber}
-        </span>
-      </button>
-
-      <div className="absolute top-1 right-1 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-        <button
-          type="button"
-          aria-label={t('viewerRotatePage', locale)}
-          title={t('viewerRotatePage', locale)}
-          disabled={disabled}
-          onClick={onRotate}
-          className="rounded bg-[var(--surface-panel)] p-1 text-[var(--text-secondary)] shadow transition-colors hover:text-[var(--accent)] disabled:opacity-30"
-        >
-          <RotateCw size={11} />
-        </button>
-        <button
-          type="button"
-          aria-label={t('viewerDeletePage', locale)}
-          title={t('viewerDeletePage', locale)}
-          disabled={disabled}
-          onClick={onDelete}
-          className="rounded bg-[var(--surface-panel)] p-1 text-[var(--text-secondary)] shadow transition-colors hover:text-[var(--danger)] disabled:opacity-30"
-        >
-          <Trash2 size={11} />
-        </button>
-      </div>
     </div>
   );
 }

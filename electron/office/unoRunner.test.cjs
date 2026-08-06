@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const fs = require('node:fs/promises');
+const { existsSync } = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { afterEach, describe, it } = require('node:test');
@@ -11,6 +12,7 @@ const {
   libreOfficePythonCandidates,
   officeAcceptArgs,
   officeLaunch,
+  officePipeSocketPath,
   pythonEnvironment,
   resolveLibreOfficePython,
   unpackedWorkerPath,
@@ -173,6 +175,93 @@ describe('createUnoRunner', () => {
     assert.deepEqual(await runner.run({
       executable: '/office/soffice', operation: 'word_read', inputPath: '/workspace/Letter.docx',
     }), { text: 'Subprocess' });
+  });
+
+  it('starts a second LibreOffice when the first never opens its acceptor', async () => {
+    // LibreOffice intermittently comes up without accepting on the pipe it was
+    // given. Nothing about the request causes it and nothing in the profile
+    // clears it; an entirely fresh instance does. Without this the user is told
+    // their document failed for a reason that names none of that.
+    const root = await temporaryDirectory();
+    const pipes = [];
+    let attempts = 0;
+    const runner = createUnoRunner({
+      createTemporaryDirectory: async () => fs.mkdtemp(path.join(root, 'session-')),
+      resolvePython: () => '/office/python',
+      workerPath: '/app/uno_worker.py',
+      spawnOffice: (_executable, args) => {
+        pipes.push(args.find((argument) => argument.startsWith('--accept=')));
+        return { kill() {} };
+      },
+      executePython: async (_executable, args) => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error('LibreOffice UNO bridge failed: Unable to connect to LibreOffice');
+        }
+        await fs.writeFile(args[2], JSON.stringify({ ok: true, result: { text: 'second' } }));
+      },
+    });
+
+    assert.deepEqual(
+      await runner.run({ executable: '/office/soffice', operation: 'word_read' }),
+      { text: 'second' },
+    );
+    assert.equal(attempts, 2);
+    assert.equal(pipes.length, 2);
+    assert.notEqual(pipes[0], pipes[1], 'the retry uses a pipe of its own');
+  });
+
+  it('does not retry an operation that failed for a reason of its own', async () => {
+    // Retrying a document the engine refused would double the wait and change
+    // nothing; only the missing acceptor is worth a second instance.
+    const root = await temporaryDirectory();
+    let attempts = 0;
+    const runner = createUnoRunner({
+      createTemporaryDirectory: async () => fs.mkdtemp(path.join(root, 'session-')),
+      resolvePython: () => '/office/python',
+      workerPath: '/app/uno_worker.py',
+      spawnOffice: () => ({ kill() {} }),
+      executePython: async (_executable, args) => {
+        attempts += 1;
+        await fs.writeFile(args[2], JSON.stringify({ ok: false, error: 'The selected file is not a Word document' }));
+      },
+    });
+
+    await assert.rejects(
+      () => runner.run({ executable: '/office/soffice', operation: 'word_read' }),
+      /not a Word document/,
+    );
+    assert.equal(attempts, 1);
+  });
+
+  it('removes the pipe socket it created, which does not live in the profile', async () => {
+    // LibreOffice puts the socket in /tmp, not in the user-installation
+    // directory, so tearing the profile down leaves it behind — one file per
+    // Office operation, for the life of the machine. An hour of composing left
+    // 29 of them, and LibreOffice starts more slowly the more it finds.
+    const root = await temporaryDirectory();
+    const pipeDirectory = path.join(root, 'pipes');
+    await fs.mkdir(pipeDirectory, { recursive: true });
+    const socket = officePipeSocketPath('magies_abc_123', { pipeDirectory, uid: 501 });
+    assert.equal(socket, path.join(pipeDirectory, 'OSL_PIPE_501_magies_abc_123'));
+    await fs.writeFile(socket, '');
+
+    const runner = createUnoRunner({
+      createTemporaryDirectory: async () => path.join(root, 'session'),
+      randomId: () => 'abc-123',
+      resolvePython: () => '/office/python',
+      workerPath: '/app/uno_worker.py',
+      pipeDirectory,
+      spawnOffice: () => ({ kill() {} }),
+      executePython: async (_executable, args) => {
+        await fs.writeFile(args[2], JSON.stringify({ ok: true, result: {} }));
+      },
+    });
+    await runner.run({ executable: '/office/soffice', operation: 'word_read' });
+
+    assert.equal(existsSync(socket), false, 'the socket outlived the operation');
+    // Windows named pipes have no filesystem entry, so there is nothing to remove.
+    assert.equal(officePipeSocketPath('magies_abc_123', { platform: 'win32' }), '');
   });
 
   it('writes a bounded request, runs the Python bridge, parses the result, and cleans up', async () => {

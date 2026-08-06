@@ -1,4 +1,5 @@
 import type * as mupdf from 'mupdf';
+import type { DocxParagraphSpec } from '../../ooxml/docx.ts';
 import { paragraphsToDocx } from '../../ooxml/docx.ts';
 import { withDocumentSync } from '../../pdf/document.ts';
 import { stemOf } from '../../naming.ts';
@@ -6,15 +7,48 @@ import type { ToolDescriptor } from '../../types.ts';
 import { PDF_ONE, passwordParam, resolvePages, soleFile, stringParam } from '../shared.ts';
 import { externalOfficeExport } from './officeExternal.ts';
 
-function pageBlocks(doc: mupdf.PDFDocument, pageIndex: number): string[] {
+interface StructuredFont {
+  name?: string;
+  weight?: string;
+  size?: number;
+}
+
+interface StructuredLine {
+  text?: string;
+  font?: StructuredFont;
+}
+
+interface StructuredBlock {
+  type: string;
+  lines: StructuredLine[];
+}
+
+function pageParagraphs(doc: mupdf.PDFDocument, pageIndex: number): DocxParagraphSpec[] {
   const structured = JSON.parse(
     doc.loadPage(pageIndex).toStructuredText('preserve-whitespace').asJSON(),
-  ) as { blocks: Array<{ type: string; lines: Array<{ text: string }> }> };
+  ) as { blocks: StructuredBlock[] };
 
-  return structured.blocks
-    .filter((block) => block.type === 'text')
-    .map((block) => block.lines.map((line) => line.text).join('\n').trim())
-    .filter((text) => text !== '');
+  const result: DocxParagraphSpec[] = [];
+
+  for (const block of structured.blocks) {
+    if (block.type !== 'text') continue;
+    for (const line of block.lines) {
+      const text = (line.text || '').trim();
+      if (!text) continue;
+
+      const size = line.font?.size || 11;
+      const weight = line.font?.weight;
+      const bold = weight === 'bold' || weight === 'semibold' || weight === '700';
+
+      result.push({
+        text,
+        size,
+        bold,
+      });
+    }
+  }
+
+  return result;
 }
 
 export const pdfToDocxTool: ToolDescriptor = {
@@ -48,15 +82,16 @@ export const pdfToDocxTool: ToolDescriptor = {
 
     return withDocumentSync(file.bytes, stringParam(ctx, 'password'), (doc) => {
       const pages = resolvePages(ctx, 'pages', doc.countPages());
-      const paragraphs: string[] = [];
+      const paragraphs: DocxParagraphSpec[] = [];
 
       for (let i = 0; i < pages.length; i += 1) {
         const page = pages[i] as number;
-        for (const block of pageBlocks(doc, page - 1)) {
-          paragraphs.push(block);
+        if (i > 0) {
+          paragraphs.push({ isPageBreak: true });
         }
-        // Blank paragraph between pages so Word readers see a soft break.
-        if (i < pages.length - 1) paragraphs.push('');
+        for (const p of pageParagraphs(doc, page - 1)) {
+          paragraphs.push(p);
+        }
       }
 
       const bytes = paragraphsToDocx(paragraphs);

@@ -17,8 +17,7 @@ Built with Electron + React 19 + TypeScript. Supported packages:
 | Linux | x64 | AppImage + deb |
 
 Each package **bundles a matching LibreOffice runtime**. You do not need a
-separate Office install. **Linux ARM64 is not published** (no official LO
-desktop runtime for that target).
+separate Office install. **Linux ARM64 is not published** as a prebuilt installer — see [Linux ARM64 Support](#linux-arm64-support) for details and running from source.
 
 **Version 2.0.1** — see [CHANGELOG.md](./CHANGELOG.md) ·
 [Releases](https://github.com/Zhangwei930/MagiesPdf/releases).
@@ -213,6 +212,27 @@ HTTPS only. Add `?async=true` to a tool POST to receive a job ID; poll
 With the local API enabled you can also expose tools to external agents via
 **Settings → MCP** (stdio config for Codex, Claude Code, …). External MCP
 servers you connect to still require approval per tool call.
+
+---
+
+## Linux ARM64 Support
+
+Prebuilt Magies Office installers are published for x86_64 Linux (`.AppImage` and `.deb`), Windows (x64 and ARM64), and macOS (Intel and Apple Silicon). 
+
+For **Linux ARM64** (e.g. Raspberry Pi 4/5, Asahi Linux, ARM cloud instances), a prebuilt installer is not published due to LibreOffice upstream binary packaging constraints for desktop runtimes. However, you can run Magies Office on Linux ARM64 by building from source with your distribution's system LibreOffice:
+
+1. **Install system LibreOffice**:
+   ```bash
+   sudo apt update && sudo apt install -y libreoffice
+   ```
+2. **Build and run Magies Office**:
+   ```bash
+   git clone https://github.com/Zhangwei930/MagiesPdf.git
+   cd MagiesPdf
+   npm install
+   npm run dev
+   ```
+3. **Configure LibreOffice path** (if needed): Go to **Settings → Office** inside the app and set the LibreOffice path to `/usr/bin/soffice`.
 
 ---
 

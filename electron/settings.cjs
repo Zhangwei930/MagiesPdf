@@ -12,6 +12,9 @@ const { app } = require('electron');
 const DEFAULTS = {
   locale: 'zh',
   theme: 'system',
+  /** Which palette each mode paints; ids come from src/app/theme/themes.ts. */
+  themeLight: 'indigo-light',
+  themeDark: 'indigo-dark',
   /** Where "save all" starts. Empty means "ask every time". */
   defaultOutputDirectory: '',
   /** Overwrite silently, or add " (2)" to the name. */
@@ -31,6 +34,12 @@ const DEFAULTS = {
    * click — packages are unsigned, so we never install silently.
    */
   autoUpdate: true,
+  /**
+   * The welcome tour has been dismissed for good. It must be named here or the
+   * whitelist in `merge` throws the flag away on write, and the tour returns on
+   * every launch however often it is closed.
+   */
+  onboardingComplete: false,
   /** Local REST API, off unless the user turns it on. */
   api: {
     enabled: false,
@@ -59,8 +68,68 @@ const DEFAULTS = {
     /** Empty means auto-detect the platform's standard LibreOffice installation. */
     libreOfficeExecutable: '',
   },
-  /** OpenAI-compatible model used by the local Agent runtime. API keys live in safeStorage. */
+  /**
+   * OpenAI-compatible model providers used by the local Agent runtime. API keys
+   * live in safeStorage, one per provider — never here.
+   *
+   * `baseUrl` and `model` are the pre-list shape, kept so an older settings
+   * file still merges; `electron/ai/providerStore.cjs` migrates them into the
+   * list on read. Do not write to them.
+   */
   ai: {
+    /**
+     * A fresh install starts on DeepSeek so the only step left is pasting a
+     * key. Deleting it sticks: `merge` replaces arrays rather than merging
+     * them, so an empty stored list is not refilled from here.
+     */
+    providers: [{
+      id: 'deepseek',
+      providerId: 'deepseek',
+      name: 'DeepSeek',
+      baseUrl: 'https://api.deepseek.com/v1',
+      model: 'deepseek-v4-flash',
+      enabled: true,
+    }],
+    activeProviderId: 'deepseek',
+    /**
+     * 'confirm' asks before every tool call that writes a file or leaves the
+     * machine. 'auto' runs them unattended — except the interactive-only list
+     * in automationPolicy.cjs, which always stops for a person.
+     */
+    permissionMode: 'confirm',
+    /**
+     * Per-CLI model and effort, keyed by agent id. Each CLI takes its own model
+     * ids and its own effort levels, so one shared value would be wrong for all
+     * but one of them.
+     */
+    cliModels: {},
+    /** Refuse any turn that would leave this machine. Off by default. */
+    strictLocalPrivacy: false,
+    /**
+     * The one tool that reaches the public internet. Its key lives in
+     * safeStorage under `webSearch`, never here.
+     */
+    webSearch: {
+      enabled: false,
+      provider: 'tavily',
+      /** Only used by a self-hosted SearXNG. */
+      endpoint: '',
+    },
+    /**
+     * Pictures for documents. Its key lives in safeStorage under `imageSearch`.
+     *
+     * 'auto' asks the configured model provider for them, using the key that is
+     * already there — nobody sets up a second one, so any other default would
+     * make this a feature almost no installation has. It resolves to nothing on
+     * a provider that serves no images, which withdraws the tool.
+     */
+    images: {
+      enabled: true,
+      provider: 'auto',
+      /** Only for a self-named OpenAI-compatible endpoint. */
+      endpoint: '',
+      model: '',
+    },
     baseUrl: 'http://127.0.0.1:11434/v1',
     model: '',
     maxSteps: 6,
@@ -84,7 +153,23 @@ function filePath() {
   return settingsPath;
 }
 
-/** Deep merge of stored values over defaults, so a new setting appears without migration. */
+/**
+ * Deep merge of stored values over defaults, so a new setting appears without
+ * migration.
+ *
+ * Keys the defaults do not name are dropped: that whitelist is what keeps
+ * unknown fields out of the settings file. An **empty** object in the defaults
+ * is the exception — it names no keys because its keys are data (an agent id, a
+ * provider id), so recursing into it would throw every entry away. Those are
+ * taken whole, and validated at the IPC boundary instead.
+ */
+function isOpenDictionary(value) {
+  return Boolean(value)
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Object.keys(value).length === 0;
+}
+
 function merge(base, override) {
   if (!override || typeof override !== 'object' || Array.isArray(override)) return base;
 
@@ -93,7 +178,7 @@ function merge(base, override) {
     if (!(key in base)) continue;
     const current = base[key];
     result[key] =
-      current && typeof current === 'object' && !Array.isArray(current)
+      current && typeof current === 'object' && !Array.isArray(current) && !isOpenDictionary(current)
         ? merge(current, value)
         : value;
   }

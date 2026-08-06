@@ -35,11 +35,24 @@ const UI = {
   aiOpenFile: { zh: '打开', en: 'Open' },
   aiSaveFile: { zh: '保存文件', en: 'Save file' },
   aiWorkspaceLabel: { zh: '办公工作区', en: 'Office workspace' },
+  aiWorkspaceFromDocument: { zh: '当前文档所在目录', en: 'Folder of the open document' },
   aiWorkspaceChoose: { zh: '选择办公目录', en: 'Choose office folder' },
   aiWorkspaceClear: { zh: '取消目录授权', en: 'Clear folder access' },
   aiWorkspaceHint: {
-    zh: '授权后，智能体可以扫描、读取、编辑、转换和归档其中的办公文件。',
-    en: 'Grant a folder so the Agent can scan, read, edit, convert, and archive its Office files.',
+    zh: '左侧打开了已保存的文档时，会自动使用该文档所在目录；未打开文档时再手动选择。',
+    en: 'When a saved document is open on the left, its folder is used automatically; otherwise choose a folder.',
+  },
+  aiWorkspaceSaveFirst: {
+    zh: '当前文档尚未保存到磁盘，请先保存，或手动选择办公目录。',
+    en: 'The open document is not saved on disk yet. Save it first, or choose a folder manually.',
+  },
+  aiWorkspaceSyncing: {
+    zh: '正在关联当前文档所在目录…',
+    en: 'Linking the folder of the open document…',
+  },
+  aiInPlaceHint: {
+    zh: 'AI 直接改当前选中文件并刷新标签；改前在同目录生成 name.magies-backup.ext 备份。',
+    en: 'AI edits the selected file in place and refreshes the tab; a sibling name.magies-backup.ext is saved beside it first.',
   },
   recent: { zh: '最近使用', en: 'Recently used' },
   allTools: { zh: '全部工具', en: 'All tools' },
@@ -90,8 +103,8 @@ const UI = {
     en: 'Engine ready: create or open Word, sheets and slides to edit. No separate suite install.',
   },
   localOfficeMissingHint: {
-    zh: '安装包不完整，请重新安装 Magies Office；无需另装 LibreOffice。',
-    en: 'The installation is incomplete. Reinstall Magies Office; no separate LibreOffice install is needed.',
+    zh: '安装包不完整，请重新安装 Magies Office；无需另装外置编辑器。',
+    en: 'The installation is incomplete. Reinstall Magies Office; no separate external editor is needed.',
   },
   recentDocuments: { zh: '最近文档', en: 'Recent documents' },
   searchRecentDocuments: { zh: '搜索最近文档', en: 'Search recent documents' },
@@ -174,6 +187,9 @@ const UI = {
   pdfExportHtml: { zh: 'HTML', en: 'HTML' },
   pdfExportMarkdown: { zh: 'Markdown', en: 'Markdown' },
   pdfExportCsv: { zh: 'CSV', en: 'CSV' },
+  pdfOutline: { zh: '目录', en: 'Outline' },
+  pdfNoOutline: { zh: '无目录', en: 'No outline' },
+  pdfNightMode: { zh: '夜间模式', en: 'Night mode' },
   find: { zh: '查找', en: 'Find' },
   viewerApplying: { zh: '正在应用…', en: 'Applying…' },
   viewerEditFailed: { zh: '操作失败', en: 'That operation failed' },
@@ -216,6 +232,12 @@ const UI = {
     zh: '点击页面上的位置，直接输入文字并按回车添加。',
     en: 'Click a point on the page, type, and press Enter to add the text.',
   },
+  viewerDrawMode: { zh: '墨迹手写', en: 'Ink drawing' },
+  viewerDrawExit: { zh: '退出手写', en: 'Done drawing' },
+  viewerDrawHint: {
+    zh: '直接在页面上绘制，应用后保存。',
+    en: 'Draw freely on the page, then apply to save.',
+  },
   viewerTextPlaceholder: { zh: '输入文字…', en: 'Type text…' },
   viewerTextAdd: { zh: '添加', en: 'Add' },
   viewerStampMode: { zh: '盖章', en: 'Stamp' },
@@ -255,8 +277,8 @@ const UI = {
     en: 'Only PDFs open directly. For other formats, pick the matching tool first.',
   },
   dropNotDocument: {
-    zh: '请选择 Word、Excel、PowerPoint、LibreOffice 或 PDF 文档。',
-    en: 'Choose a Word, Excel, PowerPoint, LibreOffice or PDF document.',
+    zh: '请选择 Word、Excel、PowerPoint 或 PDF 文档。',
+    en: 'Choose a Word, Excel, PowerPoint or PDF document.',
   },
   // Rendering a Word, Sheet or Slide file takes seconds on a long document,
   // and the window would otherwise sit silent while it happens.
@@ -264,6 +286,30 @@ const UI = {
   openingOfficeHint: {
     zh: '首次打开较大文档需要几秒',
     en: 'A large document takes a few seconds the first time',
+  },
+  // Confirm-mode approvals for Office tools called over the local API / MCP.
+  officeApprovalTitle: {
+    zh: '外部助手请求操作文档',
+    en: 'An outside assistant wants to act on a document',
+  },
+  officeApprovalHint: {
+    zh: '来自本机 API / magies-office MCP。仅在你正让命令行助手工作时允许。',
+    en: 'Came over the local API / magies-office MCP. Allow it only while a CLI assistant is working for you.',
+  },
+  officeApprovalKeys: {
+    zh: 'Enter 允许一次 · Esc 拒绝',
+    en: 'Enter to allow once · Esc to deny',
+  },
+  officeApprovalTrail: { zh: '授权记录', en: 'Approval trail' },
+  officeApprovalDeny: { zh: '拒绝', en: 'Deny' },
+  officeApprovalOnce: { zh: '允许一次', en: 'Allow once' },
+  // Covers every Office tool until the mode changes or the app restarts — the
+  // label has to say so, because one request uses many tools.
+  officeApprovalAlways: { zh: '本次运行全部允许', en: 'Allow all for this run' },
+  // Shown in the tab while an AI write lands and the engine reloads it.
+  officeApplyingAiEdit: {
+    zh: '正在应用 AI 的修改…',
+    en: 'Applying the AI edit…',
   },
   // Left rail of the start centre.
   railNew: { zh: '新建', en: 'New' },
@@ -458,8 +504,8 @@ const UI = {
   aiApiKeySave: { zh: '安全保存', en: 'Save securely' },
   aiMaxSteps: { zh: '单次最大工具步骤', en: 'Maximum tool steps per turn' },
   aiMaxStepsHelp: {
-    zh: '限制 Agent 连续调用工具的次数，范围 1–12。',
-    en: 'Limits consecutive Agent tool calls from 1 to 12.',
+    zh: '限制 Agent 连续调用工具的次数，范围 1–20。',
+    en: 'Limits consecutive Agent tool calls from 1 to 20.',
   },
   mcpSection: { zh: 'MCP Server', en: 'MCP Server' },
   mcpHelp: {

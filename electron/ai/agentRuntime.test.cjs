@@ -1,7 +1,13 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 
-const { AgentRuntime, redactToolArguments, toolDetails } = require('./agentRuntime.cjs');
+const {
+  AgentRuntime,
+  redactToolArguments,
+  relativePathInWorkspace,
+  systemPrompt,
+  toolDetails,
+} = require('./agentRuntime.cjs');
 
 const tools = [
   {
@@ -27,6 +33,192 @@ const tools = [
 ];
 
 describe('Agent runtime', () => {
+  it('computes a workspace-relative path and rejects escapes', () => {
+    assert.equal(
+      relativePathInWorkspace('/Users/x/Docs', '/Users/x/Docs/sales/555.xlsx'),
+      'sales/555.xlsx',
+    );
+    assert.equal(relativePathInWorkspace('/Users/x/Docs', '/Users/x/Other/a.xlsx'), '');
+    assert.equal(relativePathInWorkspace('', '/Users/x/Docs/a.xlsx'), '');
+    assert.equal(relativePathInWorkspace('/Users/x/Docs', ''), '');
+  });
+
+  it('system prompt prefers Office automation tools and names the open document', () => {
+    const prompt = systemPrompt('zh', [], 'confirm', {
+      hasOfficeTools: true,
+      workspacePath: '/Users/x/Docs',
+      activeOffice: {
+        name: '555.xlsx',
+        path: '/Users/x/Docs/555.xlsx',
+        relativePath: '555.xlsx',
+        kind: 'sheet',
+        dirty: false,
+        inWorkspace: true,
+        saved: true,
+      },
+    });
+
+    assert.match(prompt, /Chinese/);
+    assert.match(prompt, /555\.xlsx/);
+    assert.match(prompt, /office_excel_/);
+    assert.match(prompt, /relative path/i);
+    assert.match(prompt, /\/Users\/x\/Docs/);
+    assert.match(prompt, /Never claim Magies can only convert formats/i);
+  });
+
+  it('system prompt tells the model when the open Office file is unsaved or outside the workspace', () => {
+    const unsaved = systemPrompt('en', [], 'confirm', {
+      hasOfficeTools: true,
+      workspacePath: '/w',
+      activeOffice: {
+        name: '未命名.xlsx',
+        path: '',
+        relativePath: '',
+        kind: 'sheet',
+        dirty: true,
+        inWorkspace: false,
+        saved: false,
+      },
+    });
+    assert.match(unsaved, /not been saved|save first/i);
+
+    const outside = systemPrompt('en', [], 'confirm', {
+      hasOfficeTools: true,
+      workspacePath: '/w',
+      activeOffice: {
+        name: 'out.xlsx',
+        path: '/other/out.xlsx',
+        relativePath: '',
+        kind: 'sheet',
+        dirty: false,
+        inWorkspace: false,
+        saved: true,
+      },
+    });
+    assert.match(outside, /outside the granted workspace|not inside/i);
+  });
+
+  it('system prompt without Office tools does not invent Excel write APIs', () => {
+    const prompt = systemPrompt('en', [], 'confirm', {
+      hasOfficeTools: false,
+      workspacePath: '',
+      activeOffice: null,
+    });
+    assert.match(prompt, /grant|workspace|folder/i);
+    assert.doesNotMatch(prompt, /Prefer office_excel_write/);
+  });
+
+  it('system prompt carries session memory across turns for follow-up edits', () => {
+    const prompt = systemPrompt('zh', [], 'confirm', {
+      hasOfficeTools: true,
+      workspacePath: '/Users/x/Docs',
+      activeOffice: {
+        name: '555.xlsx',
+        path: '/Users/x/Docs/555.xlsx',
+        relativePath: '555.xlsx',
+        kind: 'sheet',
+        dirty: false,
+        inWorkspace: true,
+        saved: true,
+      },
+      sessionMemory: {
+        focusPath: 'Magies Office Output/555.xlsx',
+        recentWrites: [{
+          path: 'Magies Office Output/555.xlsx',
+          toolId: 'office:excel:write',
+          at: 1,
+        }],
+        recentTools: [{
+          toolId: 'office:excel:write',
+          ok: true,
+          detail: 'cellsWritten=40',
+          at: 1,
+        }],
+        notes: [],
+      },
+    });
+    assert.match(prompt, /Session focus document/);
+    assert.match(prompt, /Magies Office Output\/555\.xlsx/);
+    assert.match(prompt, /cellsWritten=40/);
+    assert.match(prompt, /继续改|刚才那个|follow-up/i);
+    assert.match(prompt, /Remember prior turns|follow-ups refer/i);
+  });
+
+  it('includes Office tool results on tool_result events so the UI can open written files', async () => {
+    const events = [];
+    let modelStep = 0;
+    const runtime = new AgentRuntime({
+      tools: [],
+      model: {
+        async streamMessage() {
+          modelStep += 1;
+          if (modelStep === 1) {
+            return {
+              content: '',
+              tool_calls: [{
+                id: 'w1',
+                type: 'function',
+                function: {
+                  name: 'office_excel_write',
+                  arguments: JSON.stringify({
+                    path: '555.xlsx',
+                    start_cell: 'A1',
+                    values: [['Name', 'Amount'], ['A', 1]],
+                  }),
+                },
+              }],
+            };
+          }
+          return { content: '已写入。', tool_calls: [] };
+        },
+      },
+      executeTool: async () => { throw new Error('catalog tools must not run'); },
+      requestApproval: async () => true,
+      officeToolProvider: {
+        listTools: async () => [{
+          functionName: 'office_excel_write',
+          toolId: 'office:excel:write',
+          name: { zh: '写入 Excel', en: 'Write Excel' },
+          requiresApproval: true,
+          providerTool: {
+            type: 'function',
+            function: { name: 'office_excel_write', description: 'Write Excel', parameters: { type: 'object' } },
+          },
+        }],
+        callTool: async () => ({
+          source: '555.xlsx',
+          written: 'Magies Office Output/555.xlsx',
+          cellsWritten: 4,
+        }),
+      },
+    });
+
+    await runtime.runTurn({
+      prompt: '填数据',
+      history: [],
+      locale: 'zh',
+      files: [],
+      officeContext: {
+        workspacePath: '/Users/x/Docs',
+        activeOffice: {
+          name: '555.xlsx',
+          path: '/Users/x/Docs/555.xlsx',
+          relativePath: '555.xlsx',
+          kind: 'sheet',
+          dirty: false,
+          inWorkspace: true,
+          saved: true,
+        },
+      },
+      config: { baseUrl: 'http://localhost:11434/v1', apiKey: '', model: 'local', maxSteps: 3 },
+      onEvent: (event) => events.push(event),
+    });
+
+    const resultEvent = events.find((event) => event.type === 'tool_result' && event.ok);
+    assert.equal(resultEvent.toolId, 'office:excel:write');
+    assert.equal(resultEvent.result.written, 'Magies Office Output/555.xlsx');
+  });
+
   it('redacts nested secrets and bounds retained argument details', () => {
     assert.deepEqual(redactToolArguments({
       path: '销售.xlsx',
@@ -243,6 +435,195 @@ describe('Agent runtime', () => {
       args: { query: 'budget' },
       signal: controller.signal,
     }]);
+    assert.equal(JSON.stringify(calls).includes('private.pdf'), false);
+  });
+
+  it('denies writing tools outright in observer mode instead of asking', async () => {
+    const approvals = [];
+    const calls = [];
+    const officeTool = {
+      functionName: 'office_word_write',
+      toolId: 'office:word:write',
+      name: { zh: '写入', en: 'Write' },
+      requiresApproval: true,
+      providerTool: {
+        type: 'function',
+        function: { name: 'office_word_write', description: 'write', parameters: { type: 'object', properties: {} } },
+      },
+    };
+    let modelStep = 0;
+
+    const runtime = new AgentRuntime({
+      tools: [],
+      model: {
+        async streamMessage() {
+          modelStep += 1;
+          return modelStep === 1
+            ? {
+                content: '',
+                tool_calls: [{ id: 'c1', type: 'function', function: { name: 'office_word_write', arguments: '{}' } }],
+              }
+            : { content: '观察者模式下不能写。', tool_calls: [] };
+        },
+      },
+      executeTool: async () => { throw new Error('local tools must not run'); },
+      requestApproval: async (request) => {
+        approvals.push(request.toolId);
+        return true;
+      },
+      officeToolProvider: {
+        listTools: async () => [officeTool],
+        callTool: async (...args) => { calls.push(args); return 'ok'; },
+      },
+    });
+
+    await runtime.runTurn({
+      prompt: '改一下',
+      history: [],
+      locale: 'zh',
+      files: [],
+      config: {
+        baseUrl: 'http://localhost:11434/v1',
+        apiKey: '',
+        model: 'local',
+        maxSteps: 3,
+        permissionMode: 'observer',
+      },
+      onEvent: () => {},
+    });
+
+    // Nobody is asked and nothing runs: observer mode is a refusal, not a prompt.
+    assert.deepEqual(approvals, []);
+    assert.deepEqual(calls, []);
+  });
+
+  it('runs without asking in auto permission mode, except where a tool demands a person', async () => {
+    const approvals = [];
+    const officeTool = {
+      functionName: 'office_word_read',
+      toolId: 'office:word:read',
+      name: { zh: '读取', en: 'Read' },
+      requiresApproval: true,
+      providerTool: {
+        type: 'function',
+        function: { name: 'office_word_read', description: 'read', parameters: { type: 'object', properties: {} } },
+      },
+    };
+    const macroTool = {
+      functionName: 'office_macro_run',
+      toolId: 'office:macro:run',
+      name: { zh: '运行宏', en: 'Run macro' },
+      requiresApproval: true,
+      providerTool: {
+        type: 'function',
+        function: { name: 'office_macro_run', description: 'macro', parameters: { type: 'object', properties: {} } },
+      },
+    };
+    let modelStep = 0;
+
+    const runtime = new AgentRuntime({
+      tools: [],
+      model: {
+        async streamMessage() {
+          modelStep += 1;
+          if (modelStep === 1) {
+            return {
+              content: '',
+              tool_calls: [{ id: 'c1', type: 'function', function: { name: 'office_word_read', arguments: '{}' } }],
+            };
+          }
+          if (modelStep === 2) {
+            return {
+              content: '',
+              tool_calls: [{ id: 'c2', type: 'function', function: { name: 'office_macro_run', arguments: '{}' } }],
+            };
+          }
+          return { content: '完成。', tool_calls: [] };
+        },
+      },
+      executeTool: async () => { throw new Error('local tools must not run'); },
+      requestApproval: async (request) => {
+        approvals.push(request.toolId);
+        return true;
+      },
+      officeToolProvider: {
+        listTools: async () => [officeTool, macroTool],
+        callTool: async () => 'ok',
+      },
+    });
+
+    await runtime.runTurn({
+      prompt: '读一下',
+      history: [],
+      locale: 'zh',
+      files: [],
+      config: {
+        baseUrl: 'http://localhost:11434/v1',
+        apiKey: '',
+        model: 'local',
+        maxSteps: 4,
+        permissionMode: 'auto',
+      },
+      onEvent: () => {},
+    });
+
+    // The ordinary read went through unattended; running a macro is arbitrary
+    // code and still stops for a person whatever the mode says.
+    assert.deepEqual(approvals, ['office:macro:run']);
+  });
+
+  it('offers the web search tool and asks before the query leaves the machine', async () => {
+    const { SEARCH_TOOL } = require('./webSearch.cjs');
+    const approvals = [];
+    const calls = [];
+    let modelStep = 0;
+
+    const runtime = new AgentRuntime({
+      tools: [],
+      model: {
+        async streamMessage() {
+          modelStep += 1;
+          return modelStep === 1
+            ? {
+                content: '',
+                tool_calls: [{
+                  id: 'search-call',
+                  type: 'function',
+                  function: { name: 'web_search', arguments: '{"query":"pdf/a spec"}' },
+                }],
+              }
+            : { content: '查到了。', tool_calls: [] };
+        },
+      },
+      executeTool: async () => { throw new Error('local tools must not run'); },
+      requestApproval: async (request) => {
+        approvals.push(request);
+        return true;
+      },
+      webSearchProvider: {
+        listTools: async () => [{ ...SEARCH_TOOL }],
+        async callTool(functionName, args) {
+          calls.push({ functionName, args });
+          return { query: args.query, results: [{ title: 'T', url: 'https://a', snippet: 'S' }] };
+        },
+      },
+    });
+
+    const result = await runtime.runTurn({
+      prompt: '查一下 PDF/A 规范',
+      history: [],
+      locale: 'zh',
+      files: [{ id: 'file-1', name: 'private.pdf', mime: 'application/pdf', bytes: new Uint8Array([1, 2]) }],
+      config: { baseUrl: 'http://localhost:11434/v1', apiKey: '', model: 'local', maxSteps: 3 },
+      onEvent: () => {},
+    });
+
+    assert.equal(result.message, '查到了。');
+    // The user sees the query before it is sent, and the open document is not
+    // part of what goes out.
+    assert.equal(approvals[0].toolId, 'web:search');
+    assert.match(approvals[0].details, /pdf\/a spec/i);
+    assert.deepEqual(calls, [{ functionName: 'web_search', args: { query: 'pdf/a spec' } }]);
     assert.equal(JSON.stringify(calls).includes('private.pdf'), false);
   });
 

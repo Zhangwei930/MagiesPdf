@@ -65,6 +65,22 @@ function createSecretStore({ filePath, safeStorage }) {
   };
 
   return {
+    /**
+     * Per-provider access. The key name comes from `secretKeyForProvider`, so
+     * the provider that predates the provider list still resolves to `apiKey`.
+     */
+    hasSecret(key) {
+      return key ? hasSecret(key) : false;
+    },
+
+    getSecret(key) {
+      return key ? getSecret(key) : '';
+    },
+
+    setSecret(key, value) {
+      if (key) setSecret(key, value);
+    },
+
     hasApiKey() {
       return hasSecret('apiKey');
     },
@@ -75,6 +91,30 @@ function createSecretStore({ filePath, safeStorage }) {
 
     setApiKey(value) {
       setSecret('apiKey', value);
+    },
+
+    hasWebSearchKey() {
+      return hasSecret('webSearch');
+    },
+
+    getWebSearchKey() {
+      return getSecret('webSearch');
+    },
+
+    setWebSearchKey(value) {
+      setSecret('webSearch', value);
+    },
+
+    hasImageSearchKey() {
+      return hasSecret('imageSearch');
+    },
+
+    getImageSearchKey() {
+      return getSecret('imageSearch');
+    },
+
+    setImageSearchKey(value) {
+      setSecret('imageSearch', value);
     },
 
     hasMcpConfig() {

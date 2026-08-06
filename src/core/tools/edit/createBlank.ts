@@ -72,7 +72,7 @@ export const createBlankTool: ToolDescriptor = {
   async run(ctx) {
     const pageCount = Math.max(1, Math.min(500, Math.floor(numberParam(ctx, 'pages') || 1)));
     const sizeKey = stringParam(ctx, 'pageSize') || 'a4';
-    const size = SIZES[sizeKey] ?? SIZES.a4!;
+    const size = SIZES[sizeKey] ?? SIZES.a4 ?? [595.28, 841.89];
     const labelPages = ctx.params.labelPages === true;
     let fileName = stringParam(ctx, 'fileName').trim() || 'blank.pdf';
     if (!fileName.toLowerCase().endsWith('.pdf')) fileName = `${fileName}.pdf`;

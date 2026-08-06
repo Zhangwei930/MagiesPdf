@@ -4,6 +4,12 @@ const { randomUUID } = require('node:crypto');
 const { AgentRuntime } = require('./agentRuntime.cjs');
 const { AiError, OpenAiCompatibleClient } = require('./openAiClient.cjs');
 const { requiresInteractiveApproval } = require('./automationPolicy.cjs');
+const { strictPrivacyRefusal } = require('./privacy.cjs');
+const {
+  normalizeProviders,
+  resolveActiveProvider,
+  secretKeyForProvider,
+} = require('./providerStore.cjs');
 
 function abortError() {
   const error = new Error('AI turn cancelled');
@@ -20,22 +26,47 @@ function createAiService({
   runtimeFactory,
   externalToolProvider,
   officeToolProvider,
+  webSearchProvider,
 }) {
   const activeTurns = new Map();
 
   const getConfig = () => {
     const ai = readSettings().ai || {};
+    const { providers, activeProviderId } = normalizeProviders(ai);
+    const active = providers.find((provider) => provider.id === activeProviderId) ?? null;
+
     return {
-      baseUrl: String(ai.baseUrl || ''),
-      model: String(ai.model || ''),
+      providers: providers.map((provider) => ({
+        ...provider,
+        // Whether a key exists, never the key itself.
+        apiKeyConfigured: secretStore.hasSecret(secretKeyForProvider(provider.id)),
+      })),
+      activeProviderId,
       maxSteps: Number(ai.maxSteps) || 6,
-      apiKeyConfigured: secretStore.hasApiKey(),
+      // The resolved view of the active provider, which is what a turn uses.
+      baseUrl: active ? active.baseUrl : '',
+      model: active ? active.model : '',
+      apiKeyConfigured: active
+        ? secretStore.hasSecret(secretKeyForProvider(active.id))
+        : false,
     };
   };
 
-  const setApiKey = (value) => {
-    secretStore.setApiKey(String(value || ''));
-    return { apiKeyConfigured: secretStore.hasApiKey() };
+  const setApiKey = (value, providerId) => {
+    const ai = readSettings().ai || {};
+    const { activeProviderId } = normalizeProviders(ai);
+    const target = String(providerId || activeProviderId || '');
+    if (!target) {
+      throw new AiError('AI_CONFIG_INVALID', 'No model provider is configured', {
+        zh: '请先添加一个模型服务商。',
+        en: 'Add a model provider first.',
+      });
+    }
+    secretStore.setSecret(secretKeyForProvider(target), String(value || ''));
+    return {
+      providerId: target,
+      apiKeyConfigured: secretStore.hasSecret(secretKeyForProvider(target)),
+    };
   };
 
   const executeTurn = async (request, sendEvent, options = {}) => {
@@ -92,18 +123,37 @@ function createAiService({
         ? options.externalToolProvider
         : externalToolProvider,
       officeToolProvider: options.officeToolProvider || officeToolProvider,
+      webSearchProvider: options.webSearchProvider || webSearchProvider,
     });
     activeTurns.set(requestId, { controller, approvals });
 
     try {
       const ai = readSettings().ai || {};
+      const active = resolveActiveProvider(ai);
+      const refusal = strictPrivacyRefusal({
+        strict: ai.strictLocalPrivacy === true,
+        baseUrl: active ? active.baseUrl : '',
+      });
+      if (refusal) {
+        throw new AiError(refusal.code, refusal.message, refusal.userMessage);
+      }
+      if (!active) {
+        throw new AiError('AI_CONFIG_INVALID', 'No model provider is configured', {
+          zh: '请先在设置中添加并选用一个模型服务商。',
+          en: 'Add a model provider in settings and select it first.',
+        });
+      }
       return await runtime.runTurn({
         ...request,
         config: {
-          baseUrl: String(ai.baseUrl || ''),
-          apiKey: secretStore.getApiKey(),
-          model: String(ai.model || ''),
+          baseUrl: active.baseUrl,
+          apiKey: secretStore.getSecret(secretKeyForProvider(active.id)),
+          model: active.model,
           maxSteps: Number(ai.maxSteps) || 6,
+          permissionMode: ai.permissionMode === 'auto' || ai.permissionMode === 'observer'
+            ? ai.permissionMode
+            : 'confirm',
+          reasoningEffort: active.reasoningEffort || '',
         },
         signal: controller.signal,
         onEvent: event,
