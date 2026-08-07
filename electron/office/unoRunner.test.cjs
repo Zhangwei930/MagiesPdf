@@ -251,8 +251,15 @@ describe('createUnoRunner', () => {
     const root = await temporaryDirectory();
     const pipeDirectory = path.join(root, 'pipes');
     await fs.mkdir(pipeDirectory, { recursive: true });
-    const socket = officePipeSocketPath('magies_abc_123', { pipeDirectory, uid: 501 });
-    assert.equal(socket, path.join(pipeDirectory, 'OSL_PIPE_501_magies_abc_123'));
+    // The name carries the uid, pinned here against a fixed one so the shape is
+    // checked rather than restated.
+    assert.equal(
+      officePipeSocketPath('magies_abc_123', { pipeDirectory, uid: 501 }),
+      path.join(pipeDirectory, 'OSL_PIPE_501_magies_abc_123'),
+    );
+    // The socket the runner will actually look for carries whichever uid this
+    // process runs under — hardcoding one passes only on the machine that has it.
+    const socket = officePipeSocketPath('magies_abc_123', { pipeDirectory });
     await fs.writeFile(socket, '');
 
     const runner = createUnoRunner({
