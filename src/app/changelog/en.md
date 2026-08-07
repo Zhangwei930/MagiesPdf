@@ -1,5 +1,34 @@
 # Changelog
 
+## 3.0.0 — 2026-08-07
+
+### Office documents open in this window
+
+- **Word, spreadsheets and slides now open as tabs in Magies Office itself**, not by handing the file to a separate program. Switching between a PDF and a document is a tab away, and the window keeps one toolbar rather than two
+- The editor is an embedded **ONLYOFFICE Document Server 9.4.0** build, served locally over loopback. There is no server to run and no account to sign in to; the document never leaves the machine
+- Create, open and **Save As** from the file menu, against the document open in the tab
+- Full Western and CJK font lists, so a document composed elsewhere opens with the fonts it asked for
+- Spreadsheets get pivot field areas, ranking and pivot charts, with headers that stay readable
+- LibreOffice is still bundled and still renders PDF previews and format conversions — the embedded engine replaces the *editing* path, not the whole runtime
+
+### PDF tools in a task pane
+
+- Tools open as a **right-hand task pane or a compact dialog** instead of taking over the window, so the page stays in view while options are set
+- One-shot and confirm-to-apply flows, with the resulting file size reported back
+- **Aggressive compression** re-encodes images rather than only restreaming them, which is where the meaningful savings are. Standard compression stays lossless
+- Create form fields, and replace text in place
+
+### A quieter start centre
+
+- Documents sit in the middle of the start centre, with the toolbox out of the way and a single search box
+- New layered application mark, on macOS and Windows alike
+
+### Packaging
+
+- The engine's shared half is built once in CI and each platform's converter is prepared from its own package; packaging refuses outright rather than shipping an app that cannot open a document
+- The unused PDF editor, 44 unused locales and the template gallery are left out of the package
+- `pdfjs-dist` and `js-yaml` updated for high-severity advisories (GHSA-hq66-cqwq-w95j, GHSA-5p4m-2wfm-xmqj)
+
 ## 2.0.1 — 2026-08-01
 
 ### AI office agent
