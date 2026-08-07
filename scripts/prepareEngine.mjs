@@ -41,7 +41,11 @@ const DOCUMENT_SERVER = 'https://download.onlyoffice.com/install/documentserver/
 const NOTO_SANS_CJK = 'https://github.com/notofonts/noto-cjk/releases/download/Sans2.004/03_NotoSansCJK-OTC.zip';
 const NOTO_SANS_WEIGHTS = ['NotoSansCJK-Regular.ttc', 'NotoSansCJK-Bold.ttc'];
 const NOTO_SERIF_CJK = 'https://github.com/notofonts/noto-cjk/releases/download/Serif2.003/04_NotoSerifCJKOTC.zip';
-const NOTO_SERIF_WEIGHTS = ['NotoSerifCJK-Regular.ttc', 'NotoSerifCJK-Bold.ttc'];
+// The two archives are not laid out alike: Sans keeps its faces at the root,
+// Serif nests them under `OTC/`. `unzip -j` flattens on the way out but still
+// matches against the path inside the archive, so the prefix has to be here or
+// nothing matches and unzip exits 11.
+const NOTO_SERIF_WEIGHTS = ['OTC/NotoSerifCJK-Regular.ttc', 'OTC/NotoSerifCJK-Bold.ttc'];
 
 /**
  * Where each platform keeps the converter inside its own package. These are
