@@ -98,7 +98,7 @@ describe('the composing operations against the bundled LibreOffice', {
   let root = '';
   /** One composed document per kind, produced once. */
   const parts = {
-    sheet: null, chart: null, word: null, slide: null, emptyTable: null, astral: null,
+    sheet: null, chart: null, chartRowLabels: null, word: null, slide: null, emptyTable: null, astral: null,
     themedDeck: null, added: null, addedToPlain: null, pivotSource: null, pivot: null,
     pivotWideSource: null, pivotWide: null,
     commented: null, footnoted: null, captioned: null, columned: null, restyled: null,
@@ -145,6 +145,18 @@ describe('the composing operations against the bundled LibreOffice', {
       dataRange: 'A1:C3',
       chartType: 'column',
       title: '\u6536\u5165',
+    }, parts.sheet);
+
+    // The header row is labels and the first column is not, so which edge the
+    // engine actually read is visible in the chart it writes.
+    parts.chartRowLabels = await compose('sheet', {
+      operation: 'excel_create_chart',
+      sheet: 'Sheet1',
+      dataRange: 'A1:C3',
+      chartType: 'column',
+      title: '\u6536\u5165',
+      firstRowLabels: true,
+      firstColumnLabels: false,
     }, parts.sheet);
 
     parts.word = await compose('word', {
@@ -334,6 +346,29 @@ describe('the composing operations against the bundled LibreOffice', {
     // column chart is Vertical=False. Inverted, every column chart came out as
     // a bar chart and the return value still said it had worked.
     assert.match(zipEntry(parts.chart, name), /<c:barDir val="col"\/>/);
+  });
+
+  it('reads labels off the edge the caller named, not the other one', () => {
+    // The engine takes two flags in its own order — the topmost row, then the
+    // leftmost column — and they were handed over the other way round. Both
+    // default to true, so it only showed when a caller turned one off: asking
+    // for the header row to be labels labelled the first column instead, and
+    // the header row was plotted as data.
+    const name = zipNames(parts.chartRowLabels)
+      .find((entry) => /^xl\/charts\/chart\d+\.xml$/.test(entry));
+    assert.ok(name, 'the workbook carries a chart part');
+    const chart = zipEntry(parts.chartRowLabels, name);
+    const series = [...chart.matchAll(/<c:tx>[\s\S]*?<c:f>(.*?)<\/c:f>/g)].map((match) => match[1]);
+    const categories = [...chart.matchAll(/<c:cat>[\s\S]*?<c:f>(.*?)<\/c:f>/g)].map((match) => match[1]);
+    // Row 1 holds 月份/收入/成本, so with firstRowLabels the series are named
+    // from row 1 — every reference to a single cell in it.
+    assert.ok(series.length > 0, `no series names: ${chart.slice(0, 200)}`);
+    for (const reference of series) {
+      assert.match(reference, /\$[A-C]\$1$/, `series named off row ${reference}, not row 1`);
+    }
+    for (const reference of categories) {
+      assert.doesNotMatch(reference, /\$A\$/, `column A was labelled despite firstColumnLabels: false`);
+    }
   });
 
   it('anchors the chart beside the table rather than over it', () => {

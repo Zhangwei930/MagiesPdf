@@ -1699,8 +1699,11 @@ def excel_create_chart(document, request):
         request['chartType'],
         request.get('chartName', ''),
         request.get('title', ''),
-        request.get('firstColumnLabels', True) is not False,
+        # In the engine's order: the topmost row first, the leftmost column
+        # second. These were the other way round, which only showed when a
+        # caller turned one of them off — both default to true.
         request.get('firstRowLabels', True) is not False,
+        request.get('firstColumnLabels', True) is not False,
     )
     store_copy(document, request['outputPath'])
     return {'chartName': chart_name}
