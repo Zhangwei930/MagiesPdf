@@ -206,6 +206,27 @@ describe('Office Agent wiring', () => {
     assert.match(workerSource, /'styles': style_summary/);
   });
 
+  it('loads again when the engine answers with no document at all', () => {
+    // Accepting on the pipe is not the same as being ready to load: a desktop
+    // that is still coming up returns a null component and raises nothing, and
+    // the operation failed with "could not open the document" over a file that
+    // opens perfectly the next moment.
+    assert.match(workerSource, /for attempt in range\(LOAD_ATTEMPTS\)/);
+    assert.match(workerSource, /if document is not None:\n\s+return document/);
+    assert.match(workerSource, /raise RuntimeError\('LibreOffice could not open the document'\)/);
+  });
+
+  it('never lets closing the document decide whether the operation failed', () => {
+    // Both close paths raise intermittently on a document the engine has
+    // already torn down, and an escaped exception there threw away a result
+    // that had been stored — the operation reported "illegal object given!"
+    // for work it had finished.
+    assert.match(
+      workerSource,
+      /def close_document\(document\):[\s\S]+?document\.close\(True\)\n\s+except Exception:\n\s+try:\n\s+document\.dispose\(\)\n\s+except Exception:\n\s+pass/,
+    );
+  });
+
   it('waits for LibreOffice as long as the Node side is willing to', () => {
     // The bridge used to give up after a fixed 300 × 0.1s while the Node side
     // was still willing to wait two minutes, so a slow start — several
@@ -220,10 +241,15 @@ describe('Office Agent wiring', () => {
       'the bridge must give up before the process that is waiting on it',
     );
     assert.ok(Number(budget[1]) >= 30, 'and not before a loaded machine can start');
-    // The runner starts a second instance after a refusal, so the user waits
-    // this twice before hearing that nothing worked.
+    // The runner starts a fresh instance after a refusal, so the user waits
+    // this once per attempt before hearing that nothing worked. The ceiling is
+    // three minutes rather than two because of a measurement: when LibreOffice
+    // crashes, macOS holds the next start behind its crash reporter, and the
+    // one after a crash took 133 seconds against a 120-second budget. Failing
+    // 13 seconds short of an instance that was coming up is the worst of both.
     const attempts = Number(/ACCEPTOR_ATTEMPTS = (\d+)/.exec(runnerSource)[1]);
-    assert.ok(Number(budget[1]) * attempts <= 120, 'two attempts must still answer inside two minutes');
+    assert.ok(Number(budget[1]) * attempts <= 180, 'every attempt together must still answer inside three minutes');
+    assert.ok(Number(budget[1]) * attempts >= 150, 'and must outlast a start held up by a crash report');
   });
 
   it('draws a worksheet chart the way it was asked for, beside its data', () => {

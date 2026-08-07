@@ -12,8 +12,22 @@ const { withEngineLock } = require('./engineLock.cjs');
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const MAX_RESULT_BYTES = 2 * 1024 * 1024;
 const UNO_TIMEOUT_MS = 120000;
-/** One retry, because the engine's refusal to accept is not about the request. */
-const ACCEPTOR_ATTEMPTS = 2;
+/**
+ * Two retries, because the engine fails this way for two independent reasons
+ * and one budget between them ran out on the second: an instance that never
+ * accepted, followed by one that crashed, is not a document problem and should
+ * not be reported as one.
+ */
+const ACCEPTOR_ATTEMPTS = 3;
+/**
+ * Failures of the engine rather than answers about the document.
+ *
+ * Two shapes, one remedy. LibreOffice intermittently starts without accepting
+ * on the pipe it was given; and it intermittently dies mid-call — SIGSEGV
+ * inside a UNO dispatch, which reaches the bridge as a disposed connection and
+ * says nothing about what was being done at the time.
+ */
+const ENGINE_FAILED = /Unable to connect to LibreOffice|Binary URP bridge disposed|DisposedException/;
 
 function libreOfficePythonCandidates(soffice, platform = process.platform) {
   if (platform === 'win32') {
@@ -114,12 +128,22 @@ function pythonEnvironment(soffice, environment = process.env, platform = proces
   };
 }
 
+/**
+ * Whether the engine is still up.
+ *
+ * A child killed by a signal keeps `exitCode` null and reports `signalCode`
+ * instead, so reading the exit code alone calls a killed LibreOffice running
+ * and waits out the full timeout on a process that has already gone.
+ */
+function officeIsRunning(child) {
+  if (!child) return false;
+  const exited = (child.exitCode !== null && child.exitCode !== undefined)
+    || (child.signalCode !== null && child.signalCode !== undefined);
+  return !exited;
+}
+
 function waitForOfficeExit(child, timeoutMs) {
-  if (
-    !child
-    || (child.exitCode !== null && child.exitCode !== undefined)
-    || typeof child.once !== 'function'
-  ) return Promise.resolve();
+  if (!officeIsRunning(child) || typeof child.once !== 'function') return Promise.resolve();
   return new Promise((resolve) => {
     let settled = false;
     const finish = () => {
@@ -134,9 +158,21 @@ function waitForOfficeExit(child, timeoutMs) {
   });
 }
 
+async function stopOffice(child, signal, timeoutMs) {
+  if (!officeIsRunning(child)) return;
+  try {
+    child.kill(signal);
+  } catch {
+    // LibreOffice may already have exited after the document closed.
+  }
+  await waitForOfficeExit(child, timeoutMs);
+}
+
 function createUnoRunner({
   createTemporaryDirectory = () => fileSystem.mkdtemp(path.join(os.tmpdir(), 'magies-office-uno-')),
   executePython = defaultExecutePython,
+  /** How long each stage of the shutdown waits before escalating. */
+  officeExitTimeoutMs = 10000,
   randomId = crypto.randomUUID,
   resolvePython = resolveLibreOfficePython,
   /** Where the pipe socket lands; injected so the cleanup can be tested. */
@@ -198,13 +234,14 @@ function createUnoRunner({
       if (!payload?.ok) throw new Error(String(payload?.error || 'LibreOffice UNO operation failed'));
       return payload.result ?? {};
     } finally {
-      await waitForOfficeExit(office, 1500);
-      try {
-        if (office.exitCode === null || office.exitCode === undefined) office.kill();
-      } catch {
-        // LibreOffice may already have exited after the document closed.
-      }
-      await waitForOfficeExit(office, 1500);
+      // The engine lock is released as soon as this returns, so what is waited
+      // for here is the process being *gone*, not a fixed slice of time. The
+      // worker asks the desktop to terminate, which is usually enough; ask
+      // again, then insist. An instance that outlives this wait is one the next
+      // operation collides with, and it reports `couldn't connect to pipe`.
+      await waitForOfficeExit(office, officeExitTimeoutMs);
+      await stopOffice(office, 'SIGTERM', officeExitTimeoutMs);
+      await stopOffice(office, 'SIGKILL', officeExitTimeoutMs);
       // Only once it is gone: a live LibreOffice recreates its own socket.
       const socketPath = officePipeSocketPath(pipeName, { platform, pipeDirectory });
       if (socketPath) await fileSystem.rm(socketPath, { force: true });
@@ -226,19 +263,25 @@ function createUnoRunner({
     if (!request || typeof request !== 'object' || !request.executable) {
       throw new Error('A LibreOffice executable and UNO request are required');
     }
+    const { executable: _executable, signal: _signal, ...operation } = request;
     return withLock(async () => {
       let refused;
       for (let attempt = 0; attempt < ACCEPTOR_ATTEMPTS; attempt += 1) {
         try {
           return await execute(request);
         } catch (error) {
-          // LibreOffice intermittently starts without accepting on the pipe it
-          // was given. Nothing in the request causes it and nothing in the
-          // profile clears it; an entirely fresh instance does. Anything else
+          // Nothing in the request causes either of these and nothing in the
+          // profile clears them; an entirely fresh instance does. Anything else
           // is the engine's answer about this document, and repeating it would
           // double the wait and change nothing.
-          if (!/Unable to connect to LibreOffice/.test(String(error?.message))) throw error;
+          if (!ENGINE_FAILED.test(String(error?.message))) throw error;
           refused = error;
+          // A crash can land after the document was stored, and LibreOffice
+          // refuses to write over a file that is already there — the retry
+          // would fail on the wreckage of the attempt before it.
+          if (operation.outputPath) {
+            await fileSystem.rm(operation.outputPath, { force: true });
+          }
         }
       }
       throw refused;

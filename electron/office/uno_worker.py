@@ -25,11 +25,17 @@ back-to-back tool calls produce, and what a machine under load makes worse —
 took longer than that, and the operation failed outright rather than merely
 taking longer. This must stay below `UNO_TIMEOUT_MS` in unoRunner.cjs, so the
 bridge gives up before the process waiting on it does and the caller gets this
-error instead of a killed subprocess. It is also paid twice, because the runner
-starts one fresh instance after a refusal, so it doubles as half the budget a
-user waits before being told nothing worked.
+error instead of a killed subprocess. It is also paid once per attempt, and the
+runner makes three, so it is a third of the budget a user waits before being
+told nothing worked.
+
+45 was still thin for one specific reason: when LibreOffice crashes, macOS holds
+the *next* start behind its crash reporter. Measured, that start took 133
+seconds while three attempts allowed 120 — so the operation was abandoned 13
+seconds short of an instance that was on its way up, and the error named a pipe
+rather than any of this.
 """
-CONNECT_TIMEOUT_SECONDS = 45
+CONNECT_TIMEOUT_SECONDS = 55
 
 MAX_TEXT_CHARS = 100_000
 MAX_ROWS = 200
@@ -79,6 +85,19 @@ def trust_macro_location(context, input_path):
     configuration.commitChanges()
 
 
+"""
+How many times to ask for the document before believing the answer.
+
+Opening the acceptor is not the same as being ready to load. An instance still
+coming up answers `loadComponentFromURL` with no component and raises nothing,
+and the operation then failed with "could not open the document" over a file
+that opens perfectly a moment later. A file the engine genuinely cannot read
+fails the same way each time, so the message it ends on stays true.
+"""
+LOAD_ATTEMPTS = 4
+LOAD_RETRY_SECONDS = 0.4
+
+
 def load_document(desktop, input_path, read_only, trusted_macro=False):
     if not isinstance(input_path, str) or not os.path.isabs(input_path):
         raise ValueError('UNO input path must be absolute')
@@ -87,26 +106,41 @@ def load_document(desktop, input_path, read_only, trusted_macro=False):
         if trusted_macro
         else property_value('MacroExecutionMode', 0)
     )
-    document = desktop.loadComponentFromURL(
-        uno.systemPathToFileUrl(input_path),
-        '_blank',
-        0,
-        (
-            property_value('Hidden', True),
-            property_value('ReadOnly', bool(read_only)),
-            macro_mode,
-        ),
-    )
-    if document is None:
-        raise RuntimeError('LibreOffice could not open the document')
-    return document
+    for attempt in range(LOAD_ATTEMPTS):
+        document = desktop.loadComponentFromURL(
+            uno.systemPathToFileUrl(input_path),
+            '_blank',
+            0,
+            (
+                property_value('Hidden', True),
+                property_value('ReadOnly', bool(read_only)),
+                macro_mode,
+            ),
+        )
+        if document is not None:
+            return document
+        if attempt + 1 < LOAD_ATTEMPTS:
+            time.sleep(LOAD_RETRY_SECONDS)
+    raise RuntimeError('LibreOffice could not open the document')
 
 
 def close_document(document):
+    """Closing is cleanup, and cleanup must not decide whether the call failed.
+
+    `close(True)` is refused while anything still holds the document, and the
+    `dispose()` fallback then raises "illegal object given!" on one the engine
+    has already torn down. Neither says anything about the operation, which by
+    this point has run and stored its output. Letting either escape the
+    `finally` discards a result that is on disk, intermittently and with an
+    error naming nothing the caller asked for.
+    """
     try:
         document.close(True)
     except Exception:
-        document.dispose()
+        try:
+            document.dispose()
+        except Exception:
+            pass
 
 
 def filter_for_extension(output_path):
