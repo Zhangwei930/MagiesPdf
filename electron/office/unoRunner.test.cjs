@@ -345,6 +345,44 @@ describe('createUnoRunner', () => {
     assert.equal(office.signalCode, 'SIGKILL', 'the runner returned with LibreOffice still running');
   });
 
+  it('starts over when the engine stopped responding, but not when a file cannot be read', async () => {
+    // An engine that dies while opening answers with no document rather than
+    // raising, which is indistinguishable from a file it genuinely cannot read
+    // — until the bridge is asked whether it is still there. The worker makes
+    // that distinction and says which one it was; both must be honoured here,
+    // because retrying a corrupt file only doubles the wait.
+    const root = await temporaryDirectory();
+    const run = async (error) => {
+      let attempts = 0;
+      const runner = createUnoRunner({
+        createTemporaryDirectory: async () => fs.mkdtemp(path.join(root, 'session-')),
+        resolvePython: () => '/office/python',
+        workerPath: '/app/uno_worker.py',
+        spawnOffice: () => ({ kill() {} }),
+        executePython: async (_executable, args) => {
+          attempts += 1;
+          if (attempts === 1) {
+            await fs.writeFile(args[2], JSON.stringify({ ok: false, error }));
+            return;
+          }
+          await fs.writeFile(args[2], JSON.stringify({ ok: true, result: { text: 'second' } }));
+        },
+      });
+      const outcome = await runner.run({
+        executable: '/office/soffice', operation: 'word_read', inputPath: '/workspace/Letter.docx',
+      }).catch((failure) => failure.message);
+      return { attempts, outcome };
+    };
+
+    assert.deepEqual(
+      await run('RuntimeError: LibreOffice stopped responding while opening the document'),
+      { attempts: 2, outcome: { text: 'second' } },
+    );
+    const refused = await run('RuntimeError: LibreOffice could not open the document');
+    assert.equal(refused.attempts, 1, 'a file the engine cannot read was tried again');
+    assert.match(refused.outcome, /could not open the document/);
+  });
+
   it('starts over when LibreOffice dies mid-call, and clears what it half-wrote', async () => {
     // LibreOffice crashes on its own from time to time — SIGSEGV inside a UNO
     // dispatch, nothing to do with the document — and the bridge reports it as

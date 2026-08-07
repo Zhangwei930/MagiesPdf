@@ -22,12 +22,22 @@ const ACCEPTOR_ATTEMPTS = 3;
 /**
  * Failures of the engine rather than answers about the document.
  *
- * Two shapes, one remedy. LibreOffice intermittently starts without accepting
- * on the pipe it was given; and it intermittently dies mid-call — SIGSEGV
- * inside a UNO dispatch, which reaches the bridge as a disposed connection and
- * says nothing about what was being done at the time.
+ * Three shapes, one remedy. LibreOffice intermittently starts without accepting
+ * on the pipe it was given; it intermittently dies mid-call — SIGSEGV inside a
+ * UNO dispatch, which reaches the bridge as a disposed connection and says
+ * nothing about what was being done at the time; and when it dies while opening
+ * a document it answers with no document at all, which the worker separates
+ * from a file it genuinely cannot read before naming it here.
+ *
+ * "could not open the document" is deliberately not in this list: that one is
+ * the engine's answer about the file, and repeating it doubles the wait.
  */
-const ENGINE_FAILED = /Unable to connect to LibreOffice|Binary URP bridge disposed|DisposedException/;
+const ENGINE_FAILED = new RegExp([
+  'Unable to connect to LibreOffice',
+  'Binary URP bridge disposed',
+  'DisposedException',
+  'LibreOffice stopped responding',
+].join('|'));
 
 function libreOfficePythonCandidates(soffice, platform = process.platform) {
   if (platform === 'win32') {

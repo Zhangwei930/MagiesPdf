@@ -250,6 +250,17 @@ describe('Office Agent wiring', () => {
     assert.match(workerSource, /for attempt in range\(LOAD_ATTEMPTS\)/);
     assert.match(workerSource, /if document is not None:\n\s+return document/);
     assert.match(workerSource, /raise RuntimeError\('LibreOffice could not open the document'\)/);
+    // And when the engine died partway through opening, it answers with no
+    // document too. Asking the desktop whether it is still there is what tells
+    // those apart, and only one of them is worth another instance.
+    assert.match(workerSource, /desktop\.getComponents\(\)/);
+    assert.match(workerSource, /LibreOffice stopped responding while opening the document/);
+    // The failed attempt leaves the document locked. Retrying without clearing
+    // that is retrying against a lock this process made itself, which is what
+    // turned one refusal into every one of them.
+    assert.match(workerSource, /def document_lock_path\(input_path\)/);
+    assert.match(workerSource, /f'\.~lock\.\{name\}#'/);
+    assert.match(workerSource, /os\.remove\(document_lock_path\(input_path\)\)/);
   });
 
   it('never lets closing the document decide whether the operation failed', () => {

@@ -93,9 +93,22 @@ coming up answers `loadComponentFromURL` with no component and raises nothing,
 and the operation then failed with "could not open the document" over a file
 that opens perfectly a moment later. A file the engine genuinely cannot read
 fails the same way each time, so the message it ends on stays true.
+
+The window is 15 seconds rather than the 1.6 it started at, for the same reason
+the connection budget grew: after LibreOffice crashes, macOS holds the machine
+behind its crash reporter, and the instance that comes up next is alive and
+answering but not yet able to open anything. 1.6 seconds ran out inside that,
+and reported a file that could not be opened over one that could. Nothing is
+paid on a healthy load, which returns on the first ask.
 """
-LOAD_ATTEMPTS = 4
-LOAD_RETRY_SECONDS = 0.4
+LOAD_ATTEMPTS = 10
+LOAD_RETRY_SECONDS = 1.5
+
+
+def document_lock_path(input_path):
+    """Where LibreOffice writes the lock for a document: beside it, hidden."""
+    directory, name = os.path.split(input_path)
+    return os.path.join(directory, f'.~lock.{name}#')
 
 
 def load_document(desktop, input_path, read_only, trusted_macro=False):
@@ -120,7 +133,25 @@ def load_document(desktop, input_path, read_only, trusted_macro=False):
         if document is not None:
             return document
         if attempt + 1 < LOAD_ATTEMPTS:
+            # The attempt that just failed still locked the document on its way
+            # through. Left there, every retry is refused for a lock this very
+            # process made, which is how one refusal became all of them — the
+            # whole window spent asking a question already answered no.
+            try:
+                os.remove(document_lock_path(input_path))
+            except OSError:
+                pass
             time.sleep(LOAD_RETRY_SECONDS)
+    # An engine that died partway through opening answers with no document too,
+    # and from here that looks exactly like a file it cannot read. Asking the
+    # desktop whether it is still there is what tells them apart — and only one
+    # of the two is worth a fresh instance, so the caller is told which.
+    try:
+        desktop.getComponents()
+    except Exception as cause:
+        raise RuntimeError(
+            f'LibreOffice stopped responding while opening the document: {cause}'
+        ) from cause
     raise RuntimeError('LibreOffice could not open the document')
 
 
