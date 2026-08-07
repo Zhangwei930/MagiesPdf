@@ -158,6 +158,28 @@ describe('Office Agent wiring', () => {
     assert.match(workerSource, /com\.sun\.star\.sheet\.DataPilotFieldShowItemsMode\.FROM_TOP/);
   });
 
+  it('writes the pivot ranking into the file, not only into the cells', () => {
+    // The engine applies AutoShow while building and drops it on the way out:
+    // the cells it writes are ranked, the pivot definition it stores is not,
+    // and the first refresh — or the first reopen in LibreOffice, which is
+    // what this app's own PDF export does — brings the excluded rows back. So
+    // the tool reported three regions over a file that shows four.
+    assert.match(workerSource, /def persist_pivot_ranking\(/);
+    assert.match(workerSource, /autoShow="1" topAutoShow="1"/);
+    assert.match(workerSource, /itemPageCount="/);
+    assert.match(workerSource, /import zipfile/);
+  });
+
+  it('widens a chart to fit the categories it has to draw', () => {
+    // A fixed frame fits a handful of categories. A pivot nested two fields
+    // deep with two measures has eighteen, and the ones past the sixth were
+    // drawn outside the frame — off the chart entirely, with no hint in the
+    // file that anything was missing.
+    assert.match(workerSource, /CHART_WIDTH_PER_CATEGORY/);
+    assert.match(workerSource, /categories = address\.EndRow - address\.StartRow \+ 1/);
+    assert.match(workerSource, /rectangle\.Width = min\(\s*max\(/);
+  });
+
   it('draws the pivot chart over the pivot body, not over its totals', () => {
     // The chart and the plain chart operation go through one placement helper,
     // and the range charted excludes the page-field rows above the table and

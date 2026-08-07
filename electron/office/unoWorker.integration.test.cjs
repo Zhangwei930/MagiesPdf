@@ -604,6 +604,21 @@ describe('the composing operations against the bundled LibreOffice', {
       /¥#,##0/,
       'the number format never reached the pivot body',
     );
+    // The ranking has to be in the pivot's own definition, not only in the
+    // cells the engine happened to write. Without it the first refresh brings
+    // the ranked-out rows back, and the file stops agreeing with what the
+    // operation reported — 华中 reappearing in a report that says top two.
+    const definition = zipEntry(parts.pivotWide, 'xl/pivotTables/pivotTable1.xml');
+    // On the ranked field itself. `<pivotFields>` is the container and wears
+    // the same prefix, so matching the attributes anywhere in the part passes
+    // for a definition that ranks nothing.
+    const ranked = [...definition.matchAll(/<pivotField(?=[ />])[^>]*>/g)]
+      .map((match) => match[0])
+      .filter((tag) => tag.includes('autoShow'));
+    assert.equal(ranked.length, 1, `ranking landed on ${ranked.length} fields: ${definition.slice(0, 400)}`);
+    assert.match(ranked[0], /axis="axisRow"/, 'the ranking landed on a field that is not a row field');
+    assert.match(ranked[0], /autoShow="1" topAutoShow="1"/);
+    assert.match(ranked[0], /itemPageCount="2"/, 'the ranking kept the wrong count');
     const chart = names.find((name) => /^xl\/charts\/chart\d+\.xml$/.test(name));
     assert.ok(chart, `no pivot chart was drawn: ${names.join(', ')}`);
     // Rows 1-3 are the page field and the column-field label; 9 and 10 are the

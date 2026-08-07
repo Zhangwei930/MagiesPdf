@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import time
+import zipfile
 
 import uno
 from com.sun.star.beans import PropertyValue
@@ -1680,13 +1681,20 @@ def unique_chart_name(charts, requested_name):
     return f'{base} ({suffix})'
 
 
-CHART_DIAGRAMS = {
-    'column': 'com.sun.star.chart.BarDiagram',
-    'bar': 'com.sun.star.chart.BarDiagram',
-    'line': 'com.sun.star.chart.LineDiagram',
-    'pie': 'com.sun.star.chart.PieDiagram',
-    'area': 'com.sun.star.chart.AreaDiagram',
-}
+"""
+Chart frame, in 1/100 mm: 160x90mm for a short range, wider for a long one.
+
+The engine clips categories that do not fit rather than compressing them:
+measured against the real thing, a 160mm frame drew six of eighteen and a 288mm
+one drew twelve, and the rest were gone with nothing in the file to say so. So
+the frame grows with what it has to draw. The ceiling is where a chart stops
+being one a person can read at all, and a pivot nested deep enough to reach it
+wants its own chart of the totals rather than a wider one of every leaf.
+"""
+CHART_WIDTH = 16000
+CHART_HEIGHT = 9000
+CHART_WIDTH_PER_CATEGORY = 2400
+CHART_MAX_WIDTH = 40000
 
 
 def add_sheet_chart(
@@ -1707,8 +1715,17 @@ def add_sheet_chart(
     rectangle = uno.createUnoStruct('com.sun.star.awt.Rectangle')
     rectangle.X = int(anchor.Position.X) + 400
     rectangle.Y = int(anchor.Position.Y)
-    rectangle.Width = 16000
-    rectangle.Height = 9000
+    # Wide enough for what it has to draw. A fixed frame fits a handful of
+    # categories; a pivot nested two fields deep with two measures has eighteen,
+    # and everything past the sixth was drawn outside the frame — gone from the
+    # chart, with nothing in the file to say so. The floor keeps a two-row chart
+    # the size it always was, and the ceiling stops a long pivot from producing
+    # a chart measured in metres.
+    categories = address.EndRow - address.StartRow + 1
+    rectangle.Width = min(
+        max(CHART_WIDTH, categories * CHART_WIDTH_PER_CATEGORY), CHART_MAX_WIDTH
+    )
+    rectangle.Height = CHART_HEIGHT
     charts.addNewByName(chart_name, rectangle, (address,), column_headers, row_headers)
     chart_document = charts.getByName(chart_name).EmbeddedObject
     diagram = chart_document.createInstance(CHART_DIAGRAMS[chart_type])
@@ -1738,6 +1755,15 @@ def excel_create_chart(document, request):
     )
     store_copy(document, request['outputPath'])
     return {'chartName': chart_name}
+
+
+def data_pilot_field_index(fields, requested_name):
+    """Where the field sits among the source columns, which is the order the
+    stored definition lists them in."""
+    for index in range(fields.getCount()):
+        if str(fields.getByIndex(index).Name) == requested_name:
+            return index
+    return -1
 
 
 def data_pilot_field(fields, requested_name):
@@ -1792,6 +1818,60 @@ def pivot_rank_by(row_field, measure_name, direction, top_n):
         auto_show.ItemCount = top_n
         auto_show.DataField = measure_name
         row_field.AutoShowInfo = auto_show
+
+
+def persist_pivot_ranking(output_path, field_index, top_n):
+    """Write the ranking into the pivot's own definition.
+
+    The engine applies AutoShow while it builds the table and then drops it on
+    the way out: the cells it writes are ranked, the definition it stores is
+    not. So the first refresh in Excel — or the first reopen in LibreOffice,
+    which is what this app's own PDF export does — brings the ranked-out rows
+    back, and the file stops agreeing with what the operation reported.
+
+    OOXML has the two attributes for it, and the engine reads them back. The
+    field is addressed by its column in the source range, which is the order
+    `pivotFields` is written in, so this lands on the field that was ranked.
+    Only for the format that needs it: ODF stores AutoShow properly.
+    """
+    if not output_path.lower().endswith('.xlsx'):
+        return
+    ranking = (
+        f' autoShow="1" topAutoShow="1" rankBy="0" itemPageCount="{int(top_n)}"'
+    )
+    staged = f'{output_path}.ranking'
+    with zipfile.ZipFile(output_path) as source:
+        entries = [(item, source.read(item.filename)) for item in source.infolist()]
+    rewrote = False
+    with zipfile.ZipFile(staged, 'w', zipfile.ZIP_DEFLATED) as target:
+        for item, data in entries:
+            if re.match(r'xl/pivotTables/pivotTable\d+\.xml$', item.filename):
+                seen = [0]
+
+                def rank(match):
+                    tag = match.group(0)
+                    at = seen[0]
+                    seen[0] += 1
+                    if at != field_index:
+                        return tag
+                    if tag.endswith('/>'):
+                        return tag[:-2] + ranking + '/>'
+                    return tag[:-1] + ranking + '>'
+
+                # `<pivotFields>` is the container and wears the same prefix,
+                # so the name has to end here or the ranking lands on the list
+                # rather than on a field in it.
+                text, count = re.subn(
+                    r'<pivotField(?=[ />])[^>]*?/?>', rank, data.decode('utf-8')
+                )
+                if count > field_index:
+                    data = text.encode('utf-8')
+                    rewrote = True
+            target.writestr(item, data)
+    if rewrote:
+        os.replace(staged, output_path)
+    else:
+        os.remove(staged)
 
 
 def pivot_chart_range(sheet, output_address, filter_fields, column_fields, measure_count):
@@ -1879,12 +1959,14 @@ def excel_create_pivot(document, request):
         label = measure.get('label', '')
         if label:
             data_field.setName(str(label))
+    top_n = int(request.get('topN', 0) or 0)
     pivot_rank_by(
         row_fields[0],
         measures[0]['field'],
         request.get('sortByData', ''),
-        int(request.get('topN', 0) or 0),
+        top_n,
     )
+    ranked_field_index = data_pilot_field_index(fields, request['rowFields'][0])
     output_address = destination_sheet.getCellRangeByName(
         request['destinationCell']
     ).getCellAddress()
@@ -1913,6 +1995,8 @@ def excel_create_pivot(document, request):
                 request.get('chartTitle', ''),
             )
     store_copy(document, request['outputPath'])
+    if top_n and ranked_field_index >= 0:
+        persist_pivot_ranking(request['outputPath'], ranked_field_index, top_n)
     return {
         'pivotName': pivot_name,
         'destinationSheet': destination_sheet_name,
