@@ -518,8 +518,11 @@ describe('createOfficeAutomationProvider', () => {
       outputRange: 'A1:C5',
     });
     assert.equal(calls[0].operation, 'excel_create_pivot');
-    assert.equal(calls[0].rowField, '地区');
-    assert.equal(calls[0].dataFunction, 'SUM');
+    // The singular arguments are the one-field shorthand for the plural ones the
+    // worker is given, so a model that knows only the old shape still works.
+    assert.deepEqual(calls[0].rowFields, ['地区']);
+    assert.deepEqual(calls[0].columnFields, ['产品']);
+    assert.deepEqual(calls[0].dataFields, [{ field: '销售额', function: 'SUM' }]);
     // The engine names the grand total in English otherwise, which is the same
     // tell as an English footer on a Chinese report.
     assert.equal(calls[0].grandTotalLabel, '总计');
@@ -536,10 +539,16 @@ describe('createOfficeAutomationProvider', () => {
       destinationSheet: 'Pivot',
       outputRange: '',
     });
-    assert.equal(calls[1].columnField, '');
-    assert.equal(calls[1].dataFunction, 'SUM');
+    assert.deepEqual(calls[1].columnFields, []);
+    assert.deepEqual(calls[1].filterFields, []);
+    assert.deepEqual(calls[1].dataFields, [{ field: '销售额', function: 'SUM' }]);
     assert.equal(calls[1].destinationCell, 'A1');
     assert.equal(calls[1].destinationSheet, 'Pivot');
+    // Nothing was asked for, so nothing is imposed beyond readable columns.
+    assert.equal(calls[1].optimalWidth, true);
+    assert.equal(calls[1].chartType, '');
+    assert.equal(calls[1].sortByData, '');
+    assert.equal(calls[1].topN, 0);
 
     await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
       path: '销售.xlsx', source_range: 'A1:C20', row_field: '地区', data_field: '地区',
@@ -552,6 +561,90 @@ describe('createOfficeAutomationProvider', () => {
       path: '销售.xlsx', source_range: 'A1:C20', row_field: '地区',
       data_field: '销售额', destination_cell: 'invalid',
     }), /destination_cell/);
+  });
+
+  it('carries every pivot field area, the ranking, and the pivot chart to the worker', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, '销售.xlsx'), 'source');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { pivotName: 'MagiesPivot', destinationSheet: 'Pivot', outputRange: 'A1:D8', chartName: '销售分布' };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    assert.deepEqual(await provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx',
+      source_range: 'A1:E200',
+      row_fields: ['地区', '门店'],
+      column_fields: ['季度'],
+      filter_fields: ['年份'],
+      data_fields: [
+        { field: '销售额', function: 'sum', label: '销售额合计' },
+        { field: '订单数', function: 'count' },
+      ],
+      sort_by_data: 'descending',
+      top_n: 5,
+      number_format: '¥#,##0',
+      optimal_width: false,
+      chart_type: 'bar',
+      chart_title: '销售分布',
+    }), {
+      source: '销售.xlsx',
+      written: '销售.xlsx',
+      appliedInPlace: true,
+      pivotName: 'MagiesPivot',
+      destinationSheet: 'Pivot',
+      outputRange: 'A1:D8',
+      chartName: '销售分布',
+    });
+    assert.deepEqual(calls[0].rowFields, ['地区', '门店']);
+    assert.deepEqual(calls[0].columnFields, ['季度']);
+    assert.deepEqual(calls[0].filterFields, ['年份']);
+    assert.deepEqual(calls[0].dataFields, [
+      { field: '销售额', function: 'SUM', label: '销售额合计' },
+      { field: '订单数', function: 'COUNT' },
+    ]);
+    assert.equal(calls[0].sortByData, 'descending');
+    assert.equal(calls[0].topN, 5);
+    assert.equal(calls[0].numberFormat, '¥#,##0');
+    assert.equal(calls[0].optimalWidth, false);
+    assert.equal(calls[0].chartType, 'bar');
+    assert.equal(calls[0].chartTitle, '销售分布');
+
+    // A field cannot be two things at once, in any pair of areas.
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:E200',
+      row_fields: ['地区'], filter_fields: ['地区'], data_field: '销售额',
+    }), /different fields/);
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:E200',
+      row_field: '地区', data_fields: [{ field: '销售额' }, { field: '销售额', function: 'count' }],
+    }), /different fields/);
+    // A ranking with nothing to rank by is a silent no-op otherwise.
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:E200', data_field: '销售额',
+    }), /row_field/);
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:E200', row_field: '地区', data_fields: [],
+    }), /data_field/);
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:E200', row_field: '地区',
+      data_field: '销售额', top_n: 0,
+    }), /top_n/);
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:E200', row_field: '地区',
+      data_field: '销售额', chart_type: 'donut',
+    }), /chart_type/);
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:E200', row_field: '地区',
+      data_field: '销售额', row_fields: ['一', '二', '三', '四', '五'],
+    }), /row_fields/);
   });
 
   it('sorts Excel rows and applies an auto filter to a bounded range', async () => {

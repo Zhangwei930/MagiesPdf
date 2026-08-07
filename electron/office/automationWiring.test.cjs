@@ -146,6 +146,42 @@ describe('Office Agent wiring', () => {
     assert.match(workerSource, /pivot_table\.getOutputRange\(\)/);
   });
 
+  it('builds multi-field pivots with fixed DataPilot sort and auto-show structs', () => {
+    // Every field area the engine has, so a pivot is not stuck at one row field
+    // and one measure.
+    assert.match(workerSource, /pivot_orientation\('ROW'\)/);
+    assert.match(workerSource, /pivot_orientation\('COLUMN'\)/);
+    assert.match(workerSource, /pivot_orientation\('PAGE'\)/);
+    assert.match(workerSource, /uno\.createUnoStruct\('com\.sun\.star\.sheet\.DataPilotFieldSortInfo'\)/);
+    assert.match(workerSource, /com\.sun\.star\.sheet\.DataPilotFieldSortMode\.DATA/);
+    assert.match(workerSource, /uno\.createUnoStruct\('com\.sun\.star\.sheet\.DataPilotFieldAutoShowInfo'\)/);
+    assert.match(workerSource, /com\.sun\.star\.sheet\.DataPilotFieldShowItemsMode\.FROM_TOP/);
+  });
+
+  it('draws the pivot chart over the pivot body, not over its totals', () => {
+    // The chart and the plain chart operation go through one placement helper,
+    // and the range charted excludes the page-field rows above the table and
+    // the grand total below it — a grand total plotted as a category dwarfs
+    // every real one.
+    assert.match(workerSource, /def add_sheet_chart\(/);
+    assert.match(workerSource, /def pivot_chart_range\(/);
+    assert.match(workerSource, /charts\.addNewByName\(/);
+    assert.match(workerSource, /start_row \+= len\(filter_fields\) \+ 1/);
+    assert.match(workerSource, /start_row \+= len\(column_fields\)/);
+    assert.match(workerSource, /end_row -= measure_count/);
+  });
+
+  it('names the measures rather than leaving the engine to', () => {
+    // "Sum - 收入" over a column of a Chinese report is the same tell as
+    // "Total Result" was under it.
+    assert.match(workerSource, /data_field\.setName\(str\(label\)\)/);
+  });
+
+  it('formats the pivot output range it just wrote', () => {
+    assert.match(workerSource, /output\.NumberFormat = number_format_key\(document, number_format\)/);
+    assert.match(workerSource, /output\.Columns\.OptimalWidth = True/);
+  });
+
   it('allow-lists V8 tracked Word changes and Excel conditional formatting', () => {
     assert.match(workerSource, /'word_read_changes':/);
     assert.match(workerSource, /'word_replace_tracked':/);

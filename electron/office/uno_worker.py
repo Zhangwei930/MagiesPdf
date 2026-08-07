@@ -1649,47 +1649,59 @@ def unique_chart_name(charts, requested_name):
     return f'{base} ({suffix})'
 
 
-def excel_create_chart(document, request):
-    _sheet_name, sheet = spreadsheet(document, request.get('sheet', ''))
-    selected = sheet.getCellRangeByName(request['dataRange'])
+CHART_DIAGRAMS = {
+    'column': 'com.sun.star.chart.BarDiagram',
+    'bar': 'com.sun.star.chart.BarDiagram',
+    'line': 'com.sun.star.chart.LineDiagram',
+    'pie': 'com.sun.star.chart.PieDiagram',
+    'area': 'com.sun.star.chart.AreaDiagram',
+}
+
+
+def add_sheet_chart(
+    sheet, address, chart_type, requested_name, title,
+    column_headers=True, row_headers=True,
+):
+    """Draw one chart beside `address`, and return the name it ended up with.
+
+    `column_headers` and `row_headers` are the engine's own two flags, in its
+    own order: the topmost row and the leftmost column of the charted range.
+    """
     charts = sheet.Charts
-    chart_name = unique_chart_name(
-        charts, request.get('chartName') or request.get('title') or 'Chart'
-    )
+    chart_name = unique_chart_name(charts, requested_name or title or 'Chart')
     # Beside the data, not on top of it. A fixed corner puts every chart over
     # the table it describes, and the user has to drag it off before reading
     # either.
-    address = selected.getRangeAddress()
     anchor = sheet.getCellByPosition(address.EndColumn + 1, address.StartRow)
     rectangle = uno.createUnoStruct('com.sun.star.awt.Rectangle')
     rectangle.X = int(anchor.Position.X) + 400
     rectangle.Y = int(anchor.Position.Y)
     rectangle.Width = 16000
     rectangle.Height = 9000
-    charts.addNewByName(
-        chart_name,
-        rectangle,
-        (selected.getRangeAddress(),),
-        request.get('firstColumnLabels', True) is not False,
-        request.get('firstRowLabels', True) is not False,
-    )
+    charts.addNewByName(chart_name, rectangle, (address,), column_headers, row_headers)
     chart_document = charts.getByName(chart_name).EmbeddedObject
-    chart_type = request['chartType']
-    services = {
-        'column': 'com.sun.star.chart.BarDiagram',
-        'bar': 'com.sun.star.chart.BarDiagram',
-        'line': 'com.sun.star.chart.LineDiagram',
-        'pie': 'com.sun.star.chart.PieDiagram',
-        'area': 'com.sun.star.chart.AreaDiagram',
-    }
-    diagram = chart_document.createInstance(services[chart_type])
+    diagram = chart_document.createInstance(CHART_DIAGRAMS[chart_type])
     if chart_type in ('column', 'bar'):
         # Vertical means the bars run horizontally, so a column chart is False.
         diagram.Vertical = chart_type == 'bar'
     chart_document.Diagram = diagram
-    title = request.get('title', '')
     if title:
         chart_document.Title.String = title
+    return chart_name
+
+
+def excel_create_chart(document, request):
+    _sheet_name, sheet = spreadsheet(document, request.get('sheet', ''))
+    selected = sheet.getCellRangeByName(request['dataRange'])
+    chart_name = add_sheet_chart(
+        sheet,
+        selected.getRangeAddress(),
+        request['chartType'],
+        request.get('chartName', ''),
+        request.get('title', ''),
+        request.get('firstColumnLabels', True) is not False,
+        request.get('firstRowLabels', True) is not False,
+    )
     store_copy(document, request['outputPath'])
     return {'chartName': chart_name}
 
@@ -1718,6 +1730,72 @@ def unique_pivot_name(tables, requested_name):
     return f'{base} ({suffix})'
 
 
+def pivot_orientation(area):
+    return uno.Enum('com.sun.star.sheet.DataPilotFieldOrientation', area)
+
+
+def pivot_rank_by(row_field, measure_name, direction, top_n):
+    """Order and cut the first row field by the first measure.
+
+    Both are properties of the row field rather than of the table, and both
+    name the measure by its *source* field name, not by the header the engine
+    writes above the column.
+    """
+    if direction:
+        sort_info = uno.createUnoStruct('com.sun.star.sheet.DataPilotFieldSortInfo')
+        sort_info.Field = measure_name
+        sort_info.IsAscending = direction == 'ascending'
+        sort_info.Mode = uno.getConstantByName(
+            'com.sun.star.sheet.DataPilotFieldSortMode.DATA'
+        )
+        row_field.SortInfo = sort_info
+    if top_n:
+        auto_show = uno.createUnoStruct('com.sun.star.sheet.DataPilotFieldAutoShowInfo')
+        auto_show.IsEnabled = True
+        auto_show.ShowItemsMode = uno.getConstantByName(
+            'com.sun.star.sheet.DataPilotFieldShowItemsMode.FROM_TOP'
+        )
+        auto_show.ItemCount = top_n
+        auto_show.DataField = measure_name
+        row_field.AutoShowInfo = auto_show
+
+
+def pivot_chart_range(sheet, output_address, filter_fields, column_fields, measure_count):
+    """The part of a pivot's output that is worth plotting.
+
+    `getOutputRange()` covers the whole thing: the page-field rows the engine
+    stacks above the table, and the grand total below it. Plotting either is
+    wrong in a way that is obvious on sight — a grand total is one bar taller
+    than every category it sums, and a page field is a category with no value.
+
+    The engine's own layout, measured against it rather than assumed:
+
+        年份   - all -        <- one row per page field
+                              <- then a blank one
+                    季度      <- one label row per column field
+        地区   Data   Q1  Q2  总计
+        ...
+        总计                  <- one grand total row per measure
+
+    A second measure moves the measures themselves into the row area, so the
+    grand total is one row per measure rather than a single row either way.
+    """
+    start_row = output_address.StartRow
+    if filter_fields:
+        start_row += len(filter_fields) + 1
+    start_row += len(column_fields)
+    end_row = output_address.EndRow
+    end_row -= measure_count
+    end_column = output_address.EndColumn
+    if column_fields:
+        end_column -= 1
+    if end_row <= start_row or end_column <= output_address.StartColumn:
+        return None
+    return sheet.getCellRangeByPosition(
+        output_address.StartColumn, start_row, end_column, end_row,
+    ).getRangeAddress()
+
+
 def excel_create_pivot(document, request):
     _source_sheet_name, source_sheet = spreadsheet(
         document, request.get('sourceSheet', '')
@@ -1733,10 +1811,11 @@ def excel_create_pivot(document, request):
     tables = destination_sheet.getDataPilotTables()
     descriptor = tables.createDataPilotDescriptor()
     descriptor.setSourceRange(source_address)
+    filter_fields = list(request.get('filterFields') or [])
     # The engine writes its own furniture, in English. A Chinese report with
     # "Total Result" down the middle reads as generated by something that was
-    # not paying attention, and the filter button is a page-area affordance with
-    # no page fields behind it — it says nothing at all.
+    # not paying attention, and the filter button is a separate English "Filter"
+    # cell above everything — page fields draw their own dropdowns without it.
     try:
         descriptor.ShowFilterButton = False
     except Exception:
@@ -1748,22 +1827,29 @@ def excel_create_pivot(document, request):
         except Exception:
             pass
     fields = descriptor.getDataPilotFields()
-    row_field = data_pilot_field(fields, request['rowField'])
-    row_field.Orientation = uno.Enum(
-        'com.sun.star.sheet.DataPilotFieldOrientation', 'ROW'
-    )
-    column_field_name = request.get('columnField', '')
-    if column_field_name:
-        column_field = data_pilot_field(fields, column_field_name)
-        column_field.Orientation = uno.Enum(
-            'com.sun.star.sheet.DataPilotFieldOrientation', 'COLUMN'
+    row_fields = [data_pilot_field(fields, name) for name in request['rowFields']]
+    for field in row_fields:
+        field.Orientation = pivot_orientation('ROW')
+    column_fields = list(request.get('columnFields') or [])
+    for name in column_fields:
+        data_pilot_field(fields, name).Orientation = pivot_orientation('COLUMN')
+    for name in filter_fields:
+        data_pilot_field(fields, name).Orientation = pivot_orientation('PAGE')
+    measures = request['dataFields']
+    for measure in measures:
+        data_field = data_pilot_field(fields, measure['field'])
+        data_field.Orientation = pivot_orientation('DATA')
+        data_field.Function = uno.Enum(
+            'com.sun.star.sheet.GeneralFunction', measure['function']
         )
-    data_field = data_pilot_field(fields, request['dataField'])
-    data_field.Orientation = uno.Enum(
-        'com.sun.star.sheet.DataPilotFieldOrientation', 'DATA'
-    )
-    data_field.Function = uno.Enum(
-        'com.sun.star.sheet.GeneralFunction', request['dataFunction']
+        label = measure.get('label', '')
+        if label:
+            data_field.setName(str(label))
+    pivot_rank_by(
+        row_fields[0],
+        measures[0]['field'],
+        request.get('sortByData', ''),
+        int(request.get('topN', 0) or 0),
     )
     output_address = destination_sheet.getCellRangeByName(
         request['destinationCell']
@@ -1772,11 +1858,32 @@ def excel_create_pivot(document, request):
     tables.insertNewByName(pivot_name, output_address, descriptor)
     pivot_table = tables.getByName(pivot_name)
     output_range = pivot_table.getOutputRange()
+    output = destination_sheet.getCellRangeByName(range_name(output_range))
+    number_format = request.get('numberFormat', '')
+    if number_format:
+        output.NumberFormat = number_format_key(document, number_format)
+    if request.get('optimalWidth', True) is not False:
+        output.Columns.OptimalWidth = True
+    chart_type = request.get('chartType', '')
+    chart_name = ''
+    if chart_type:
+        chart_address = pivot_chart_range(
+            destination_sheet, output_range, filter_fields, column_fields, len(measures)
+        )
+        if chart_address is not None:
+            chart_name = add_sheet_chart(
+                destination_sheet,
+                chart_address,
+                chart_type,
+                request.get('chartName', ''),
+                request.get('chartTitle', ''),
+            )
     store_copy(document, request['outputPath'])
     return {
         'pivotName': pivot_name,
         'destinationSheet': destination_sheet_name,
         'outputRange': range_name(output_range),
+        'chartName': chart_name,
     }
 
 

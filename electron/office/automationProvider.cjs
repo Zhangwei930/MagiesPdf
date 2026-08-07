@@ -560,15 +560,75 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
   tool(
     'office_excel_create_pivot',
     { zh: '创建 Excel 数据透视表', en: 'Create Excel pivot table' },
-    'Create a pivot table from named Excel header fields and save a new non-overwriting copy.',
+    'Create a pivot table from named Excel header fields, optionally ranked and charted, '
+    + 'and save a new non-overwriting copy.',
     schema({
       path: PATH_PROPERTY,
       source_sheet: { type: 'string', maxLength: 128, description: 'Source worksheet. Defaults to the first sheet.' },
       source_range: { type: 'string', description: 'Bounded source range with a header row, such as A1:D200.' },
-      row_field: { type: 'string', minLength: 1, maxLength: 128, description: 'Header name used for pivot rows.' },
+      row_field: { type: 'string', minLength: 1, maxLength: 128, description: 'Header name used for pivot rows. Shorthand for a single-entry row_fields.' },
+      row_fields: {
+        type: 'array',
+        items: { type: 'string', minLength: 1, maxLength: 128 },
+        maxItems: 4,
+        description: 'Up to four header names nested down the pivot rows, outermost first.',
+      },
       column_field: { type: 'string', minLength: 1, maxLength: 128, description: 'Optional header name used for pivot columns.' },
-      data_field: { type: 'string', minLength: 1, maxLength: 128, description: 'Header name containing values to aggregate.' },
-      function: { type: 'string', enum: ['sum', 'count', 'average', 'min', 'max'], description: 'Aggregation. Defaults to sum.' },
+      column_fields: {
+        type: 'array',
+        items: { type: 'string', minLength: 1, maxLength: 128 },
+        maxItems: 4,
+        description: 'Up to four header names nested across the pivot columns, outermost first.',
+      },
+      filter_fields: {
+        type: 'array',
+        items: { type: 'string', minLength: 1, maxLength: 128 },
+        maxItems: 4,
+        description: 'Header names placed above the pivot as page filters the reader can change.',
+      },
+      data_field: { type: 'string', minLength: 1, maxLength: 128, description: 'Header name containing values to aggregate. Shorthand for a single-entry data_fields.' },
+      function: { type: 'string', enum: ['sum', 'count', 'average', 'min', 'max'], description: 'Aggregation for data_field. Defaults to sum.' },
+      label: {
+        type: 'string',
+        maxLength: 128,
+        description: 'Header written above data_field, in the document\'s language — 收入合计. '
+          + 'The engine writes "Sum - 收入" otherwise.',
+      },
+      data_fields: {
+        type: 'array',
+        maxItems: 4,
+        items: schema({
+          field: { type: 'string', minLength: 1, maxLength: 128 },
+          function: { type: 'string', enum: ['sum', 'count', 'average', 'min', 'max'] },
+          label: { type: 'string', maxLength: 128, description: 'Header written above this measure.' },
+        }, ['field']),
+        description: 'Up to four measures, each its own header and aggregation. Every field named '
+          + 'anywhere in the pivot must be a different one.',
+      },
+      sort_by_data: {
+        type: 'string',
+        enum: ['descending', 'ascending'],
+        description: 'Order the outermost row field by the first measure instead of by name.',
+      },
+      top_n: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 100,
+        description: 'Keep only this many row items, ranked by the first measure. The grand total then covers what is shown.',
+      },
+      number_format: {
+        type: 'string',
+        maxLength: 60,
+        description: 'Number format for the pivot body, such as ¥#,##0 or 0.0%. Aggregates are unformatted otherwise.',
+      },
+      optimal_width: { type: 'boolean', description: 'Fit the output columns to their content. Defaults to true.' },
+      chart_type: {
+        type: 'string',
+        enum: ['column', 'bar', 'line', 'pie', 'area'],
+        description: 'Also draw a chart of the pivot body, beside it. Page-field rows and the grand total are left out.',
+      },
+      chart_title: { type: 'string', maxLength: 200 },
+      chart_name: { type: 'string', maxLength: 128 },
       destination_sheet: { type: 'string', maxLength: 128, description: 'Existing or new output worksheet. Defaults to Pivot.' },
       destination_cell: { type: 'string', description: 'Top-left output cell. Defaults to A1.' },
       name: { type: 'string', maxLength: 128, description: 'Pivot table name. Defaults to MagiesPivot.' },
@@ -577,10 +637,14 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
         maxLength: 60,
         description: 'What the grand total row is called, in the document\'s language — 总计 / Total. '
           + 'The engine writes "Total Result" otherwise, which reads as machine output in a '
-          + 'document that is not in English.',
+          + 'document that is not in English. With two or more measures the engine names each '
+          + 'total row after its measure instead, so give those a label.',
       },
       output_directory: OUTPUT_DIRECTORY_PROPERTY,
-    }, ['path', 'source_range', 'row_field', 'data_field']),
+      // row_field/row_fields and data_field/data_fields are alternatives, so
+      // neither spelling can be required here. The handler insists on one of
+      // each and names the missing one.
+    }, ['path', 'source_range']),
   ),
   tool(
     'office_presentation_read',
@@ -1312,6 +1376,57 @@ function boundedExcelRange(value, label) {
     throw new Error(`${label} may cover at most 200 rows, 50 columns, and 5000 cells`);
   }
   return value;
+}
+
+const PIVOT_FUNCTIONS = {
+  sum: 'SUM',
+  count: 'COUNT',
+  average: 'AVERAGE',
+  min: 'MIN',
+  max: 'MAX',
+};
+
+/**
+ * One area of a pivot — rows, columns, or page filters.
+ *
+ * The singular argument is the shorthand for a one-field area, so a caller that
+ * knows only `row_field` keeps working and one that nests four fields can.
+ */
+function pivotFieldArea(list, singular, label) {
+  if (list === undefined) {
+    const only = stringValue(singular, label, { maxLength: 128 });
+    return only ? [only] : [];
+  }
+  if (!Array.isArray(list) || list.length > 4) {
+    throw new Error(`${label}s must be an array of at most 4 header names`);
+  }
+  const fields = list.map((field) => stringValue(field, `${label}s`, { required: true, maxLength: 128 }));
+  const only = stringValue(singular, label, { maxLength: 128 });
+  return only && !fields.includes(only) ? [only, ...fields] : fields;
+}
+
+/** The measures, each with its own aggregation and the header it is given. */
+function pivotMeasures(list, singular, singularFunction, singularLabel) {
+  const measure = (field, requested, label, where) => {
+    const aggregation = PIVOT_FUNCTIONS[stringValue(requested, `${where}function`, { maxLength: 20 }) || 'sum'];
+    if (!aggregation) throw new Error(`${where}function must be sum, count, average, min, or max`);
+    const named = {
+      field: stringValue(field, 'data_field', { required: true, maxLength: 128 }),
+      function: aggregation,
+    };
+    const header = stringValue(label, `${where}label`, { maxLength: 128 });
+    return header ? { ...named, label: header } : named;
+  };
+  if (list === undefined) return [measure(singular, singularFunction, singularLabel, '')];
+  if (!Array.isArray(list) || list.length === 0 || list.length > 4) {
+    throw new Error('data_fields must be an array of 1 to 4 measures');
+  }
+  return list.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error('Each data_fields entry must be an object with a field and an optional function');
+    }
+    return measure(entry.field, entry.function, entry.label, 'data_fields ');
+  });
 }
 
 function createOfficeAutomationProvider({
@@ -2112,23 +2227,23 @@ function createOfficeAutomationProvider({
         stringValue(args.source_range, 'source_range', { required: true, maxLength: 50 }).toUpperCase(),
         'source_range',
       );
-      const rowField = stringValue(args.row_field, 'row_field', { required: true, maxLength: 128 });
-      const columnField = stringValue(args.column_field, 'column_field', { maxLength: 128 });
-      const dataField = stringValue(args.data_field, 'data_field', { required: true, maxLength: 128 });
-      const selectedFields = [rowField, columnField, dataField].filter(Boolean);
+      const rowFields = pivotFieldArea(args.row_fields, args.row_field, 'row_field');
+      if (rowFields.length === 0) throw new Error('row_field or row_fields must name at least one header');
+      const columnFields = pivotFieldArea(args.column_fields, args.column_field, 'column_field');
+      const filterFields = pivotFieldArea(args.filter_fields, undefined, 'filter_field');
+      const dataFields = pivotMeasures(args.data_fields, args.data_field, args.function, args.label);
+      const selectedFields = [
+        ...rowFields, ...columnFields, ...filterFields, ...dataFields.map((measure) => measure.field),
+      ];
       if (new Set(selectedFields).size !== selectedFields.length) {
-        throw new Error('row_field, column_field, and data_field must use different fields');
+        throw new Error('row_field, column_field, filter_field, and data_field must use different fields');
       }
-      const functions = {
-        sum: 'SUM',
-        count: 'COUNT',
-        average: 'AVERAGE',
-        min: 'MIN',
-        max: 'MAX',
-      };
-      const requestedFunction = stringValue(args.function, 'function', { maxLength: 20 }) || 'sum';
-      const dataFunction = functions[requestedFunction];
-      if (!dataFunction) throw new Error('function must be sum, count, average, min, or max');
+      const sortByData = enumValue(args.sort_by_data, 'sort_by_data', ['descending', 'ascending']) || '';
+      const topN = args.top_n === undefined ? 0 : integerValue(args.top_n, 'top_n', 1);
+      if (topN > 100) throw new Error('top_n must be an integer between 1 and 100');
+      const chartType = enumValue(
+        args.chart_type, 'chart_type', ['column', 'bar', 'line', 'pie', 'area'],
+      ) || '';
       const destinationCell = (
         stringValue(args.destination_cell, 'destination_cell', { maxLength: 20 }) || 'A1'
       ).toUpperCase();
@@ -2147,10 +2262,17 @@ function createOfficeAutomationProvider({
         outputPath: output.absolutePath,
         sourceSheet: stringValue(args.source_sheet, 'source_sheet', { maxLength: 128 }),
         sourceRange,
-        rowField,
-        columnField,
-        dataField,
-        dataFunction,
+        rowFields,
+        columnFields,
+        filterFields,
+        dataFields,
+        sortByData,
+        topN,
+        numberFormat: stringValue(args.number_format, 'number_format', { maxLength: 60 }),
+        optimalWidth: booleanValue(args.optimal_width, 'optimal_width') !== false,
+        chartType,
+        chartTitle: stringValue(args.chart_title, 'chart_title', { maxLength: 200 }),
+        chartName: stringValue(args.chart_name, 'chart_name', { maxLength: 128 }),
         destinationSheet: stringValue(args.destination_sheet, 'destination_sheet', { maxLength: 128 }) || 'Pivot',
         destinationCell,
         pivotName: stringValue(args.name, 'name', { maxLength: 128 }) || 'MagiesPivot',
@@ -2162,6 +2284,7 @@ function createOfficeAutomationProvider({
         pivotName: String(result.pivotName || 'MagiesPivot'),
         destinationSheet: String(result.destinationSheet || 'Pivot'),
         outputRange: String(result.outputRange || ''),
+        ...(chartType ? { chartName: String(result.chartName || '') } : {}),
       };
     }
 

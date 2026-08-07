@@ -100,6 +100,7 @@ describe('the composing operations against the bundled LibreOffice', {
   const parts = {
     sheet: null, chart: null, word: null, slide: null, emptyTable: null, astral: null,
     themedDeck: null, added: null, addedToPlain: null, pivotSource: null, pivot: null,
+    pivotWideSource: null, pivotWide: null,
     commented: null, footnoted: null, captioned: null, columned: null, restyled: null,
   };
 
@@ -191,14 +192,55 @@ describe('the composing operations against the bundled LibreOffice', {
       operation: 'excel_create_pivot',
       sourceSheet: 'Sheet1',
       sourceRange: 'A1:B5',
-      rowField: '\u5730\u533a',
-      dataField: '\u6536\u5165',
-      dataFunction: 'SUM',
+      rowFields: ['\u5730\u533a'],
+      columnFields: [],
+      filterFields: [],
+      dataFields: [{ field: '\u6536\u5165', function: 'SUM' }],
       destinationSheet: 'Pivot',
       destinationCell: 'A1',
       pivotName: 'MagiesPivot',
       grandTotalLabel: '\u603b\u8ba1',
     }, parts.pivotSource);
+
+    // Five columns, so every field area has something to hold: a page field, a
+    // column field, two measures, and a row field with one region ranked out.
+    // 17 and 127 are \u534e\u4e2d's totals and must not survive topN: 2.
+    parts.pivotWideSource = await compose('sheet', {
+      operation: 'excel_compose_table',
+      headers: ['\u5730\u533a', '\u5b63\u5ea6', '\u5e74\u4efd', '\u6536\u5165', '\u8ba2\u5355'],
+      rows: [
+        ['\u534e\u4e1c', 'Q1', 2025, 100, 31],
+        ['\u534e\u5317', 'Q1', 2025, 40, 21],
+        ['\u534e\u4e2d', 'Q1', 2025, 8, 63],
+        ['\u534e\u4e1c', 'Q2', 2025, 60, 41],
+        ['\u534e\u5317', 'Q2', 2025, 5, 22],
+        ['\u534e\u4e2d', 'Q2', 2025, 9, 64],
+      ],
+      startCell: 'A1',
+    });
+
+    parts.pivotWide = await compose('sheet', {
+      operation: 'excel_create_pivot',
+      sourceSheet: 'Sheet1',
+      sourceRange: 'A1:E7',
+      rowFields: ['\u5730\u533a'],
+      columnFields: ['\u5b63\u5ea6'],
+      filterFields: ['\u5e74\u4efd'],
+      dataFields: [
+        { field: '\u6536\u5165', function: 'SUM', label: '\u6536\u5165\u5408\u8ba1' },
+        { field: '\u8ba2\u5355', function: 'SUM', label: '\u8ba2\u5355\u6570' },
+      ],
+      sortByData: 'descending',
+      topN: 2,
+      numberFormat: '\u00a5#,##0',
+      optimalWidth: true,
+      chartType: 'column',
+      chartTitle: '\u5730\u533a\u6536\u5165',
+      destinationSheet: 'Pivot',
+      destinationCell: 'A1',
+      pivotName: 'MagiesPivot',
+      grandTotalLabel: '\u603b\u8ba1',
+    }, parts.pivotWideSource);
 
     parts.columned = await compose('word', {
       operation: 'word_compose',
@@ -492,6 +534,52 @@ describe('the composing operations against the bundled LibreOffice', {
     assert.match(labels, /\u603b\u8ba1/, 'the grand total keeps the name it was given');
     assert.doesNotMatch(labels, /Total Result/);
     assert.doesNotMatch(labels, /<t[^>]*>Filter</);
+  });
+
+  it('ranks, formats, and charts a pivot with every field area filled', () => {
+    const names = zipNames(parts.pivotWide);
+    const pivotSheet = names.find((name) => /^xl\/worksheets\/sheet2\.xml$/.test(name));
+    assert.ok(pivotSheet, 'the destination worksheet exists');
+    const sheet = zipEntry(parts.pivotWide, pivotSheet);
+    // Only the numeric cells. A cell holding a string carries its index into
+    // sharedStrings in the same <v>, so matching every <v> reads label indices
+    // as if they were aggregates.
+    const numbers = [...sheet.matchAll(/<c [^>]*r="[A-Z]+\d+"([^>]*)>\s*<v>([^<]*)<\/v>/g)]
+      .filter((match) => !/t="s"/.test(match[1]))
+      .map((match) => Number(match[2]));
+    assert.ok(numbers.includes(160), `no 华东 total: ${numbers.join(', ')}`);
+    assert.ok(numbers.includes(45), `no 华北 total: ${numbers.join(', ')}`);
+    assert.ok(numbers.includes(72), `no second measure: ${numbers.join(', ')}`);
+    // topN keeps the two largest by the first measure, and the grand total then
+    // covers only what is shown. 华中 totals 17 and 127 must be gone.
+    assert.ok(!numbers.includes(17), `华中 survived topN: ${numbers.join(', ')}`);
+    assert.ok(!numbers.includes(127), `华中 survived topN: ${numbers.join(', ')}`);
+    assert.ok(numbers.includes(205), `no ranked grand total: ${numbers.join(', ')}`);
+
+    const labels = zipEntry(parts.pivotWide, 'xl/sharedStrings.xml');
+    // The page field is the one that reaches the reader as a control rather
+    // than as a column, so its name has to be on the sheet.
+    assert.match(labels, /年份/, 'the page field is not in the output');
+    // And the measures are called what they were named, not "Sum - 收入".
+    assert.match(labels, /收入合计/, 'the measure kept the engine\'s own header');
+    assert.doesNotMatch(labels, /Sum - /);
+
+    assert.match(
+      zipEntry(parts.pivotWide, 'xl/styles.xml'),
+      /¥#,##0/,
+      'the number format never reached the pivot body',
+    );
+    const chart = names.find((name) => /^xl\/charts\/chart\d+\.xml$/.test(name));
+    assert.ok(chart, `no pivot chart was drawn: ${names.join(', ')}`);
+    // Rows 1-3 are the page field and the column-field label; 9 and 10 are the
+    // two grand totals. Charting either is visibly wrong, so the plotted refs
+    // are the assertion rather than the mere existence of a chart.
+    const plotted = [...zipEntry(parts.pivotWide, chart).matchAll(/<c:f>(.*?)<\/c:f>/g)]
+      .map((match) => match[1]);
+    assert.ok(plotted.length > 0, 'the chart plots nothing');
+    for (const reference of plotted) {
+      assert.match(reference, /^Pivot!\$[A-D]\$([4-8])(:\$[A-D]\$[4-8])?$/, `charted outside the pivot body: ${reference}`);
+    }
   });
 
   it('keeps composed slide text inside the band the layout gave it', () => {
