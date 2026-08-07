@@ -51,21 +51,31 @@ describe('createOfficeAutomationProvider', () => {
         'office_word_resolve_changes',
         'office_word_replace',
         'office_word_replace_tracked',
+        'office_word_append',
+        'office_word_compose',
+        'office_word_add_footnotes',
+        'office_word_format_text',
         'office_word_insert_table',
         'office_word_insert_image',
         'office_word_set_header_footer',
         'office_word_add_comment',
         'office_excel_read',
         'office_excel_write',
+        'office_excel_add_comments',
         'office_excel_sort_range',
         'office_excel_apply_autofilter',
         'office_excel_format_range',
+        'office_excel_compose_table',
         'office_excel_add_conditional_format',
         'office_excel_create_chart',
         'office_excel_create_pivot',
         'office_presentation_read',
         'office_presentation_replace',
         'office_presentation_add_slide',
+        'office_presentation_compose',
+        'office_presentation_format_text',
+        'office_presentation_apply_theme',
+        'office_presentation_set_background',
         'office_presentation_duplicate_slide',
         'office_presentation_delete_slide',
         'office_presentation_insert_image',
@@ -498,6 +508,7 @@ describe('createOfficeAutomationProvider', () => {
       destination_sheet: '数据透视',
       destination_cell: 'A1',
       name: '地区销售汇总',
+      grand_total_label: '总计',
       output_directory: '分析结果',
     }), {
       source: '销售.xlsx',
@@ -507,8 +518,14 @@ describe('createOfficeAutomationProvider', () => {
       outputRange: 'A1:C5',
     });
     assert.equal(calls[0].operation, 'excel_create_pivot');
-    assert.equal(calls[0].rowField, '地区');
-    assert.equal(calls[0].dataFunction, 'SUM');
+    // The singular arguments are the one-field shorthand for the plural ones the
+    // worker is given, so a model that knows only the old shape still works.
+    assert.deepEqual(calls[0].rowFields, ['地区']);
+    assert.deepEqual(calls[0].columnFields, ['产品']);
+    assert.deepEqual(calls[0].dataFields, [{ field: '销售额', function: 'SUM' }]);
+    // The engine names the grand total in English otherwise, which is the same
+    // tell as an English footer on a Chinese report.
+    assert.equal(calls[0].grandTotalLabel, '总计');
 
     assert.deepEqual(await provider.callTool('office_excel_create_pivot', {
       path: '销售.xlsx',
@@ -517,15 +534,21 @@ describe('createOfficeAutomationProvider', () => {
       data_field: '销售额',
     }), {
       source: '销售.xlsx',
-      written: 'Magies Office Output/销售.xlsx',
+      written: '销售.xlsx', appliedInPlace: true,
       pivotName: 'MagiesPivot',
       destinationSheet: 'Pivot',
       outputRange: '',
     });
-    assert.equal(calls[1].columnField, '');
-    assert.equal(calls[1].dataFunction, 'SUM');
+    assert.deepEqual(calls[1].columnFields, []);
+    assert.deepEqual(calls[1].filterFields, []);
+    assert.deepEqual(calls[1].dataFields, [{ field: '销售额', function: 'SUM' }]);
     assert.equal(calls[1].destinationCell, 'A1');
     assert.equal(calls[1].destinationSheet, 'Pivot');
+    // Nothing was asked for, so nothing is imposed beyond readable columns.
+    assert.equal(calls[1].optimalWidth, true);
+    assert.equal(calls[1].chartType, '');
+    assert.equal(calls[1].sortByData, '');
+    assert.equal(calls[1].topN, 0);
 
     await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
       path: '销售.xlsx', source_range: 'A1:C20', row_field: '地区', data_field: '地区',
@@ -538,6 +561,90 @@ describe('createOfficeAutomationProvider', () => {
       path: '销售.xlsx', source_range: 'A1:C20', row_field: '地区',
       data_field: '销售额', destination_cell: 'invalid',
     }), /destination_cell/);
+  });
+
+  it('carries every pivot field area, the ranking, and the pivot chart to the worker', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, '销售.xlsx'), 'source');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { pivotName: 'MagiesPivot', destinationSheet: 'Pivot', outputRange: 'A1:D8', chartName: '销售分布' };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    assert.deepEqual(await provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx',
+      source_range: 'A1:E200',
+      row_fields: ['地区', '门店'],
+      column_fields: ['季度'],
+      filter_fields: ['年份'],
+      data_fields: [
+        { field: '销售额', function: 'sum', label: '销售额合计' },
+        { field: '订单数', function: 'count' },
+      ],
+      sort_by_data: 'descending',
+      top_n: 5,
+      number_format: '¥#,##0',
+      optimal_width: false,
+      chart_type: 'bar',
+      chart_title: '销售分布',
+    }), {
+      source: '销售.xlsx',
+      written: '销售.xlsx',
+      appliedInPlace: true,
+      pivotName: 'MagiesPivot',
+      destinationSheet: 'Pivot',
+      outputRange: 'A1:D8',
+      chartName: '销售分布',
+    });
+    assert.deepEqual(calls[0].rowFields, ['地区', '门店']);
+    assert.deepEqual(calls[0].columnFields, ['季度']);
+    assert.deepEqual(calls[0].filterFields, ['年份']);
+    assert.deepEqual(calls[0].dataFields, [
+      { field: '销售额', function: 'SUM', label: '销售额合计' },
+      { field: '订单数', function: 'COUNT' },
+    ]);
+    assert.equal(calls[0].sortByData, 'descending');
+    assert.equal(calls[0].topN, 5);
+    assert.equal(calls[0].numberFormat, '¥#,##0');
+    assert.equal(calls[0].optimalWidth, false);
+    assert.equal(calls[0].chartType, 'bar');
+    assert.equal(calls[0].chartTitle, '销售分布');
+
+    // A field cannot be two things at once, in any pair of areas.
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:E200',
+      row_fields: ['地区'], filter_fields: ['地区'], data_field: '销售额',
+    }), /different fields/);
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:E200',
+      row_field: '地区', data_fields: [{ field: '销售额' }, { field: '销售额', function: 'count' }],
+    }), /different fields/);
+    // A ranking with nothing to rank by is a silent no-op otherwise.
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:E200', data_field: '销售额',
+    }), /row_field/);
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:E200', row_field: '地区', data_fields: [],
+    }), /data_field/);
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:E200', row_field: '地区',
+      data_field: '销售额', top_n: 0,
+    }), /top_n/);
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:E200', row_field: '地区',
+      data_field: '销售额', chart_type: 'donut',
+    }), /chart_type/);
+    await assert.rejects(() => provider.callTool('office_excel_create_pivot', {
+      path: '销售.xlsx', source_range: 'A1:E200', row_field: '地区',
+      data_field: '销售额', row_fields: ['一', '二', '三', '四', '五'],
+    }), /row_fields/);
   });
 
   it('sorts Excel rows and applies an auto filter to a bounded range', async () => {
@@ -630,6 +737,9 @@ describe('createOfficeAutomationProvider', () => {
       written: 'Edited/Quarterly.pptx',
       slideNumber: 2,
       slidesTotal: 3,
+      // Empty because this deck was never composed by Magies, so it keeps its
+      // own look rather than having one slide restyled to ours.
+      theme: '',
     });
     assert.equal(calls[0].afterSlide, 1);
     assert.deepEqual(calls[0].body, ['Revenue target', 'Hiring plan']);
@@ -1057,7 +1167,7 @@ describe('createOfficeAutomationProvider', () => {
       path: 'Report.docx', values: [['A']],
     }), {
       source: 'Report.docx',
-      written: 'Magies Office Output/Report.docx',
+      written: 'Report.docx', appliedInPlace: true,
       rows: 1,
       columns: 1,
     });
@@ -1107,9 +1217,10 @@ describe('createOfficeAutomationProvider', () => {
       path: 'Quarterly.pptx', body: ['Only body'],
     }), {
       source: 'Quarterly.pptx',
-      written: 'Magies Office Output/Quarterly.pptx',
+      written: 'Quarterly.pptx', appliedInPlace: true,
       slideNumber: 0,
       slidesTotal: 0,
+      theme: '',
     });
     assert.equal(calls.at(-1).afterSlide, undefined);
   });
@@ -1158,4 +1269,515 @@ describe('createOfficeAutomationProvider', () => {
     );
     await assert.rejects(() => provider.callTool('office_unknown', {}), /Unknown Office Agent tool/);
   });
+
+  it('applies Excel writes in place with a backup and refresh hooks', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Live.xlsx'), 'before');
+    const hooks = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        await fs.writeFile(request.outputPath, 'after-ai');
+        return { cellsWritten: 3 };
+      },
+      onBeforeDocumentWrite: async (absolutePath) => { hooks.push(['before', absolutePath]); },
+      onAfterDocumentWrite: async (absolutePath) => { hooks.push(['after', absolutePath]); },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    // Default output directory (omitted) → in-place apply so the open tab can reload.
+    const result = await provider.callTool('office_excel_write', {
+      path: 'Live.xlsx',
+      start_cell: 'A1',
+      values: [['x']],
+    });
+    assert.equal(result.written, 'Live.xlsx');
+    assert.equal(result.appliedInPlace, true);
+    assert.equal(await fs.readFile(path.join(root, 'Live.xlsx'), 'utf8'), 'after-ai');
+    // Nothing else is left beside it.
+    assert.deepEqual((await fs.readdir(root)).filter((n) => n.includes('backup')), []);
+    assert.equal(hooks.length, 2);
+    assert.equal(hooks[0][0], 'before');
+    assert.equal(hooks[1][0], 'after');
+  });
+
+  it('writes Word content the agent composed, with real paragraph styles', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Report.docx'), 'doc');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { blocksWritten: request.blocks.length };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    const result = await provider.callTool('office_word_append', {
+      path: 'Report.docx',
+      blocks: [
+        { style: 'title', text: '季度报告' },
+        { style: 'heading1', text: '收入' },
+        { style: 'body', text: '本季度收入增长 12%。' },
+        { style: 'bullet', text: '华东区领先' },
+      ],
+    });
+    assert.equal(result.written, 'Report.docx');
+    assert.equal(result.appliedInPlace, true);
+    assert.equal(calls[0].operation, 'word_append');
+    assert.deepEqual(calls[0].blocks[0], { style: 'title', text: '季度报告' });
+
+    await assert.rejects(
+      () => provider.callTool('office_word_append', { path: 'Report.docx', blocks: [] }),
+      /either blocks or markdown/,
+    );
+
+    // Markdown is the easier route, and lands as the same styled blocks.
+    const fromMarkdown = await provider.callTool('office_word_append', {
+      path: 'Report.docx',
+      markdown: '# 季度报告\n## 收入\n- 同比 +12%\n  - 华东领先',
+    });
+    assert.equal(fromMarkdown.written, 'Report.docx');
+    // Only list items carry a level; a heading has no depth Word could draw.
+    assert.deepEqual(calls.at(-1).blocks, [
+      { style: 'title', text: '季度报告' },
+      { style: 'heading2', text: '收入' },
+      { style: 'bullet', text: '同比 +12%', level: 0 },
+      { style: 'bullet', text: '华东领先', level: 1 },
+    ]);
+    await assert.rejects(
+      () => provider.callTool('office_word_append', {
+        path: 'Report.docx',
+        blocks: [{ style: 'chapter', text: 'x' }],
+      }),
+      /style/,
+    );
+  });
+
+  it('styles Word text the agent points at', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Report.docx'), 'doc');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { matched: 2 };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    const result = await provider.callTool('office_word_format_text', {
+      path: 'Report.docx',
+      find: '收入',
+      bold: true,
+      font_size: 14,
+      text_color: '#1F4E79',
+      alignment: 'center',
+    });
+    assert.equal(result.matched, 2);
+    assert.equal(calls[0].fontSize, 14);
+    assert.equal(calls[0].textColor, '#1F4E79');
+
+    await assert.rejects(
+      () => provider.callTool('office_word_format_text', { path: 'Report.docx', find: '收入' }),
+      /at least one format option/,
+    );
+    await assert.rejects(
+      () => provider.callTool('office_word_format_text', {
+        path: 'Report.docx', find: '收入', font_size: 400,
+      }),
+      /font_size/,
+    );
+  });
+
+  it('formats Excel the way a readable sheet needs, not just bold and a fill', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Budget.xlsx'), 'sheet');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return {};
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    await provider.callTool('office_excel_format_range', {
+      path: 'Budget.xlsx',
+      range: 'A1:F1',
+      number_format: '#,##0.00',
+      font_size: 12,
+      font_name: '微软雅黑',
+      italic: false,
+      borders: 'all',
+      wrap_text: true,
+      vertical_alignment: 'middle',
+      merge: false,
+    });
+    const [request] = calls;
+    assert.equal(request.numberFormat, '#,##0.00');
+    assert.equal(request.fontSize, 12);
+    assert.equal(request.fontName, '微软雅黑');
+    assert.equal(request.borders, 'all');
+    assert.equal(request.wrapText, true);
+    assert.equal(request.verticalAlignment, 'middle');
+
+    for (const invalid of [
+      { font_size: 0 },
+      { borders: 'dotted' },
+      { vertical_alignment: 'baseline' },
+      { number_format: 'x'.repeat(200) },
+    ]) {
+      await assert.rejects(() => provider.callTool('office_excel_format_range', {
+        path: 'Budget.xlsx', range: 'A1', ...invalid,
+      }), /font_size|borders|vertical_alignment|number_format/);
+    }
+  });
+
+  it('offers the picture tool only when one is configured, and saves inside the grant', async () => {
+    const root = await temporaryDirectory();
+    const saves = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async () => ({}),
+      createImageProvider: (saveImage) => ({
+        listTools: async () => [{ functionName: 'office_image_search', toolId: 'office:image:search' }],
+        callTool: async (_name, args) => {
+          // The save it was handed is the only way out to disk.
+          const relativePath = await saveImage('Images', 'cover', '.png', Buffer.from('png'));
+          saves.push(relativePath);
+          return { query: args.query, images: [{ path: relativePath }] };
+        },
+      }),
+    });
+    await provider.setWorkspaceRoot(root);
+
+    const tools = (await provider.listTools()).map((tool) => tool.functionName);
+    assert.ok(tools.includes('office_image_search'));
+    assert.equal(tools.at(-1), 'office_image_search', 'listed after the Office tools');
+
+    const result = await provider.callTool('office_image_search', { query: 'city skyline' });
+    assert.equal(result.images[0].path, 'Images/cover.png');
+    assert.equal(await fs.readFile(path.join(root, 'Images', 'cover.png'), 'utf8'), 'png');
+    assert.deepEqual(saves, ['Images/cover.png']);
+
+    // Without a provider the tool is simply not there.
+    const bare = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async () => ({}),
+    });
+    await bare.setWorkspaceRoot(root);
+    assert.equal(
+      (await bare.listTools()).some((tool) => tool.functionName === 'office_image_search'),
+      false,
+    );
+  });
+
+  it('attaches footnotes and endnotes in one call, defaulting to numbered footnotes', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Report.docx'), 'doc');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { notesWritten: request.footnotes.length };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    const result = await provider.callTool('office_word_add_footnotes', {
+      path: 'Report.docx',
+      footnotes: [
+        { find: '18%', text: '不含汇兑影响。' },
+        { find: '增长', text: '口径见附录一。', kind: 'endnote', occurrence: 2, label: '*' },
+      ],
+    });
+    assert.equal(result.notesWritten, 2);
+    assert.equal(calls.length, 1, 'one call, not one per note');
+    // An empty label is what keeps a note automatically numbered, so the
+    // default has to be a footnote at occurrence 1 with no label at all.
+    assert.deepEqual(calls[0].footnotes[0], {
+      find: '18%', text: '不含汇兑影响。', kind: 'footnote', occurrence: 1, label: '', matchCase: true,
+    });
+    assert.equal(calls[0].footnotes[1].kind, 'endnote');
+    assert.equal(calls[0].footnotes[1].occurrence, 2);
+    assert.equal(calls[0].footnotes[1].label, '*');
+
+    for (const [footnotes, message] of [
+      [[], /at least one/],
+      [[{ find: '18%' }], /text/],
+      [[{ text: 'x' }], /find/],
+      [[{ find: 'x', text: 'y', kind: 'sidenote' }], /kind/],
+    ]) {
+      await assert.rejects(
+        () => provider.callTool('office_word_add_footnotes', { path: 'Report.docx', footnotes }),
+        message,
+      );
+    }
+  });
+
+  it('writes every review note in one call and refuses a bad cell', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Book.xlsx'), 'book');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { sheet: 'Sheet1', commentsWritten: request.comments.length };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    const result = await provider.callTool('office_excel_add_comments', {
+      path: 'Book.xlsx',
+      sheet: 'Sheet1',
+      comments: [
+        { cell: 'b4', text: '这个数字待核' },
+        { cell: 'C7', text: '来源：财务', visible: true },
+      ],
+    });
+    assert.equal(result.commentsWritten, 2);
+    assert.equal(calls[0].operation, 'excel_add_comments');
+    // A review is one action to the user, so it is one approval and one engine
+    // start rather than one of each per note.
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].comments[0], { cell: 'B4', text: '这个数字待核', visible: false });
+    assert.equal(calls[0].comments[1].visible, true);
+
+    for (const [comments, message] of [
+      [[], /at least one/],
+      [[{ cell: 'B4' }], /text/],
+      [[{ cell: 'B4:C7', text: 'x' }], /A1 notation/],
+      [[{ cell: '', text: 'x' }], /cell/],
+    ]) {
+      await assert.rejects(
+        () => provider.callTool('office_excel_add_comments', { path: 'Book.xlsx', comments }),
+        message,
+      );
+    }
+  });
+
+  it('composes a whole Word document in one call, from Markdown', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Report.docx'), 'doc');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { blocksWritten: request.blocks.length };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    const result = await provider.callTool('office_word_compose', {
+      path: 'Report.docx',
+      theme: 'slate',
+      title: '2026 年第三季度经营回顾',
+      subtitle: '增长、成本与下一步',
+      byline: '经营分析组 · 2026-08',
+      table_of_contents: true,
+      markdown: '# 摘要\n\n本季收入同比增长 18%。\n\n## 增长\n\n- 企业版需求明确\n- 渠道复制性强\n',
+    });
+    assert.equal(result.written, 'Magies Office Output/Report.docx');
+    assert.equal(calls[0].operation, 'word_compose');
+    assert.equal(calls[0].theme, 'slate');
+    assert.equal(calls[0].cover.title, '2026 年第三季度经营回顾');
+    assert.equal(calls[0].cover.byline, '经营分析组 · 2026-08');
+    assert.equal(calls[0].tableOfContents, true);
+    // Page numbers are what a printed report is missing when nobody asked.
+    assert.equal(calls[0].pageNumbers, true);
+    // The Markdown became real styles, not sized body text.
+    assert.deepEqual(
+      calls[0].blocks.map((block) => block.style),
+      ['heading1', 'body', 'heading2', 'bullet', 'bullet'],
+    );
+
+    // A document with no cover is a document, not an error.
+    await provider.callTool('office_word_compose', {
+      path: 'Report.docx',
+      markdown: '# 只有正文\n\n一段话。\n',
+    });
+    assert.equal(calls.at(-1).cover, null);
+    assert.equal(calls.at(-1).theme, 'azure');
+
+    for (const [args, message] of [
+      [{ path: 'Report.docx' }, /markdown|blocks/],
+      [{ path: 'Report.docx', markdown: '# x', theme: 'neon' }, /theme/],
+      [{ path: 'Missing.docx', markdown: '# x' }, /no such file/i],
+    ]) {
+      await assert.rejects(() => provider.callTool('office_word_compose', args), message);
+    }
+  });
+
+  it('composes a themed deck in one call, with visuals and workspace-scoped images', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Deck.pptx'), 'deck');
+    await fs.writeFile(path.join(root, 'chart.png'), 'png');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { slidesComposed: request.slides.length };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    const result = await provider.callTool('office_presentation_compose', {
+      path: 'Deck.pptx',
+      theme: 'midnight',
+      slides: [
+        { layout: 'title', title: '季度回顾', subtitle: '2026 Q1' },
+        { layout: 'bullets', title: '收入', body: ['同比 +12%'] },
+        { layout: 'image', title: '趋势', image_path: 'chart.png' },
+      ],
+    });
+    assert.equal(result.slidesComposed, 3);
+    assert.equal(result.theme, 'midnight');
+    assert.equal(calls[0].operation, 'presentation_compose');
+    assert.equal(calls[0].replaceExisting, true);
+    // The image is resolved inside the grant, never handed through raw.
+    assert.equal(calls[0].slides[2].imagePath, path.join(await fs.realpath(root), 'chart.png'));
+
+    // Charts and KPI tiles are how a deck gets a picture without a picture file.
+    const visual = await provider.callTool('office_presentation_compose', {
+      path: 'Deck.pptx',
+      slides: [
+        {
+          layout: 'chart',
+          title: '收入',
+          chart_type: 'line',
+          categories: ['1月', '2月'],
+          series: [{ name: '收入', values: [12, 18] }],
+        },
+        { layout: 'kpi', title: '指标', kpis: [{ value: '+12%', label: '同比' }] },
+      ],
+    });
+    assert.equal(visual.slidesComposed, 2);
+    assert.equal(calls.at(-1).slides[0].chartType, 'line');
+    assert.deepEqual(calls.at(-1).slides[0].series[0].values, [12, 18]);
+    assert.equal(calls.at(-1).slides[1].kpis[0].value, '+12%');
+
+    // An image slide with no picture is not an error: almost no installation has
+    // a picture provider, and the composer draws a themed figure in its place.
+    // Rejecting it here would make that fallback unreachable.
+    const drawn = await provider.callTool('office_presentation_compose', {
+      path: 'Deck.pptx',
+      slides: [{ layout: 'image', title: '产品线', body: ['进入企业版'] }],
+    });
+    assert.equal(drawn.slidesComposed, 1);
+    assert.equal(calls.at(-1).slides[0].imagePath, undefined);
+
+    for (const [slides, message] of [
+      [[{ layout: 'carousel' }], /layout/],
+      [[{ layout: 'image', image_path: '../outside.png' }], /workspace|escape|outside/i],
+      [[{ layout: 'chart', categories: ['a'] }], /series/],
+      [[{ layout: 'chart', categories: ['a', 'b'], series: [{ name: 'x', values: [1] }] }],
+        /one number per category/],
+      [[{ layout: 'kpi', title: 'x' }], /kpis/],
+    ]) {
+      await assert.rejects(
+        () => provider.callTool('office_presentation_compose', { path: 'Deck.pptx', slides }),
+        message,
+      );
+    }
+  });
+
+  it('styles presentation text so a generated deck is not raw default template', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Deck.pptx'), 'deck');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { shapesFormatted: 2 };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    const result = await provider.callTool('office_presentation_format_text', {
+      path: 'Deck.pptx',
+      slide_number: 1,
+      target: 'title',
+      font_name: 'Source Han Sans',
+      font_size: 40,
+      bold: true,
+      text_color: '#FFFFFF',
+      alignment: 'center',
+    });
+    assert.equal(result.shapesFormatted, 2);
+    assert.equal(calls[0].operation, 'presentation_format_text');
+    assert.equal(calls[0].target, 'title');
+
+    await assert.rejects(
+      () => provider.callTool('office_presentation_format_text', {
+        path: 'Deck.pptx', slide_number: 1, target: 'footer',
+      }),
+      /target/,
+    );
+    await assert.rejects(
+      () => provider.callTool('office_presentation_format_text', {
+        path: 'Deck.pptx', slide_number: 1, target: 'title',
+      }),
+      /at least one format option/,
+    );
+  });
+
+  it('paints slide backgrounds, one slide or the whole deck', async () => {
+    const root = await temporaryDirectory();
+    await fs.writeFile(path.join(root, 'Deck.pptx'), 'deck');
+    const calls = [];
+    const provider = createOfficeAutomationProvider({
+      workspace: createOfficeWorkspace(),
+      getLibreOfficeExecutable: () => '/office/soffice',
+      runUno: async (request) => {
+        calls.push(request);
+        await fs.copyFile(request.inputPath, request.outputPath);
+        return { slidesPainted: 3 };
+      },
+    });
+    await provider.setWorkspaceRoot(root);
+
+    const result = await provider.callTool('office_presentation_set_background', {
+      path: 'Deck.pptx',
+      color: '#0F2B46',
+      gradient_to: '#1F4E79',
+    });
+    assert.equal(result.slidesPainted, 3);
+    // No slide number means the whole deck, which is what a theme change means.
+    assert.equal(calls[0].slideNumber, 0);
+    assert.equal(calls[0].gradientTo, '#1F4E79');
+
+    await assert.rejects(
+      () => provider.callTool('office_presentation_set_background', { path: 'Deck.pptx' }),
+      /color/,
+    );
+  });
+
 });

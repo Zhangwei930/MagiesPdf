@@ -11,6 +11,12 @@ import {
   type PickedFile,
 } from './bridge.ts';
 import { loadCatalog } from './catalog.ts';
+import {
+  DEFAULT_DARK_THEME_ID,
+  DEFAULT_LIGHT_THEME_ID,
+  resolveTheme,
+  themeVariables,
+} from './theme/themes.ts';
 import * as docs from './documents.ts';
 import type { DocumentState } from './documents.ts';
 import type { Locale } from './i18n.ts';
@@ -56,6 +62,11 @@ interface AppState {
 
   /** Opens a file, or focuses the tab already holding it. Returns its id. */
   openDocument(file: PickedFile): string;
+  /**
+   * Puts `file` in the tab `id` occupies. Used when a document is rewritten on
+   * disk and has to be reopened without the tab ever leaving the strip.
+   */
+  replaceDocument(id: string, file: PickedFile): string;
   closeDocument(id: string): void;
   setActiveDocument(id: string): void;
   editDocument(id: string, bytes: Uint8Array): void;
@@ -64,6 +75,12 @@ interface AppState {
   setDocumentPassword(id: string, password: string): void;
   /** ⌘S. Writes over the file the document came from, or asks where to put it. */
   saveDocument(id: string): Promise<void>;
+  setEngineModified(id: string, modified: boolean): void;
+  /** ⌘S on an engine-held document. Never a direct write — see documents.ts. */
+  requestEngineSave(id: string): Promise<void>;
+  /** Set while a hosted document has been asked for; the frame watches it. */
+  engineSaveRequest: { id: string; at: number } | null;
+  engineSaved(payload: { sessionId: string; path?: string; name?: string }): void;
   saveDocumentAs(id: string): Promise<void>;
   /**
    * Runs a tool over an open document. A single PDF coming back replaces the
@@ -74,6 +91,8 @@ interface AppState {
     id: string,
     tool: ToolMeta,
     params: Record<string, unknown>,
+    /** Extra inputs after the open PDF (merge, overlay, …). */
+    extraFiles?: Array<{ name: string; bytes: Uint8Array; mime: string }>,
   ): Promise<JobResult>;
 
   initialize(): Promise<void>;
@@ -106,7 +125,17 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
   externalConverter: { executable: '', argumentTemplate: '', timeoutMs: 120000 },
   office: { libreOfficeExecutable: '' },
-  ai: { baseUrl: 'http://127.0.0.1:11434/v1', model: '', maxSteps: 6 },
+  themeLight: DEFAULT_LIGHT_THEME_ID,
+  themeDark: DEFAULT_DARK_THEME_ID,
+  ai: {
+    providers: [],
+    activeProviderId: '',
+    maxSteps: 6,
+    permissionMode: 'confirm',
+    cliModels: {},
+    strictLocalPrivacy: false,
+    webSearch: { enabled: false, provider: 'tavily', endpoint: '' },
+  },
   pipelinePresets: [],
 };
 
@@ -120,8 +149,28 @@ function resolveDark(theme: AppSettings['theme']): boolean {
   return theme === 'system' ? prefersDark() : theme === 'dark';
 }
 
-function applyTheme(dark: boolean): void {
-  document.documentElement.classList.toggle('dark', dark);
+/**
+ * Paints the chosen theme.
+ *
+ * The `.dark` class still drives Tailwind's dark variant; the custom properties
+ * are what actually recolour the app, so a theme can differ from the built-in
+ * palette without touching the stylesheet.
+ */
+function applyTheme(dark: boolean, settings?: AppSettings): void {
+  const root = document.documentElement;
+  root.classList.toggle('dark', dark);
+
+  const theme = resolveTheme(
+    settings?.theme ?? (dark ? 'dark' : 'light'),
+    prefersDark(),
+    {
+      light: settings?.themeLight ?? DEFAULT_LIGHT_THEME_ID,
+      dark: settings?.themeDark ?? DEFAULT_DARK_THEME_ID,
+    },
+  );
+  for (const [name, value] of Object.entries(themeVariables(theme))) {
+    root.style.setProperty(name, value);
+  }
 }
 
 /** Replaces one document in the list, leaving the others' identities alone. */
@@ -143,6 +192,7 @@ export const useApp = create<AppState>((set, get) => ({
   recentToolIds: [],
   documents: [],
   activeDocumentId: null,
+  engineSaveRequest: null,
 
   openDocument(file) {
     const incoming = docs.createDocument(file);
@@ -151,14 +201,41 @@ export const useApp = create<AppState>((set, get) => ({
     return activeId;
   },
 
+  replaceDocument(id, file) {
+    const incoming = docs.createDocument(file);
+    set((state) => ({
+      documents: docs.replaceDocument(state.documents, id, incoming),
+      // The tab under the user stays the tab under the user.
+      activeDocumentId: state.activeDocumentId === id ? incoming.id : state.activeDocumentId,
+    }));
+    return incoming.id;
+  },
+
   closeDocument(id) {
+    // An engine-held document has a session and a work directory behind it;
+    // dropping the tab without telling the engine would leave both running and
+    // a copy of the user's document in temp.
+    const held = get().documents.find((d) => d.id === id)?.editor;
+    if (held) void bridge().closeEditor(held.sessionId).catch((e) => console.warn('[store] closeEditor failed:', e));
+
     set((state) => ({
       documents: docs.closeDocument(state.documents, id),
       activeDocumentId: docs.nextActiveId(state.documents, id, state.activeDocumentId),
     }));
   },
 
+  setEngineModified(id, modified) {
+    set((state) => ({
+      documents: mapDocument(state.documents, id, (d) => docs.setEngineModified(d, modified)),
+    }));
+  },
+
   setActiveDocument(id) {
+    // The engine serves images by the key they had in the open document, with
+    // nothing to say which document that was, so it has to be told which one is
+    // in front.
+    const held = get().documents.find((d) => d.id === id)?.editor;
+    if (held) void bridge().focusEditor(held.sessionId).catch((e) => console.warn('[store] focusEditor failed:', e));
     set({ activeDocumentId: id });
   },
 
@@ -184,23 +261,66 @@ export const useApp = create<AppState>((set, get) => ({
     const document = get().documents.find((d) => d.id === id);
     if (!document) return;
 
-    // Nothing on disk to write over — a tool result held in memory — so this
-    // can only mean Save As.
-    if (document.path === '') {
-      await get().saveDocumentAs(id);
-      return;
-    }
+    switch (docs.saveTarget(document)) {
+      case 'prompt':
+        // Nothing on disk to write over — a tool result held in memory, or a
+        // rendering that must not be written back over its source.
+        await get().saveDocumentAs(id);
+        return;
 
-    await bridge().writeToPath(document.path, document.bytes);
-    set((state) => ({ documents: mapDocument(state.documents, id, (d) => docs.markSaved(d, '')) }));
+      case 'engine':
+        // The bytes are the engine's. Writing this document's own empty array
+        // to its path would truncate the user's file, so the request goes to
+        // the engine and the frame answers it with what it is holding.
+        await get().requestEngineSave(id);
+        return;
+
+      default:
+        await bridge().writeToPath(document.path, document.bytes);
+        set((state) => ({ documents: mapDocument(state.documents, id, (d) => docs.markSaved(d, '')) }));
+    }
+  },
+
+  /**
+   * ⌘S on an engine-held document.
+   *
+   * The bytes are the engine's, so this only asks. The frame passes the request
+   * to the engine, the engine posts its document back to the main process, and
+   * the save happens there — `office:editorSaved` says when it is done.
+   */
+  async requestEngineSave(id) {
+    const document = get().documents.find((d) => d.id === id);
+    if (!document?.editor) return;
+    set({ engineSaveRequest: { id, at: Date.now() } });
+  },
+
+  engineSaved(payload) {
+    const sessionId = payload.sessionId;
+    set((state) => ({
+      documents: state.documents.map((d) =>
+        d.editor?.sessionId === sessionId
+          ? docs.applyEngineSaved(d, { path: payload.path, name: payload.name })
+          : d,
+      ),
+      engineSaveRequest: null,
+    }));
   },
 
   async saveDocumentAs(id) {
     const document = get().documents.find((d) => d.id === id);
     if (!document) return;
 
+    // Hosted documents have no bytes here. The PDF save-as path would write an
+    // empty file under a .pdf name; the engine has to do it instead — same as
+    // the file menu's Save As.
+    if (document.editor) {
+      const target = await bridge().pickEditorSaveAsTarget(document.editor.sessionId, document.name);
+      if (target) await get().requestEngineSave(id);
+      return;
+    }
+
     const result = await bridge().saveOutputAs({
-      name: document.name,
+      name: docs.saveAsName(document),
       bytes: document.bytes,
       mime: 'application/pdf',
     });
@@ -213,17 +333,23 @@ export const useApp = create<AppState>((set, get) => ({
     }));
   },
 
-  async applyToolToDocument(id, tool, params) {
+  async applyToolToDocument(id, tool, params, extraFiles = []) {
     const document = get().documents.find((d) => d.id === id);
     if (!document) throw new Error('That document is no longer open');
 
     // Deliberately not through `runTool`: applying a tool to what you are
     // looking at is an edit, and it belongs in the document's history rather
     // than as a row in the job list beside batch runs.
+    const lead = { name: document.name, bytes: document.bytes, mime: 'application/pdf' as const };
+    const extras = extraFiles.map((file) => ({
+      name: file.name,
+      bytes: file.bytes,
+      mime: file.mime,
+    }));
     const result = await bridge().runJob({
       jobId: crypto.randomUUID(),
       toolId: tool.id,
-      files: [{ name: document.name, bytes: document.bytes, mime: 'application/pdf' }],
+      files: [lead, ...extras],
       params: { ...params, password: document.password },
     });
 
@@ -249,7 +375,7 @@ export const useApp = create<AppState>((set, get) => ({
   async initialize() {
     if (!hasBridge()) {
       const dark = prefersDark();
-      applyTheme(dark);
+      applyTheme(dark, get().settings);
       set({ ready: true, darkMode: dark });
       return;
     }
@@ -262,7 +388,7 @@ export const useApp = create<AppState>((set, get) => ({
       // Without this the promise just rejects, `ready` stays false and the app
       // spins on its loading indicator forever with nothing to act on.
       const dark = prefersDark();
-      applyTheme(dark);
+      applyTheme(dark, get().settings);
       set({
         ready: true,
         darkMode: dark,
@@ -274,13 +400,33 @@ export const useApp = create<AppState>((set, get) => ({
     loadCatalog(catalog);
 
     const dark = resolveDark(settings.theme);
-    applyTheme(dark);
+    applyTheme(dark, settings);
+
+    // Warm the Office editor host and pull its static assets into Chromium's
+    // cache while the user is still on the home screen. First open still has
+    // to convert the document; it should not also wait on sdkjs + fonts.
+    // A same-origin hidden iframe is required — the editor runs on loopback
+    // with its own port, so a fetch from the Vite origin would not share cache.
+    void bridge()
+      .warmEditor()
+      .then(({ url }) => {
+        if (!url || typeof document === 'undefined') return;
+        const frame = document.createElement('iframe');
+        frame.setAttribute('aria-hidden', 'true');
+        frame.tabIndex = -1;
+        frame.src = url;
+        frame.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
+        document.body.appendChild(frame);
+        // Drop the frame once the heavy assets have had time to land.
+        window.setTimeout(() => frame.remove(), 120_000);
+      })
+      .catch(() => undefined);
 
     // Track the OS theme while "system" is selected.
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
       if (get().settings.theme !== 'system') return;
       const next = prefersDark();
-      applyTheme(next);
+      applyTheme(next, get().settings);
       set({ darkMode: next });
     });
 
@@ -315,7 +461,8 @@ export const useApp = create<AppState>((set, get) => ({
       : { ...get().settings, ...patch };
 
     const dark = resolveDark(settings.theme);
-    applyTheme(dark);
+    // The freshly saved settings, not the store's — the set below has not run.
+    applyTheme(dark, settings);
     set({ settings, locale: settings.locale, darkMode: dark });
   },
 

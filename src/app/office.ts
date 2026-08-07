@@ -31,3 +31,16 @@ export function partitionDocumentPaths(paths: readonly string[]): {
   }
   return result;
 }
+
+/**
+ * ONLYOFFICE uiTheme for the embedded editor.
+ *
+ * Always white/light for now: dark chrome + dark document canvas made body
+ * text unreadable (black on black). Magies shell theme is independent.
+ */
+export function officeUiThemeFor(
+  _theme: 'system' | 'light' | 'dark',
+  _darkMode: boolean,
+): 'theme-system' | 'theme-white' | 'theme-night' {
+  return 'theme-white';
+}

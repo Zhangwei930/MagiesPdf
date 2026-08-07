@@ -41,7 +41,7 @@ export function parseChangelog(raw: string): ChangelogEntry[] {
     if (versionMatch) {
       flushEntry();
       current = {
-        version: versionMatch[1]!,
+        version: versionMatch[1] ?? '',
         date: versionMatch[2]?.trim() || undefined,
         sections: [],
       };
@@ -53,14 +53,14 @@ export function parseChangelog(raw: string): ChangelogEntry[] {
     const sectionMatch = /^###\s+(.+)\s*$/.exec(line);
     if (sectionMatch) {
       flushSection();
-      section = { title: sectionMatch[1]!.trim(), items: [] };
+      section = { title: (sectionMatch[1] ?? '').trim(), items: [] };
       continue;
     }
 
     const bullet = /^[-*]\s+(.+)\s*$/.exec(line);
     if (bullet) {
       if (!section) section = { title: '', items: [] };
-      section.items.push(bullet[1]!.trim());
+      section.items.push((bullet[1] ?? '').trim());
       continue;
     }
 

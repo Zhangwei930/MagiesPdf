@@ -44,7 +44,9 @@ import { bookmarksTool } from './edit/bookmarks.ts';
 import { compareTool } from './edit/compare.ts';
 import { showJavascriptTool } from './security/showJavascript.ts';
 import { compressTool } from './edit/compress.ts';
+import { createFormTool } from './edit/createForm.ts';
 import { fillFormTool } from './edit/fillForm.ts';
+import { replaceTextTool } from './edit/replaceText.ts';
 import { addPasswordTool, removePasswordTool } from './security/password.ts';
 import { addWatermarkTool } from './security/watermark.ts';
 import { editMetadataTool, removeMetadataTool } from './security/metadata.ts';
@@ -128,7 +130,9 @@ export const ALL_TOOLS: readonly ToolDescriptor[] = [
   addAttachmentsTool,
   bookmarksTool,
   compareTool,
+  createFormTool,
   fillFormTool,
+  replaceTextTool,
   getInfoTool,
 
   // Advanced

@@ -3,7 +3,7 @@ const { describe, it } = require('node:test');
 const { createOfficeService, normalizeLibreOfficeSelection } = require('./service.cjs');
 
 function dependencies(overrides = {}) {
-  const calls = { launched: [], openedExternal: [], renamed: [], trashed: [], written: [], settings: [] };
+  const calls = { launched: [], rendered: [], openedExternal: [], renamed: [], trashed: [], written: [], settings: [] };
   let stored = {
     office: { libreOfficeExecutable: '' },
     recentDocuments: [],
@@ -38,6 +38,19 @@ function dependencies(overrides = {}) {
     now: () => 2000,
     resolveExecutable: () => '/usr/bin/libreoffice',
     launch: (executable, paths) => calls.launched.push([executable, paths]),
+    preview: {
+      render: async (paths) => {
+        calls.rendered.push([...paths]);
+        return paths.map((target) => ({
+          name: `${target.split('/').pop().replace(/\.[^.]+$/, '')}.pdf`,
+          path: '',
+          size: 3,
+          mime: 'application/pdf',
+          bytes: Buffer.from('pdf'),
+          origin: { path: target, kind: 'word' },
+        }));
+      },
+    },
     openExternal: async (url) => calls.openedExternal.push(url),
     trash: async (target) => calls.trashed.push(target),
     ...overrides,
@@ -136,48 +149,65 @@ describe('Office service', () => {
     });
     const result = await createOfficeService(deps).createAndOpen({}, 'word');
 
-    assert.deepEqual(result, { opened: ['/docs/Letter.docx'], canceled: false });
+    assert.equal(result.canceled, false);
+    assert.deepEqual(result.opened, ['/docs/Letter.docx']);
     assert.deepEqual(calls.written, [['/docs/Letter.docx', [1, 2, 3]]]);
-    assert.deepEqual(calls.launched, [['/usr/bin/libreoffice', ['/docs/Letter.docx']]]);
     assert.deepEqual(getStored().recentDocuments, [{ path: '/docs/Letter.docx', openedAt: 2000 }]);
   });
 
-  it('does not create or launch anything when Save As is cancelled', async () => {
+  /**
+   * Creating and opening are separate now: a new document goes to the editor,
+   * the same way an existing one does, and the service's job ends once the file
+   * exists on disk.
+   */
+  it('creates a blank document and reports where it went', async () => {
+    const { deps, calls } = dependencies({
+      dialog: {
+        showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
+        showSaveDialog: async () => ({ canceled: false, filePath: '/docs/Untitled.docx' }),
+      },
+    });
+
+    const result = await createOfficeService(deps).createBlank({}, 'word');
+
+    assert.deepEqual(result, { created: '/docs/Untitled.docx', canceled: false });
+    assert.deepEqual(calls.written, [['/docs/Untitled.docx', [1, 2, 3]]]);
+    assert.deepEqual(calls.rendered, [], 'creating does not render a preview');
+  });
+
+  it('reports a cancelled Save As without writing anything', async () => {
+    const { deps, calls } = dependencies();
+    assert.deepEqual(await createOfficeService(deps).createBlank({}, 'word'), {
+      created: '',
+      canceled: true,
+    });
+    assert.deepEqual(calls.written, []);
+  });
+
+  it('does not create or render anything when Save As is cancelled', async () => {
     const { deps, calls } = dependencies();
 
     assert.deepEqual(await createOfficeService(deps).createAndOpen({}, 'word'), {
       opened: [],
       canceled: true,
+      files: [],
     });
     assert.deepEqual(calls.written, []);
+    assert.deepEqual(calls.rendered, []);
+  });
+
+  /**
+   * Opening a document is now rendering, not launching. Nothing about it needs
+   * a second application to be installed, so a missing one must not block it.
+   */
+  it('opens documents without needing a separate application installed', async () => {
+    const { deps, calls } = dependencies({ resolveExecutable: () => '' });
+
+    const result = await createOfficeService(deps).openPaths(['/docs/A.docx']);
+
+    assert.equal(result.canceled, false);
+    assert.deepEqual(calls.rendered, [['/docs/A.docx']]);
     assert.deepEqual(calls.launched, []);
-  });
-
-  it('fails before Save As when the local editor is unavailable', async () => {
-    let saveDialogOpened = false;
-    const { deps, calls } = dependencies({
-      dialog: {
-        showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
-        showSaveDialog: async () => {
-          saveDialogOpened = true;
-          return { canceled: true };
-        },
-      },
-      resolveExecutable: () => '',
-    });
-
-    await assert.rejects(createOfficeService(deps).createAndOpen({}, 'word'), /not installed/i);
-    assert.equal(saveDialogOpened, false);
-    assert.deepEqual(calls.written, []);
-  });
-
-  it('treats a missing bundled editor as a damaged packaged installation', async () => {
-    const { deps } = dependencies({ packaged: true, resolveExecutable: () => '' });
-
-    await assert.rejects(
-      createOfficeService(deps).createAndOpen({}, 'word'),
-      /reinstall Magies Office/i,
-    );
   });
 
   it('opens existing Office files selected by the user and remembers newest first', async () => {
@@ -191,15 +221,26 @@ describe('Office service', () => {
       },
     });
 
-    assert.deepEqual(await createOfficeService(deps).pickAndOpen({}, true), {
-      opened: ['/docs/A.docx', '/docs/B.pptx'],
-      canceled: false,
-    });
-    assert.deepEqual(calls.launched, [['/usr/bin/libreoffice', ['/docs/A.docx', '/docs/B.pptx']]]);
+    const result = await createOfficeService(deps).pickAndOpen({}, true);
+
+    assert.deepEqual(result.opened, ['/docs/A.docx', '/docs/B.pptx']);
+    assert.deepEqual(calls.rendered, [['/docs/A.docx', '/docs/B.pptx']]);
+    // No second application is started any more; this is the single window.
+    assert.deepEqual(calls.launched, []);
     assert.deepEqual(getStored().recentDocuments, [
       { path: '/docs/B.pptx', openedAt: 2000 },
       { path: '/docs/A.docx', openedAt: 2000 },
     ]);
+  });
+
+  it('hands the renderer bytes that carry their source, not a path to overwrite', async () => {
+    const { deps } = dependencies();
+
+    const { files } = await createOfficeService(deps).openPaths(['/docs/A.docx']);
+
+    assert.equal(files.length, 1);
+    assert.equal(files[0].path, '');
+    assert.deepEqual(files[0].origin, { path: '/docs/A.docx', kind: 'word' });
   });
 
   it('lists recent documents with file metadata and prunes missing entries', async () => {

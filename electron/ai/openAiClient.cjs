@@ -127,7 +127,16 @@ class OpenAiCompatibleClient {
     this.fetchImpl = fetchImpl;
   }
 
-  async streamMessage({ baseUrl, apiKey, model, messages, tools = [], signal, onTextDelta }) {
+  async streamMessage({
+    baseUrl,
+    apiKey,
+    model,
+    messages,
+    tools = [],
+    reasoningEffort = '',
+    signal,
+    onTextDelta,
+  }) {
     const url = chatCompletionsUrl(baseUrl);
     if (!String(model || '').trim()) {
       throw new AiError('AI_CONFIG_INVALID', 'AI model is required');
@@ -152,6 +161,9 @@ class OpenAiCompatibleClient {
           messages,
           tools: tools.length > 0 ? tools : undefined,
           tool_choice: tools.length > 0 ? 'auto' : undefined,
+          // Omitted unless chosen: a provider that does not know the field
+          // rejects the whole request rather than ignoring it.
+          reasoning_effort: reasoningEffort || undefined,
           stream: true,
         }),
         signal,

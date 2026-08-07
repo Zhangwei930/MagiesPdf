@@ -9,13 +9,24 @@ interface DocumentTabsProps {
   activeId: string | null;
   onSelect(id: string): void;
   onClose(id: string): void;
+  /**
+   * `titlebar` — WPS-style pills in the app title bar.
+   * `strip` — standalone row under the ribbon (legacy).
+   */
+  variant?: 'titlebar' | 'strip';
 }
 
 /**
  * The open documents, as tabs. Nothing shows until there is a document, so the
  * app does not carry an empty strip around for people who only ever run a tool.
  */
-export function DocumentTabs({ documents, activeId, onSelect, onClose }: DocumentTabsProps) {
+export function DocumentTabs({
+  documents,
+  activeId,
+  onSelect,
+  onClose,
+  variant = 'strip',
+}: DocumentTabsProps) {
   const locale = useApp((s) => s.locale);
   if (documents.length === 0) return null;
 
@@ -23,7 +34,12 @@ export function DocumentTabs({ documents, activeId, onSelect, onClose }: Documen
     <div
       role="tablist"
       aria-label={t('tabsLabel', locale)}
-      className="flex shrink-0 items-stretch gap-0.5 overflow-x-auto border-b border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-1.5 pt-1"
+      className={clsx(
+        'flex min-w-0 items-center gap-1 overflow-x-auto',
+        variant === 'strip' &&
+          'shrink-0 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-2 py-1',
+        variant === 'titlebar' && 'px-1',
+      )}
     >
       {documents.map((document) => {
         const active = document.id === activeId;
@@ -50,10 +66,12 @@ export function DocumentTabs({ documents, activeId, onSelect, onClose }: Documen
             }}
             title={document.path || document.name}
             className={clsx(
-              'group flex max-w-[220px] min-w-0 cursor-pointer items-center gap-1.5 rounded-t-lg border border-b-0 px-2.5 py-1.5 text-[12px] transition-colors',
+              'group flex max-w-[200px] min-w-0 cursor-pointer items-center gap-1.5 text-[12px] transition-colors',
+              variant === 'titlebar' && 'rounded-md px-2.5 py-1',
+              variant === 'strip' && 'rounded-full px-3 py-1',
               active
-                ? 'border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[var(--text-primary)]'
-                : 'border-transparent text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]',
+                ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                : 'text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]',
             )}
           >
             <FileText

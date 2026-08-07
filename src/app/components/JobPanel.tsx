@@ -16,7 +16,7 @@ export function JobPanel({ open, onClose }: { open: boolean; onClose(): void }) 
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end" role="presentation">
-      <div className="flex-1 bg-black/25" onClick={onClose} role="presentation" />
+      <div className="flex-1 bg-[var(--overlay-scrim)]" onClick={onClose} role="presentation" />
 
       <aside
         className="flex w-full max-w-sm flex-col border-l border-[var(--border-subtle)] bg-[var(--surface-panel)] shadow-2xl"
@@ -126,7 +126,7 @@ function JobRow({ job }: { job: JobEntry }) {
           {job.savedTo ? (
             <button
               type="button"
-              onClick={() => void bridge().revealPath(job.savedTo!)}
+              onClick={() => void bridge().revealPath(job.savedTo ?? '')}
               className="inline-flex shrink-0 items-center gap-1 text-[11px] text-[var(--accent)] hover:underline"
             >
               <FolderOpen size={11} />

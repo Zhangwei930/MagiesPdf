@@ -30,6 +30,42 @@ const api = {
   pickAndOpenOffice: (multiple) => ipcRenderer.invoke('office:pickAndOpen', { multiple }),
   createAndOpenOffice: (kind) => ipcRenderer.invoke('office:createAndOpen', { kind }),
   openOfficePaths: (paths) => ipcRenderer.invoke('office:openPaths', { paths }),
+  createBlankOffice: (kind) => ipcRenderer.invoke('office:createBlank', { kind }),
+  openInEditor: (paths, options) =>
+    ipcRenderer.invoke('office:editorOpen', {
+      paths,
+      uiTheme: options && typeof options.uiTheme === 'string' ? options.uiTheme : undefined,
+    }),
+  /** Starts the editor host and returns static URLs to prefetch into the HTTP cache. */
+  warmEditor: () => ipcRenderer.invoke('office:editorWarm'),
+  focusEditor: (sessionId) => ipcRenderer.invoke('office:editorFocus', { sessionId }),
+  saveEditor: (sessionId, bytes) => ipcRenderer.invoke('office:editorSave', { sessionId, bytes }),
+  pickEditorSaveAsTarget: (sessionId, name) =>
+    ipcRenderer.invoke('office:editorSaveAsTarget', { sessionId, name }),
+  /** Writes the file the engine already produced for "Save copy as". */
+  saveEditorExport: (sessionId, name) =>
+    ipcRenderer.invoke('office:editorSaveExport', { sessionId, name }),
+  closeEditor: (sessionId) => ipcRenderer.invoke('office:editorClose', { sessionId }),
+  /** Mirrors the tab's unsaved state so an AI write can refuse to clobber it. */
+  setEditorModified: (sessionId, modified) =>
+    ipcRenderer.invoke('office:editorModified', { sessionId, modified }),
+  onEditorSaved: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on('office:editorSaved', listener);
+    return () => ipcRenderer.off('office:editorSaved', listener);
+  },
+  /** Editor sessions closed because AI is about to rewrite that path on disk. */
+  onOfficeSessionsClosed: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on('office:sessionsClosed', listener);
+    return () => ipcRenderer.off('office:sessionsClosed', listener);
+  },
+  /** Disk file updated in place by AI — reopen so the open tab shows the result. */
+  onOfficeDocumentApplied: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on('office:documentApplied', listener);
+    return () => ipcRenderer.off('office:documentApplied', listener);
+  },
   listRecentDocuments: () => ipcRenderer.invoke('office:listRecent'),
   renameRecentDocument: (target, name) =>
     ipcRenderer.invoke('office:renameRecent', { path: target, name }),
@@ -75,16 +111,32 @@ const api = {
   cancelJob: (jobId) => ipcRenderer.invoke('job:cancel', { jobId }),
 
   getAiConfig: () => ipcRenderer.invoke('ai:config'),
-  setAiApiKey: (apiKey) => ipcRenderer.invoke('ai:setApiKey', { apiKey }),
+  setAiApiKey: (apiKey, providerId) => ipcRenderer.invoke('ai:setApiKey', { apiKey, providerId }),
   runAiTurn: (request) => ipcRenderer.invoke('ai:runTurn', request),
   cancelAiTurn: (requestId) => ipcRenderer.invoke('ai:cancelTurn', { requestId }),
   respondAiApproval: (requestId, approvalId, approved) =>
     ipcRenderer.invoke('ai:approvalResponse', { requestId, approvalId, approved }),
   getAiWorkspaceStatus: () => ipcRenderer.invoke('ai:workspaceStatus'),
   pickAiWorkspace: () => ipcRenderer.invoke('ai:pickWorkspace'),
+  grantAiWorkspaceForPath: (documentPath) =>
+    ipcRenderer.invoke('ai:grantWorkspaceForPath', { path: documentPath }),
   clearAiWorkspace: () => ipcRenderer.invoke('ai:clearWorkspace'),
   getAiHistory: () => ipcRenderer.invoke('ai:historyList'),
   appendAiHistory: (entry) => ipcRenderer.invoke('ai:historyAppend', entry),
+  /** Office tool calls from the local API / MCP, waiting for a yes or no. */
+  onOfficeToolApproval: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on('office:toolApproval', listener);
+    return () => ipcRenderer.off('office:toolApproval', listener);
+  },
+  onOfficeToolApprovalCleared: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on('office:toolApprovalCleared', listener);
+    return () => ipcRenderer.off('office:toolApprovalCleared', listener);
+  },
+  respondOfficeToolApproval: (approvalId, decision) =>
+    ipcRenderer.invoke('office:toolApprovalResponse', { approvalId, decision }),
+  removeAiHistoryEntry: (id) => ipcRenderer.invoke('ai:historyRemove', { id }),
   clearAiHistory: () => ipcRenderer.invoke('ai:historyClear'),
   getAiAutomationState: () => ipcRenderer.invoke('ai:automationState'),
   createAiAutomationRule: (rule) => ipcRenderer.invoke('ai:automationCreate', rule),
@@ -139,6 +191,13 @@ const api = {
   updateSettings: (patch) => ipcRenderer.invoke('settings:update', patch),
   getApiStatus: () => ipcRenderer.invoke('api:status'),
   getMcpConfig: () => ipcRenderer.invoke('mcp:config'),
+  getWebSearchStatus: () => ipcRenderer.invoke('websearch:status'),
+  setWebSearchKey: (apiKey) => ipcRenderer.invoke('websearch:setKey', { apiKey }),
+  getImageProviderStatus: () => ipcRenderer.invoke('images:status'),
+  setImageProviderKey: (apiKey) => ipcRenderer.invoke('images:setKey', { apiKey }),
+  getCliAgents: () => ipcRenderer.invoke('cli:agents'),
+  installCliMcp: (agentId) => ipcRenderer.invoke('cli:installMcp', { agentId }),
+  getCliModels: (agentId) => ipcRenderer.invoke('cli:models', { agentId }),
   getExternalMcpStatus: () => ipcRenderer.invoke('mcp:externalStatus'),
   setExternalMcpConfig: (config) => ipcRenderer.invoke('mcp:externalSetConfig', { config }),
   refreshExternalMcp: () => ipcRenderer.invoke('mcp:externalRefresh'),
@@ -147,6 +206,9 @@ const api = {
   pickDirectory: () => ipcRenderer.invoke('files:pickDirectory'),
   pickFolderFiles: (accept, recursive) =>
     ipcRenderer.invoke('files:pickFolderFiles', { accept, recursive }),
+
+  openExternal: (url) => ipcRenderer.invoke('shell:openExternal', { url }),
+  printPdf: () => ipcRenderer.invoke('app:printPdf'),
 };
 
 contextBridge.exposeInMainWorld('magiesPdf', api);

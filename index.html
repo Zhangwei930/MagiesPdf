@@ -3,10 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Renderer is fully offline: no remote code, no remote assets. -->
+    <!--
+      Renderer is fully offline: no remote code, no remote assets.
+
+      `frame-src` allows loopback because the Office editor runs in a frame
+      served by this app's own main process, on a port the OS picks at
+      startup — hence the wildcard, which is as narrow as a runtime port
+      allows. Nothing off this machine can be framed.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-src http://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/logo-192.png" />

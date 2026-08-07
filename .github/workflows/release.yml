@@ -45,8 +45,28 @@ jobs:
       - run: npm ci
       - run: npm run verify
 
-  build:
+  # The half of the document engine that is not the converter — the editor and
+  # its fonts — is javascript and data, identical on every platform. It is built
+  # once here rather than on each runner: assembling it means opening a .deb,
+  # and the Windows runner has neither `ar` nor xz.
+  engine:
     needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/prepareEngine.mjs --shared
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-shared
+          if-no-files-found: error
+          retention-days: 1
+          path: vendor/onlyoffice/shared
+
+  build:
+    needs: engine
     runs-on: ${{ matrix.os }}
     strategy:
       # One platform failing should not hide whether the others would have
@@ -55,18 +75,28 @@ jobs:
       matrix:
         include:
           - name: mac-x64
+            platform: darwin
+            arch: x64
             os: macos-15-intel
             script: pack:mac-x64
           - name: mac-arm64
+            platform: darwin
+            arch: arm64
             os: macos-15
             script: pack:mac-arm64
           - name: win-x64
+            platform: win32
+            arch: x64
             os: windows-latest
             script: pack:win-x64
           - name: win-arm64
+            platform: win32
+            arch: arm64
             os: windows-11-arm
             script: pack:win-arm64
           - name: linux-x64
+            platform: linux
+            arch: x64
             os: ubuntu-latest
             script: pack:linux-x64
     steps:
@@ -76,6 +106,16 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+
+      # Both halves of the engine: the shared one as built above, and this
+      # target's converter out of its own platform's package. Packaging refuses
+      # without them rather than shipping an app that cannot open a document.
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-shared
+          path: vendor/onlyoffice/shared
+      - run: node scripts/prepareEngine.mjs --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+
       - run: npm run ${{ matrix.script }}
 
       # electron-builder writes to release/<version>/. Copying the installers to

@@ -1,10 +1,29 @@
+import type * as mupdf from 'mupdf';
 import { slidesToPptx } from '../../ooxml/pptx.ts';
 import { withDocumentSync } from '../../pdf/document.ts';
-import { pageBlocks } from '../../pdf/text.ts';
 import { stemOf } from '../../naming.ts';
 import type { ToolDescriptor } from '../../types.ts';
 import { PDF_ONE, passwordParam, resolvePages, soleFile, stringParam } from '../shared.ts';
 import { externalOfficeExport } from './officeExternal.ts';
+
+function extractSlideContent(doc: mupdf.PDFDocument, pageIndex: number): { title: string; body: string[] } {
+  const structured = JSON.parse(
+    doc.loadPage(pageIndex).toStructuredText('preserve-whitespace').asJSON(),
+  ) as { blocks: Array<{ type: string; lines: Array<{ text: string }> }> };
+
+  const lines: string[] = [];
+  for (const block of structured.blocks) {
+    if (block.type !== 'text') continue;
+    for (const l of block.lines) {
+      const text = (l.text || '').trim();
+      if (text) lines.push(text);
+    }
+  }
+
+  const title = lines[0]?.slice(0, 120) || `Slide ${pageIndex + 1}`;
+  const body = lines.length > 0 ? lines : [''];
+  return { title, body };
+}
 
 export const pdfToPptxTool: ToolDescriptor = {
   id: 'convert.pdf-to-pptx',
@@ -37,13 +56,7 @@ export const pdfToPptxTool: ToolDescriptor = {
 
     return withDocumentSync(file.bytes, stringParam(ctx, 'password'), (doc) => {
       const pages = resolvePages(ctx, 'pages', doc.countPages());
-      const slides = pages.map((page) => {
-        const blocks = pageBlocks(doc, page - 1);
-        const title = blocks[0]?.split('\n')[0]?.slice(0, 120) || `Page ${page}`;
-        const body = blocks.length > 0 ? blocks : [''];
-        // If the first block became the title, keep it in body too when it was multi-line.
-        return { title, body };
-      });
+      const slides = pages.map((page) => extractSlideContent(doc, page - 1));
 
       const bytes = slidesToPptx(slides);
       ctx.report(1);

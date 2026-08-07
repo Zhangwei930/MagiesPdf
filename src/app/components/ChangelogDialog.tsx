@@ -132,7 +132,7 @@ export function ChangelogDialog({ open, onOpenChange }: ChangelogDialogProps) {
     >
       <button
         type="button"
-        className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
+        className="absolute inset-0 bg-[var(--overlay-scrim)] backdrop-blur-[1px]"
         aria-label={t('close', locale)}
         onClick={() => onOpenChange(false)}
       />

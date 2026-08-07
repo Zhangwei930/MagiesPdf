@@ -1,12 +1,25 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { ToolMeta, ToolOutputFile } from '@core/types.ts';
-import { canApplyToDocument, classifyOutput } from './toolApply.ts';
+import {
+  canApplyInstantly,
+  canApplyToDocument,
+  canOpenFromDocument,
+  canQuickApplyWithConfirm,
+  classifyOutput,
+  documentTaskParams,
+} from './toolApply.ts';
 
-const tool = (input: Partial<ToolMeta['input']>): ToolMeta =>
+const tool = (
+  input: Partial<ToolMeta['input']> = {},
+  params: ToolMeta['params'] = [],
+  output: ToolMeta['output'] = 'single',
+): ToolMeta =>
   ({
     id: 'organize.rotate',
     input: { accept: ['.pdf'], min: 1, max: 1, ...input },
+    params,
+    output,
   }) as ToolMeta;
 
 const output = (name: string, size = 4): ToolOutputFile => ({
@@ -38,6 +51,150 @@ describe('canApplyToDocument', () => {
 
   it('rejects a tool that takes no files, since there is nothing to apply it to', () => {
     assert.equal(canApplyToDocument(tool({ min: 0, max: 0 })), false);
+  });
+});
+
+describe('canOpenFromDocument', () => {
+  it('accepts multi-file PDF tools so the task pane can collect extras', () => {
+    assert.equal(canOpenFromDocument(tool({ min: 2, max: null })), true);
+    assert.equal(canOpenFromDocument(tool({ min: 1, max: 4 })), true);
+  });
+
+  it('rejects tools that never take a PDF', () => {
+    assert.equal(canOpenFromDocument(tool({ accept: ['.docx'], min: 1, max: 1 })), false);
+  });
+
+  it('rejects tools that take no files', () => {
+    assert.equal(canOpenFromDocument(tool({ min: 0, max: 0 })), false);
+  });
+});
+
+describe('documentTaskParams', () => {
+  it('drops password fields that the open document already supplies', () => {
+    const params = documentTaskParams(
+      tool({}, [
+        { key: 'password', type: 'password', label: { zh: 'p', en: 'p' }, default: '' },
+        {
+          key: 'level',
+          type: 'select',
+          label: { zh: 'l', en: 'l' },
+          default: 'a',
+          options: [{ value: 'a', label: { zh: 'a', en: 'a' } }],
+        },
+      ] as ToolMeta['params']),
+    );
+    assert.equal(params.length, 1);
+    assert.equal(params[0]?.key, 'level');
+  });
+});
+
+describe('canApplyInstantly', () => {
+  it('accepts a single-PDF tool with no options', () => {
+    assert.equal(canApplyInstantly(tool()), true);
+  });
+
+  it('accepts a tool whose only param is the document password', () => {
+    assert.equal(
+      canApplyInstantly(
+        tool({}, [
+          { key: 'password', type: 'password', label: { zh: 'p', en: 'p' }, default: '' },
+        ] as ToolMeta['params']),
+      ),
+      true,
+    );
+  });
+
+  it('rejects tools that still need a user-facing option', () => {
+    assert.equal(
+      canApplyInstantly(
+        tool({}, [
+          {
+            key: 'level',
+            type: 'select',
+            label: { zh: 'l', en: 'l' },
+            default: 'a',
+            options: [{ value: 'a', label: { zh: 'a', en: 'a' } }],
+          },
+        ] as ToolMeta['params']),
+      ),
+      false,
+    );
+  });
+
+  it('rejects multi-file tools that need extras in the pane', () => {
+    assert.equal(canApplyInstantly(tool({ min: 2, max: null })), false);
+  });
+
+  it('rejects report tools — they need a surface for the result', () => {
+    assert.equal(canApplyInstantly(tool({}, [], 'report')), false);
+  });
+});
+
+describe('canQuickApplyWithConfirm', () => {
+  it('accepts a single-PDF tool whose options are all simple defaults', () => {
+    assert.equal(
+      canQuickApplyWithConfirm(
+        tool({}, [
+          {
+            key: 'level',
+            type: 'select',
+            label: { zh: 'l', en: 'l' },
+            default: 'a',
+            options: [{ value: 'a', label: { zh: 'a', en: 'a' } }],
+          },
+        ] as ToolMeta['params']),
+      ),
+      true,
+    );
+  });
+
+  it('rejects free-text options that need the task pane', () => {
+    assert.equal(
+      canQuickApplyWithConfirm(
+        tool({}, [
+          {
+            key: 'text',
+            type: 'text',
+            label: { zh: 't', en: 't' },
+            default: '',
+          },
+        ] as ToolMeta['params']),
+      ),
+      false,
+    );
+  });
+
+  it('accepts pageRange only when the default is the whole document', () => {
+    assert.equal(
+      canQuickApplyWithConfirm(
+        tool({}, [
+          {
+            key: 'pages',
+            type: 'pageRange',
+            label: { zh: 'p', en: 'p' },
+            default: 'all',
+          },
+        ] as ToolMeta['params']),
+      ),
+      true,
+    );
+    assert.equal(
+      canQuickApplyWithConfirm(
+        tool({}, [
+          {
+            key: 'pages',
+            type: 'pageRange',
+            label: { zh: 'p', en: 'p' },
+            default: '1',
+          },
+        ] as ToolMeta['params']),
+      ),
+      false,
+    );
+  });
+
+  it('rejects zero-option tools (those use instant apply instead)', () => {
+    assert.equal(canQuickApplyWithConfirm(tool()), false);
   });
 });
 

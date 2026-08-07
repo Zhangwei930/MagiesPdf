@@ -19,6 +19,63 @@ export function canApplyToDocument(tool: ToolMeta): boolean {
   return tool.input.accept.includes('.pdf') && tool.input.max === 1 && tool.input.min <= 1;
 }
 
+/**
+ * Whether the WPS-style task pane can host this tool while a PDF is open.
+ * Multi-file tools are allowed: the current document is the first input, and
+ * the pane asks for any extra files.
+ */
+export function canOpenFromDocument(tool: ToolMeta): boolean {
+  if (!tool.input.accept.includes('.pdf')) return false;
+  // Unlimited max (null) or max >= 1 means the open PDF can be the lead file.
+  const max = tool.input.max;
+  if (max === 0) return false;
+  return tool.input.min >= 1 || (tool.input.min === 0 && (max === null || max >= 1));
+}
+
+/**
+ * Params the task pane should show when applying to an open document.
+ * Password is taken from the document itself, so it never needs a field here.
+ */
+export function documentTaskParams(tool: ToolMeta): ToolMeta['params'] {
+  return tool.params.filter((param) => param.type !== 'password');
+}
+
+/**
+ * WPS one-shot: rewrite the open PDF with no options and no extra files.
+ * Password-only tools count as no options. Reports / multi-file exports still
+ * need a pane so the user can see or save the result.
+ */
+export function canApplyInstantly(tool: ToolMeta): boolean {
+  if (!canApplyToDocument(tool)) return false;
+  if (documentTaskParams(tool).length > 0) return false;
+  if (tool.input.min > 1) return false;
+  return tool.output === 'single';
+}
+
+/**
+ * Param types safe to run with catalogue defaults after a one-line confirm.
+ * Free text / colour / file picks still need the task pane. Page ranges are
+ * only allowed when the default is the whole document (`all`).
+ */
+const QUICK_DEFAULT_PARAM_TYPES = new Set(['boolean', 'select', 'number']);
+
+function isQuickDefaultParam(param: ToolMeta['params'][number]): boolean {
+  if (QUICK_DEFAULT_PARAM_TYPES.has(param.type)) return true;
+  return param.type === 'pageRange' && String(param.default ?? '') === 'all';
+}
+
+/**
+ * Single-PDF rewrite tools whose options are all simple defaults — confirm once
+ * then apply, or open the pane via「更多选项」.
+ */
+export function canQuickApplyWithConfirm(tool: ToolMeta): boolean {
+  if (!canApplyToDocument(tool) || tool.output !== 'single') return false;
+  if (canApplyInstantly(tool)) return false;
+  const params = documentTaskParams(tool);
+  if (params.length === 0) return false;
+  return params.every(isQuickDefaultParam);
+}
+
 export type ToolOutcome =
   /** One PDF came back: it becomes the document, and the change is undoable. */
   | { kind: 'document'; bytes: Uint8Array }

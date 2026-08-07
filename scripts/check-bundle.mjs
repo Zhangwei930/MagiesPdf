@@ -21,8 +21,14 @@ import { checkRendererBundle } from './bundleBoundary.mjs';
  * Raising this is a decision to record here, with a reason. Going red usually
  * means something conditional became eager — check whether a new screen should
  * be lazily imported the way the Viewer and the settings panel are.
+ *
+ * Raised to 340 KB when the interface themes landed. The theme registry is
+ * eager on purpose: the store paints the chosen palette before first paint, so
+ * deferring it would show the default colours and then repaint. The icon
+ * registry also grew with the AI surfaces. Both are shell, not a screen, so
+ * there is nothing here to lazily import.
  */
-const ENTRY_LIMIT_BYTES = 320 * 1024;
+const ENTRY_LIMIT_BYTES = 340 * 1024;
 
 const ASSETS = path.join(process.cwd(), 'dist', 'assets');
 

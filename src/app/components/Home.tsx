@@ -1,11 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CATEGORIES } from '@core/registry.ts';
-import type { CategoryId } from '@core/types.ts';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   bridge,
   hasBridge,
   type OfficeCreateKind,
-  type OfficeStatus,
   type RecentDocument,
 } from '../bridge.ts';
 import { uiRegistry } from '../catalog.ts';
@@ -17,9 +14,11 @@ import {
   FilePenLine,
   FolderOpen,
   Loader2,
+  Plus,
   Search,
   Trash2,
   X,
+  ArrowLeftRight,
   ToolIcon,
 } from '../icons.ts';
 import { useApp } from '../store.ts';
@@ -27,7 +26,6 @@ import { Button } from './ui.tsx';
 
 interface HomeProps {
   onOpenTool(toolId: string): void;
-  onOpenSearch(): void;
   onOpenDocument(): Promise<void>;
   onCreateOffice(kind: OfficeCreateKind): Promise<void>;
   onCreatePdf(): Promise<void>;
@@ -56,6 +54,19 @@ const QUICK_CONVERSIONS = [
   'convert.pdf-to-pptx',
 ];
 
+/**
+ * The start centre's left rail.
+ *
+ * Every entry either performs an action or scrolls to a section that is really
+ * on this page — a rail item that leads nowhere is worse than no rail at all,
+ * so there are no placeholders here for folders the app cannot browse.
+ */
+const RAIL = [
+  { id: 'recent', labelKey: 'railRecent', icon: Check, action: 'scroll' },
+  { id: 'convert', labelKey: 'railConvert', icon: ArrowLeftRight, action: 'scroll' },
+  { id: 'ai', labelKey: 'railAi', icon: Bot, action: 'ai' },
+] as const;
+
 const DOCUMENT_TONES: Record<RecentDocument['kind'], { icon: string; className: string }> = {
   word: { icon: 'FileText', className: 'office-word' },
   sheet: { icon: 'Table', className: 'office-sheet' },
@@ -66,7 +77,6 @@ const DOCUMENT_TONES: Record<RecentDocument['kind'], { icon: string; className: 
 /** WPS-style start centre focused on the customer's files, not engine configuration. */
 export function Home({
   onOpenTool,
-  onOpenSearch,
   onOpenDocument,
   onCreateOffice,
   onCreatePdf,
@@ -74,34 +84,49 @@ export function Home({
   onOpenAi,
 }: HomeProps) {
   const locale = useApp((state) => state.locale);
-  const [office, setOffice] = useState<OfficeStatus | null>(null);
   const [recentDocuments, setRecentDocuments] = useState<RecentDocument[]>([]);
   const [query, setQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<CategoryId | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [renaming, setRenaming] = useState<RecentDocument | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [deleting, setDeleting] = useState<RecentDocument | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const createRef = useRef<HTMLDivElement>(null);
+
+  /** A popover over the page has to close the way every other one does. */
+  useEffect(() => {
+    if (!createOpen) return undefined;
+    const dismiss = (event: MouseEvent) => {
+      if (!createRef.current?.contains(event.target as Node)) setCreateOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setCreateOpen(false); };
+    document.addEventListener('mousedown', dismiss);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', dismiss);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [createOpen]);
+
+  /** Scrolls the content column, not the window — the rail must stay put. */
+  const scrollToSection = useCallback((id: string) => {
+    const target = scrollRef.current?.querySelector(`[data-home-section="${id}"]`);
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
 
   const loadWorkspace = useCallback(async () => {
     if (!hasBridge()) return;
-    const [status, recent] = await Promise.all([
-      bridge().getOfficeStatus(),
-      bridge().listRecentDocuments(),
-    ]);
-    setOffice(status);
-    setRecentDocuments(recent);
+    setRecentDocuments(await bridge().listRecentDocuments());
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     if (!hasBridge()) return;
-    void Promise.all([bridge().getOfficeStatus(), bridge().listRecentDocuments()])
-      .then(([status, recent]) => {
-        if (cancelled) return;
-        setOffice(status);
-        setRecentDocuments(recent);
+    void bridge().listRecentDocuments()
+      .then((recent) => {
+        if (!cancelled) setRecentDocuments(recent);
       })
       .catch((cause) => {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
@@ -124,17 +149,7 @@ export function Home({
     [],
   );
 
-  const categories = useMemo(
-    () =>
-      CATEGORIES.map((category) => ({ category, count: uiRegistry.byCategory(category.id).length }))
-        .filter(({ count }) => count > 0),
-    [],
-  );
 
-  const selectedTools = useMemo(
-    () => (selectedCategory ? uiRegistry.byCategory(selectedCategory).slice(0, 12) : []),
-    [selectedCategory],
-  );
 
   const run = async (key: string, action: () => Promise<void>, refresh = false) => {
     setBusy(key);
@@ -175,145 +190,117 @@ export function Home({
     await run(kind, () => onCreateOffice(kind), true);
   };
 
+  const selectRail = (entry: (typeof RAIL)[number]) => {
+    if (entry.action === 'ai') onOpenAi();
+    else scrollToSection(entry.id);
+  };
+
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto w-full max-w-6xl px-5 py-5 lg:px-8 lg:py-7">
-        <header className="flex items-center justify-between gap-5">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="h-12 w-12 shrink-0 overflow-hidden" aria-hidden="true">
-              <img
-                src={`${import.meta.env.BASE_URL}logo.png`}
-                alt=""
-                width={88}
-                height={88}
-                className="h-[88px] w-[88px] max-w-none -translate-x-5 -translate-y-2 select-none"
-                draggable={false}
-              />
-            </span>
-            <div className="min-w-0">
-              <h1 className="truncate text-[22px] font-semibold tracking-tight">{t('appName', locale)}</h1>
-              <p className="mt-0.5 truncate text-[12px] text-[var(--text-secondary)]">
-                {t('officeTagline', locale)}
-              </p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={onOpenSearch}
-            className="flex w-full max-w-[300px] items-center gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-3 py-2 text-left shadow-sm transition-[border-color,box-shadow] hover:border-[var(--accent)] hover:shadow-[var(--shadow-card)]"
+    <div className="flex h-full">
+      {/* The rail an office suite opens on: what you can make, what you can
+          open, and where the things you already have are. Making something is
+          one button with the kinds behind it, rather than a grid of cards
+          competing with the customer's own files for the middle of the page. */}
+      <aside className="hidden w-[272px] shrink-0 flex-col gap-2.5 border-r border-[var(--border-subtle)] bg-[var(--surface-app)] px-4 py-5 md:flex">
+        <div ref={createRef} className="relative">
+          <Button
+            variant="primary"
+            size="lg"
+            className="w-full justify-center text-[14px]"
+            onClick={() => setCreateOpen((open) => !open)}
+            aria-expanded={createOpen}
           >
-            <Search size={15} className="text-[var(--text-muted)]" />
-            <span className="flex-1 text-[12px] text-[var(--text-muted)]">{t('search', locale)}</span>
-            <kbd className="rounded border border-[var(--border-subtle)] bg-[var(--surface-sunken)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">⌘K</kbd>
-          </button>
-        </header>
+            <Plus size={17} />
+            {t('newDocument', locale)}
+          </Button>
 
-        <section className="mt-5 grid gap-2.5 sm:grid-cols-2">
-          <div className="surface-panel flex items-center gap-3 p-3.5">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-sunken)] text-[var(--text-secondary)]">
-              <FilePenLine size={18} />
-            </span>
-            <div className="min-w-0">
-              <h2 className="text-[13px] font-semibold">{t('manualOfficeMode', locale)}</h2>
-              <p className="mt-0.5 text-[10.5px] leading-snug text-[var(--text-muted)]">
-                {t('manualOfficeModeHint', locale)}
-              </p>
+          {createOpen && (
+            <div className="absolute left-0 top-[calc(100%+6px)] z-30 w-[340px] rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-raised)] p-4 shadow-[var(--shadow-card)]">
+              <p className="px-1 text-[11px] font-medium text-[var(--text-muted)]">{t('newDocumentHint', locale)}</p>
+              <div className="mt-3 grid grid-cols-4 gap-2">
+                {CREATE_ACTIONS.map((action) => (
+                  <button
+                    key={action.kind}
+                    type="button"
+                    disabled={busy !== ''}
+                    onClick={() => { setCreateOpen(false); void createOffice(action.kind); }}
+                    className="flex flex-col items-center gap-2 rounded-lg px-1 py-3 transition-colors hover:bg-[var(--surface-panel)] disabled:pointer-events-none disabled:opacity-60"
+                  >
+                    <span className={`flex h-11 w-11 items-center justify-center rounded-xl ${action.tone}`}>
+                      {busy === action.kind ? <Loader2 size={20} className="animate-spin" /> : <ToolIcon name={action.icon} size={20} />}
+                    </span>
+                    <span className="text-[11px] text-[var(--text-secondary)]">{t(action.labelKey, locale)}</span>
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  disabled={busy !== ''}
+                  onClick={() => { setCreateOpen(false); void run('pdf', onCreatePdf); }}
+                  className="flex flex-col items-center gap-2 rounded-lg px-1 py-3 transition-colors hover:bg-[var(--surface-panel)] disabled:pointer-events-none disabled:opacity-60"
+                >
+                  <span className="office-pdf flex h-11 w-11 items-center justify-center rounded-xl">
+                    {busy === 'pdf' ? <Loader2 size={20} className="animate-spin" /> : <ToolIcon name="FilePenLine" size={20} />}
+                  </span>
+                  <span className="text-[11px] text-[var(--text-secondary)]">{t('newPdf', locale)}</span>
+                </button>
+              </div>
             </div>
-          </div>
-          <button
-            type="button"
-            onClick={onOpenAi}
-            className="surface-panel flex items-center gap-3 p-3.5 text-left transition-[border-color,box-shadow] hover:border-[var(--accent)] hover:shadow-[var(--shadow-card)]"
-          >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
-              <Bot size={18} />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-[13px] font-semibold">{t('aiOfficeMode', locale)}</span>
-              <span className="mt-0.5 block text-[10.5px] leading-snug text-[var(--text-muted)]">
-                {t('aiOfficeModeHint', locale)}
-              </span>
-            </span>
-            <span className="shrink-0 text-[10px] font-medium text-[var(--accent)]">{t('enterAiOfficeMode', locale)}</span>
-          </button>
-        </section>
-
-        <section className="mt-6">
-          <div className="mb-3 flex items-end justify-between gap-3">
-            <div>
-              <h2 className="text-[15px] font-semibold">{t('newDocument', locale)}</h2>
-              <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">{t('newDocumentHint', locale)}</p>
-            </div>
-            <span className="hidden items-center gap-1.5 text-[10.5px] text-[var(--text-muted)] sm:flex">
-              <span className={`h-1.5 w-1.5 rounded-full ${office?.libreOffice.available ? 'bg-[var(--success)]' : 'bg-[var(--danger)]'}`} />
-              {office?.libreOffice.available ? t('libreOfficeReady', locale) : t('libreOfficeMissing', locale)}
-            </span>
-          </div>
-
-          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
-            {CREATE_ACTIONS.map((action) => (
-              <button
-                key={action.kind}
-                type="button"
-                disabled={busy !== ''}
-                onClick={() => void createOffice(action.kind)}
-                className="group surface-panel min-h-[112px] p-3.5 text-left transition-[border-color,transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-[var(--shadow-card)] active:translate-y-0 disabled:pointer-events-none disabled:opacity-60"
-              >
-                <span className={`flex h-9 w-9 items-center justify-center rounded-lg ${action.tone}`}>
-                  {busy === action.kind ? <Loader2 size={18} className="animate-spin" /> : <ToolIcon name={action.icon} size={18} />}
-                </span>
-                <span className="mt-3 block text-[13px] font-medium">{t(action.labelKey, locale)}</span>
-                <span className="mt-1 block text-[10.5px] leading-snug text-[var(--text-muted)]">{t(action.hintKey, locale)}</span>
-              </button>
-            ))}
-
-            <button
-              type="button"
-              disabled={busy !== ''}
-              onClick={() => void run('pdf', onCreatePdf)}
-              className="surface-panel min-h-[112px] p-3.5 text-left transition-[border-color,transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-[var(--shadow-card)] active:translate-y-0 disabled:pointer-events-none disabled:opacity-60"
-            >
-              <span className="office-pdf flex h-9 w-9 items-center justify-center rounded-lg">
-                {busy === 'pdf' ? <Loader2 size={18} className="animate-spin" /> : <ToolIcon name="FilePenLine" size={18} />}
-              </span>
-              <span className="mt-3 block text-[13px] font-medium">{t('newPdf', locale)}</span>
-              <span className="mt-1 block text-[10.5px] leading-snug text-[var(--text-muted)]">{t('newPdfHint', locale)}</span>
-            </button>
-
-            <button
-              type="button"
-              disabled={busy !== ''}
-              onClick={() => void run('open', onOpenDocument, true)}
-              className="surface-panel min-h-[112px] p-3.5 text-left transition-[border-color,transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-[var(--shadow-card)] active:translate-y-0 disabled:pointer-events-none disabled:opacity-60"
-            >
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
-                {busy === 'open' ? <Loader2 size={18} className="animate-spin" /> : <FolderOpen size={18} />}
-              </span>
-              <span className="mt-3 block text-[13px] font-medium">{t('openDocument', locale)}</span>
-              <span className="mt-1 block text-[10.5px] leading-snug text-[var(--text-muted)]">{t('openDocumentShortHint', locale)}</span>
-            </button>
-          </div>
-
-          {error && (
-            <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-[11px] text-[var(--danger)]">
-              <AlertCircle size={13} className="mt-0.5 shrink-0" />
-              <span>{error}</span>
-            </p>
           )}
-        </section>
+        </div>
 
-        <div className="mt-7 grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
-          <section className="min-w-0">
+        <Button
+          size="lg"
+          className="w-full justify-center text-[14px]"
+          disabled={busy !== ''}
+          onClick={() => void run('open', onOpenDocument, true)}
+        >
+          {busy === 'open' ? <Loader2 size={17} className="animate-spin" /> : <FolderOpen size={17} />}
+          {t('openDocument', locale)}
+        </Button>
+
+        <nav className="mt-2 flex flex-col gap-0.5">
+          {RAIL.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              onClick={() => selectRail(entry)}
+              className="flex items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-left text-[13.5px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-panel)] hover:text-[var(--text)]"
+            >
+              <entry.icon size={17} className="shrink-0 text-[var(--text-muted)]" />
+              <span className="truncate">{t(entry.labelKey, locale)}</span>
+            </button>
+          ))}
+        </nav>
+
+      </aside>
+
+      <div ref={scrollRef} className="h-full flex-1 overflow-y-auto">
+      <div className="mx-auto w-full max-w-6xl px-5 py-5 lg:px-8 lg:py-7">
+        {/* No search here: ⌘K opens it from anywhere, and the documents below
+            have a filter of their own. A second search box on the page competes
+            with the one that belongs to the list under it. */}
+
+        {error && (
+          <p className="mt-4 flex items-start gap-1.5 rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-[11px] text-[var(--danger)]">
+            <AlertCircle size={13} className="mt-0.5 shrink-0" />
+            <span>{error}</span>
+          </p>
+        )}
+
+        {/* The customer's documents in the middle, what can be done to them at
+            the side. A start centre that leads with its own features makes
+            someone scroll past them to reach the file they came for. */}
+        <div className="mt-5 grid gap-6 lg:grid-cols-[minmax(0,1fr)_252px] lg:gap-12">
+          <section data-home-region="documents" data-home-section="recent" className="min-w-0">
             <div className="mb-2.5 flex items-center justify-between gap-3">
-              <h2 className="text-[14px] font-semibold">{t('recentDocuments', locale)}</h2>
-              <label className="flex w-full max-w-[220px] items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-2.5 py-1.5 focus-within:border-[var(--accent)]">
+              <h2 className="text-[16px] font-semibold">{t('recentDocuments', locale)}</h2>
+              <label className="flex w-full max-w-[360px] items-center gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-panel)] px-3 py-2 focus-within:border-[var(--accent)]">
                 <Search size={13} className="text-[var(--text-muted)]" />
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder={t('searchRecentDocuments', locale)}
-                  className="min-w-0 flex-1 bg-transparent text-[11px] outline-none placeholder:text-[var(--text-muted)]"
+                  className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-[var(--text-muted)]"
                 />
                 {query && <button type="button" onClick={() => setQuery('')} aria-label={t('clear', locale)}><X size={12} /></button>}
               </label>
@@ -332,14 +319,14 @@ export function Home({
                         onClick={() => void run(`open:${document.path}`, () => onOpenRecent(document.path), true)}
                         className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:opacity-60"
                       >
-                        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${tone.className}`}>
-                          {busy === `open:${document.path}` ? <Loader2 size={16} className="animate-spin" /> : <ToolIcon name={tone.icon} size={17} />}
+                        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${tone.className}`}>
+                          {busy === `open:${document.path}` ? <Loader2 size={16} className="animate-spin" /> : <ToolIcon name={tone.icon} size={19} />}
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[12px] font-medium">{document.name}</span>
-                          <span className="mt-0.5 block truncate text-[9.5px] text-[var(--text-muted)]">{folder}</span>
+                          <span className="block truncate text-[13.5px] font-medium">{document.name}</span>
+                          <span className="mt-0.5 block truncate text-[11px] text-[var(--text-muted)]">{folder}</span>
                         </span>
-                        <span className="hidden shrink-0 text-[9.5px] text-[var(--text-muted)] sm:block">{formatDate(document.modifiedAt, locale)}</span>
+                        <span className="hidden shrink-0 text-[11px] text-[var(--text-muted)] sm:block">{formatDate(document.modifiedAt, locale)}</span>
                       </button>
 
                       <div className="ml-2 flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
@@ -354,89 +341,38 @@ export function Home({
               ) : (
                 <div className="flex min-h-[150px] flex-col items-center justify-center px-4 text-center">
                   <FolderOpen size={24} strokeWidth={1.5} className="text-[var(--text-muted)]" />
-                  <p className="mt-2 text-[12px] font-medium text-[var(--text-secondary)]">{query ? t('noRecentSearchResults', locale) : t('recentDocumentsEmpty', locale)}</p>
-                  <p className="mt-1 text-[10.5px] text-[var(--text-muted)]">{t('recentDocumentsEmptyHint', locale)}</p>
+                  <p className="mt-2 text-[13.5px] font-medium text-[var(--text-secondary)]">{query ? t('noRecentSearchResults', locale) : t('recentDocumentsEmpty', locale)}</p>
+                  <p className="mt-1 text-[12px] text-[var(--text-muted)]">{t('recentDocumentsEmptyHint', locale)}</p>
                 </div>
               )}
             </div>
           </section>
 
-          <aside className="space-y-4">
-            <section className="surface-panel p-4">
-              <div className="flex items-start gap-2.5">
-                <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${office?.libreOffice.available ? 'bg-[var(--success-soft)] text-[var(--success)]' : 'bg-[var(--danger-soft)] text-[var(--danger)]'}`}>
-                  {office?.libreOffice.available ? <Check size={13} /> : <AlertCircle size={13} />}
-                </span>
-                <div className="min-w-0">
-                  <h2 className="text-[12px] font-semibold">{t('localOfficeEditor', locale)}</h2>
-                  <p className="mt-1 text-[10.5px] leading-relaxed text-[var(--text-muted)]">
-                    {office?.libreOffice.available ? t('localOfficeReadyHint', locale) : t('localOfficeMissingHint', locale)}
-                  </p>
-                </div>
-              </div>
-            </section>
-
-            <section>
-              <div className="mb-2 flex items-baseline justify-between">
-                <h2 className="text-[12px] font-semibold">{t('quickConversions', locale)}</h2>
-                <span className="text-[9.5px] text-[var(--text-muted)]">{t('localOnly', locale)}</span>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
+          {/* Everything that can be done to a document, beside the documents.
+              Conversions first because that is what an Office file is usually
+              opened here to become; the toolbox below it, by category. */}
+          <aside data-home-region="tools" className="space-y-5">
+            <section data-home-section="convert">
+              <h2 className="mb-2 text-[14px] font-semibold">{t('quickConversions', locale)}</h2>
+              <div className="grid grid-cols-1 gap-2">
                 {conversions.map((tool) => (
                   <button
                     key={tool.id}
                     type="button"
                     onClick={() => onOpenTool(tool.id)}
-                    className="surface-panel flex min-h-16 items-center gap-2 p-2.5 text-left transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]"
+                    className="surface-panel flex items-center gap-2.5 px-3 py-3 text-left transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]"
                   >
-                    <ToolIcon name={tool.icon} size={15} className="shrink-0 text-[var(--accent)]" />
-                    <span className="text-[10.5px] leading-snug">{tool.name[locale]}</span>
+                    <ToolIcon name={tool.icon} size={17} className="shrink-0 text-[var(--accent)]" />
+                    <span className="text-[12.5px] leading-snug">{tool.name[locale]}</span>
                   </button>
                 ))}
               </div>
             </section>
+
           </aside>
         </div>
 
-        <section className="mt-8">
-          <div className="mb-2.5 flex items-baseline justify-between">
-            <h2 className="text-[12px] font-semibold">{t('pdfToolbox', locale)}</h2>
-            <span className="text-[10px] text-[var(--text-muted)]">{t('pdfToolboxHint', locale)}</span>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {categories.map(({ category, count }) => (
-              <button
-                key={category.id}
-                type="button"
-                onClick={() => setSelectedCategory((current) => current === category.id ? null : category.id)}
-                aria-expanded={selectedCategory === category.id}
-                className={`surface-panel flex items-start gap-3 p-3 text-left transition-colors hover:border-[var(--accent)] ${selectedCategory === category.id ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : ''}`}
-              >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)]"><ToolIcon name={category.icon} size={15} className="text-[var(--accent)]" /></span>
-                <span className="min-w-0">
-                  <span className="flex items-baseline gap-2"><span className="text-[12px] font-medium">{category.name[locale]}</span><span className="font-mono text-[9px] text-[var(--text-muted)]">{count}</span></span>
-                  <span className="mt-0.5 block truncate text-[10px] text-[var(--text-secondary)]">{category.description[locale]}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {selectedCategory && (
-            <div className="mt-2.5 grid gap-2 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-raised)] p-2.5 sm:grid-cols-2 lg:grid-cols-3">
-              {selectedTools.map((tool) => (
-                <button
-                  key={tool.id}
-                  type="button"
-                  onClick={() => onOpenTool(tool.id)}
-                  className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[var(--surface-panel)]"
-                >
-                  <ToolIcon name={tool.icon} size={14} className="shrink-0 text-[var(--accent)]" />
-                  <span className="truncate text-[11px]">{tool.name[locale]}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
+      </div>
       </div>
 
       {renaming && (
@@ -499,7 +435,7 @@ function RowAction({ label, danger = false, onClick, children }: { label: string
 
 function ConfirmDialog({ title, onClose, children }: { title: string; onClose(): void; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay-scrim)] p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="surface-panel w-full max-w-sm p-4 shadow-2xl" role="dialog" aria-modal="true" aria-label={title}>
         <h2 className="mb-3 text-[14px] font-semibold">{title}</h2>
         {children}

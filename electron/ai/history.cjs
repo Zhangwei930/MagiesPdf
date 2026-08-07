@@ -154,6 +154,17 @@ function createAiHistoryStore({
       cache = next;
       return clone(entry);
     },
+    /** Drops one task. Returns false when that id is not in the history. */
+    remove(entryId) {
+      const id = boundedText(entryId, 100);
+      if (!id) return false;
+      const entries = readEntries();
+      const next = entries.filter((entry) => entry.id !== id);
+      if (next.length === entries.length) return false;
+      persist(next);
+      cache = next;
+      return true;
+    },
     clear() {
       persist([]);
       cache = [];

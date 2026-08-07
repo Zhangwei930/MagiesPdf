@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const { constants } = require('node:fs');
 const path = require('node:path');
 const { createOfficeWorkspace } = require('./workspace.cjs');
+const { blocksFromMarkdown, slidesFromMarkdown } = require('./markdownDocument.cjs');
 const { IMAGE_EXTENSIONS } = require('./formats.cjs');
 
 const WORD_EXTENSIONS = new Set(['.doc', '.docx', '.odt', '.rtf']);
@@ -14,6 +15,45 @@ const CONVERTIBLE_EXTENSIONS = new Set([...WORD_EXTENSIONS, ...EXCEL_EXTENSIONS,
 const CELL_REFERENCE = /^[A-Za-z]{1,3}[1-9]\d*$/;
 const RANGE_REFERENCE = /^[A-Za-z]{1,3}[1-9]\d*(?::[A-Za-z]{1,3}[1-9]\d*)?$/;
 const DEFAULT_OUTPUT_DIRECTORY = 'Magies Office Output';
+
+/**
+ * Single-document mutators. After UNO writes a staging copy, Magies applies that
+ * copy onto the source so the open tab can reload the same path.
+ */
+const IN_PLACE_MUTATORS = new Set([
+  'office_word_resolve_changes',
+  'office_word_replace',
+  'office_word_replace_tracked',
+  'office_word_append',
+  'office_word_add_footnotes',
+  'office_word_format_text',
+  'office_word_insert_table',
+  'office_word_insert_image',
+  'office_word_set_header_footer',
+  'office_word_add_comment',
+  'office_excel_write',
+  'office_excel_add_comments',
+  'office_excel_sort_range',
+  'office_excel_apply_autofilter',
+  'office_excel_format_range',
+  'office_excel_compose_table',
+  'office_excel_add_conditional_format',
+  'office_excel_create_chart',
+  'office_excel_create_pivot',
+  'office_presentation_replace',
+  'office_presentation_compose',
+  'office_presentation_format_text',
+  'office_presentation_apply_theme',
+  'office_presentation_set_background',
+  'office_presentation_add_slide',
+  'office_presentation_duplicate_slide',
+  'office_presentation_delete_slide',
+  'office_presentation_insert_image',
+  'office_presentation_insert_table',
+  'office_presentation_set_notes',
+  'office_template_fill',
+  'office_macro_run',
+]);
 
 function schema(properties, required = []) {
   return { type: 'object', additionalProperties: false, properties, required };
@@ -40,7 +80,11 @@ const PATH_PROPERTY = {
 
 const OUTPUT_DIRECTORY_PROPERTY = {
   type: 'string',
-  description: `Output directory relative to the workspace. Defaults to "${DEFAULT_OUTPUT_DIRECTORY}".`,
+  description: (
+    'Optional. Leave empty (recommended) to apply the edit in place on the source file '
+    + 'so the open tab reloads and shows the change. '
+    + 'Set a custom folder only to write a separate copy instead.'
+  ),
 };
 
 const OFFICE_AUTOMATION_TOOLS = Object.freeze([
@@ -104,6 +148,172 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
       match_case: { type: 'boolean', description: 'Use case-sensitive matching. Defaults to true.' },
       output_directory: OUTPUT_DIRECTORY_PROPERTY,
     }, ['path', 'find', 'replace']),
+  ),
+  tool(
+    'office_word_append',
+    { zh: '追加 Word 内容', en: 'Append Word content' },
+    'Append styled paragraphs to the end of a Word document and save a new non-overwriting copy. '
+      + 'Each block carries a real paragraph style, so headings become headings in the navigator '
+      + 'and the table of contents, not merely larger text. '
+      + 'Use this to add to a document that already exists; to write one, use '
+      + 'office_word_compose, which also lays out a cover, a type scale and page numbers.',
+    schema({
+      path: PATH_PROPERTY,
+      blocks: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 200,
+        items: schema({
+          style: {
+            type: 'string',
+            enum: ['title', 'subtitle', 'heading1', 'heading2', 'heading3', 'body', 'bullet', 'number', 'quote'],
+          },
+          text: { type: 'string', maxLength: 20000 },
+          level: {
+            type: 'integer',
+            minimum: 0,
+            maximum: 4,
+            description: 'Nesting depth for bullet and number blocks. 0 is the outer level.',
+          },
+        }, ['style', 'text']),
+      },
+      markdown: {
+        type: 'string',
+        maxLength: 40000,
+        description: 'Write the document as Markdown instead of building blocks — usually easier. '
+          + 'The first "# " becomes the document title, "#"/"##"/"###" become real heading styles, '
+          + '"-" bullets, "1." numbered items, "> " a quotation.',
+      },
+      page_break_before: { type: 'boolean', description: 'Start the appended content on a new page.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path']),
+  ),
+  tool(
+    'office_word_compose',
+    { zh: '生成整份 Word 文稿', en: 'Compose a Word document' },
+    'Write a whole document in ONE call: cover page, real heading styles in theme colours, a type '
+      + 'scale, page margins, line spacing, a table of contents and page numbers are applied for you. '
+      + 'This is the right way to write a report — appending content and formatting it afterwards '
+      + 'produces a document that only looks like it has headings, and the contents page comes out '
+      + 'empty. Themes: azure (deep blue), slate (grey), forest (green), plum (aubergine), mono '
+      + '(black). Supply the words as Markdown; the theme decides how they look. This replaces the '
+      + "document's contents, so pass everything you want it to say.",
+    schema({
+      path: PATH_PROPERTY,
+      theme: { type: 'string', enum: ['azure', 'slate', 'forest', 'plum', 'mono'] },
+      markdown: {
+        type: 'string',
+        maxLength: 40000,
+        description: 'The document body. The first "# " and later "#"/"##"/"###" become real '
+          + 'heading styles, "-" bullets, "1." numbered items, "> " a quotation. Usually easier '
+          + 'and better than building the blocks array.',
+      },
+      blocks: {
+        type: 'array',
+        maxItems: 200,
+        items: schema({
+          style: {
+            type: 'string',
+            enum: ['title', 'subtitle', 'heading1', 'heading2', 'heading3', 'body', 'bullet', 'number', 'quote'],
+          },
+          text: { type: 'string', maxLength: 20000 },
+          level: {
+            type: 'integer',
+            minimum: 0,
+            maximum: 4,
+            description: 'Nesting depth for bullet and number blocks. 0 is the outer level.',
+          },
+        }, ['style', 'text']),
+        description: 'Instead of markdown, when you need exact control of each paragraph.',
+      },
+      title: { type: 'string', maxLength: 300, description: 'Cover page. Omit for a document with no cover.' },
+      subtitle: { type: 'string', maxLength: 300 },
+      byline: { type: 'string', maxLength: 200, description: 'Author, team or date under the title.' },
+      table_of_contents: { type: 'boolean', description: 'A generated contents page after the cover.' },
+      table_of_contents_title: {
+        type: 'string',
+        maxLength: 100,
+        description: 'What the contents page is called, in the document\'s language — 目录 / Contents.',
+      },
+      page_numbers: { type: 'boolean', description: 'Centred in the footer. Defaults to true.' },
+      columns: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 4,
+        description: 'Lay the body out in this many columns. Defaults to one. Newsletters and '
+          + 'briefs read better in two; a report with tables and figures does not.',
+      },
+      column_gap_mm: { type: 'number', minimum: 0, maximum: 40, description: 'Defaults to 6.' },
+      column_rule: { type: 'boolean', description: 'Draw a hairline between columns.' },
+      font_name: {
+        type: 'string',
+        maxLength: 128,
+        description: 'Optional face for the whole document. Leave empty unless the user asked for one.',
+      },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path']),
+  ),
+  tool(
+    'office_word_add_footnotes',
+    { zh: '添加 Word 脚注尾注', en: 'Add Word footnotes' },
+    'Attach real footnotes or endnotes to phrases in a Word document and save a new non-overwriting '
+      + 'copy. Pass every note in ONE call. A note written in brackets in the running text is not a '
+      + 'footnote: it does not number itself, does not sit at the foot of its page, and does not '
+      + 'follow the sentence when it moves — use this instead whenever the user asks for a citation, '
+      + 'a source or an aside.',
+    schema({
+      path: PATH_PROPERTY,
+      footnotes: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 100,
+        items: schema({
+          find: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 2000,
+            description: 'The phrase the mark goes after.',
+          },
+          text: { type: 'string', minLength: 1, maxLength: 20000, description: 'The note itself.' },
+          kind: {
+            type: 'string',
+            enum: ['footnote', 'endnote'],
+            description: 'Foot of the page, or collected at the end. Defaults to footnote.',
+          },
+          occurrence: {
+            type: 'integer',
+            minimum: 1,
+            description: '1-based match to use when the phrase repeats. Defaults to 1.',
+          },
+          label: {
+            type: 'string',
+            maxLength: 20,
+            description: 'A fixed mark such as * or †. Leave empty to keep it numbered.',
+          },
+          match_case: { type: 'boolean', description: 'Defaults to true.' },
+        }, ['find', 'text']),
+      },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'footnotes']),
+  ),
+  tool(
+    'office_word_format_text',
+    { zh: '设置 Word 文字格式', en: 'Format Word text' },
+    'Format every occurrence of a phrase in a Word document and save a new non-overwriting copy. '
+      + 'At least one format option is required.',
+    schema({
+      path: PATH_PROPERTY,
+      find: { type: 'string', minLength: 1, maxLength: 2000, description: 'The exact text to format.' },
+      bold: { type: 'boolean' },
+      italic: { type: 'boolean' },
+      underline: { type: 'boolean' },
+      font_name: { type: 'string', maxLength: 128 },
+      font_size: { type: 'number', minimum: 6, maximum: 96, description: 'Points.' },
+      text_color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$' },
+      highlight_color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$' },
+      alignment: { type: 'string', enum: ['left', 'center', 'right', 'justify'], description: 'Applies to the whole paragraph holding each match.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'find']),
   ),
   tool(
     'office_word_insert_table',
@@ -192,6 +402,31 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
     }, ['path', 'start_cell', 'values']),
   ),
   tool(
+    'office_excel_add_comments',
+    { zh: '添加 Excel 单元格批注', en: 'Comment on Excel cells' },
+    'Attach review notes to cells and save a new non-overwriting copy. Pass every note in ONE call: '
+      + 'a review is one action to the user, and one call per note asks for approval once per note. '
+      + 'Commenting on a cell that already has a note replaces it.',
+    schema({
+      path: PATH_PROPERTY,
+      sheet: { type: 'string', maxLength: 128, description: 'Defaults to the first sheet.' },
+      comments: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 200,
+        items: schema({
+          cell: { type: 'string', maxLength: 20, description: 'A1 notation, such as B4.' },
+          text: { type: 'string', minLength: 1, maxLength: 4000 },
+          visible: {
+            type: 'boolean',
+            description: 'Show the note as an open box instead of on hover. Defaults to false.',
+          },
+        }, ['cell', 'text']),
+      },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'comments']),
+  ),
+  tool(
     'office_excel_sort_range',
     { zh: '排序 Excel 区域', en: 'Sort Excel range' },
     'Sort rows in a bounded Excel range by one relative column and save a new non-overwriting copy.',
@@ -226,12 +461,65 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
       sheet: { type: 'string', maxLength: 128, description: 'Worksheet name. Defaults to the first sheet.' },
       range: { type: 'string', description: 'A1 range such as A1:F40.' },
       bold: { type: 'boolean' },
+      italic: { type: 'boolean' },
+      font_name: { type: 'string', maxLength: 128 },
+      font_size: { type: 'number', minimum: 6, maximum: 96, description: 'Points.' },
       background_color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$' },
       text_color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$' },
       horizontal_alignment: { type: 'string', enum: ['left', 'center', 'right'] },
+      vertical_alignment: { type: 'string', enum: ['top', 'middle', 'bottom'] },
+      number_format: {
+        type: 'string',
+        maxLength: 120,
+        description: 'LibreOffice/Excel format code, such as #,##0.00, ¥#,##0, 0.0% or yyyy-mm-dd. '
+          + 'Money and percentages are unreadable without one.',
+      },
+      borders: {
+        type: 'string',
+        enum: ['all', 'outline', 'none'],
+        description: 'all draws every cell edge, outline only the range border, none clears them.',
+      },
+      merge: { type: 'boolean', description: 'Merge the range into one cell (used for titles).' },
+      wrap_text: { type: 'boolean' },
       optimal_width: { type: 'boolean', description: 'Automatically fit the selected columns.' },
       output_directory: OUTPUT_DIRECTORY_PROPERTY,
     }, ['path', 'range']),
+  ),
+  tool(
+    'office_excel_compose_table',
+    { zh: '生成排版好的表格', en: 'Compose a formatted table' },
+    'Write a finished, readable table in ONE call: themed header, banded rows, per-column number '
+      + 'formats, borders, fitted widths, frozen header and an autofilter. '
+      + 'Prefer this over writing values and then formatting them — that route reliably ends with '
+      + 'raw digits and no widths. Give money and percentage columns a number_format '
+      + '(#,##0.00 / ¥#,##0 / 0.0%) or the sheet reads as a wall of numbers.',
+    schema({
+      path: PATH_PROPERTY,
+      sheet: { type: 'string', maxLength: 128 },
+      start_cell: { type: 'string', description: 'Top-left cell, A1 notation. Defaults to A1.' },
+      title: { type: 'string', maxLength: 300, description: 'Optional heading merged above the table.' },
+      theme: { type: 'string', enum: ['azure', 'slate', 'forest', 'plum', 'mono'] },
+      headers: { type: 'array', maxItems: 50, items: { type: 'string', maxLength: 200 } },
+      rows: {
+        type: 'array',
+        maxItems: 500,
+        items: {
+          type: 'array',
+          maxItems: 50,
+          items: { type: ['string', 'number', 'boolean', 'null'] },
+        },
+      },
+      column_formats: {
+        type: 'array',
+        maxItems: 50,
+        items: { type: 'string', maxLength: 120 },
+        description: 'One format code per column, empty string for text columns.',
+      },
+      totals_row: { type: 'boolean', description: 'Sum every column that has a number format.' },
+      totals_label: { type: 'string', maxLength: 100 },
+      banded_rows: { type: 'boolean', description: 'Defaults to true.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'headers', 'rows']),
   ),
   tool(
     'office_excel_add_conditional_format',
@@ -272,20 +560,91 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
   tool(
     'office_excel_create_pivot',
     { zh: '创建 Excel 数据透视表', en: 'Create Excel pivot table' },
-    'Create a pivot table from named Excel header fields and save a new non-overwriting copy.',
+    'Create a pivot table from named Excel header fields, optionally ranked and charted, '
+    + 'and save a new non-overwriting copy.',
     schema({
       path: PATH_PROPERTY,
       source_sheet: { type: 'string', maxLength: 128, description: 'Source worksheet. Defaults to the first sheet.' },
       source_range: { type: 'string', description: 'Bounded source range with a header row, such as A1:D200.' },
-      row_field: { type: 'string', minLength: 1, maxLength: 128, description: 'Header name used for pivot rows.' },
+      row_field: { type: 'string', minLength: 1, maxLength: 128, description: 'Header name used for pivot rows. Shorthand for a single-entry row_fields.' },
+      row_fields: {
+        type: 'array',
+        items: { type: 'string', minLength: 1, maxLength: 128 },
+        maxItems: 4,
+        description: 'Up to four header names nested down the pivot rows, outermost first.',
+      },
       column_field: { type: 'string', minLength: 1, maxLength: 128, description: 'Optional header name used for pivot columns.' },
-      data_field: { type: 'string', minLength: 1, maxLength: 128, description: 'Header name containing values to aggregate.' },
-      function: { type: 'string', enum: ['sum', 'count', 'average', 'min', 'max'], description: 'Aggregation. Defaults to sum.' },
+      column_fields: {
+        type: 'array',
+        items: { type: 'string', minLength: 1, maxLength: 128 },
+        maxItems: 4,
+        description: 'Up to four header names nested across the pivot columns, outermost first.',
+      },
+      filter_fields: {
+        type: 'array',
+        items: { type: 'string', minLength: 1, maxLength: 128 },
+        maxItems: 4,
+        description: 'Header names placed above the pivot as page filters the reader can change.',
+      },
+      data_field: { type: 'string', minLength: 1, maxLength: 128, description: 'Header name containing values to aggregate. Shorthand for a single-entry data_fields.' },
+      function: { type: 'string', enum: ['sum', 'count', 'average', 'min', 'max'], description: 'Aggregation for data_field. Defaults to sum.' },
+      label: {
+        type: 'string',
+        maxLength: 128,
+        description: 'Header written above data_field, in the document\'s language — 收入合计. '
+          + 'The engine writes "Sum - 收入" otherwise.',
+      },
+      data_fields: {
+        type: 'array',
+        maxItems: 4,
+        items: schema({
+          field: { type: 'string', minLength: 1, maxLength: 128 },
+          function: { type: 'string', enum: ['sum', 'count', 'average', 'min', 'max'] },
+          label: { type: 'string', maxLength: 128, description: 'Header written above this measure.' },
+        }, ['field']),
+        description: 'Up to four measures, each its own header and aggregation. Every field named '
+          + 'anywhere in the pivot must be a different one.',
+      },
+      sort_by_data: {
+        type: 'string',
+        enum: ['descending', 'ascending'],
+        description: 'Order the outermost row field by the first measure instead of by name.',
+      },
+      top_n: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 100,
+        description: 'Keep only this many row items, ranked by the first measure. The grand total then covers what is shown.',
+      },
+      number_format: {
+        type: 'string',
+        maxLength: 60,
+        description: 'Number format for the pivot body, such as ¥#,##0 or 0.0%. Aggregates are unformatted otherwise.',
+      },
+      optimal_width: { type: 'boolean', description: 'Fit the output columns to their content. Defaults to true.' },
+      chart_type: {
+        type: 'string',
+        enum: ['column', 'bar', 'line', 'pie', 'area'],
+        description: 'Also draw a chart of the pivot body, beside it. Page-field rows and the grand total are left out.',
+      },
+      chart_title: { type: 'string', maxLength: 200 },
+      chart_name: { type: 'string', maxLength: 128 },
       destination_sheet: { type: 'string', maxLength: 128, description: 'Existing or new output worksheet. Defaults to Pivot.' },
       destination_cell: { type: 'string', description: 'Top-left output cell. Defaults to A1.' },
       name: { type: 'string', maxLength: 128, description: 'Pivot table name. Defaults to MagiesPivot.' },
+      grand_total_label: {
+        type: 'string',
+        maxLength: 60,
+        description: 'What the grand total row is called, in the document\'s language — 总计 / Total. '
+          + 'The engine writes "Total Result" otherwise, which reads as machine output in a '
+          + 'document that is not in English. With two or more measures the engine names each '
+          + 'total row after its measure instead, so give those a label.',
+      },
       output_directory: OUTPUT_DIRECTORY_PROPERTY,
-    }, ['path', 'source_range', 'row_field', 'data_field']),
+      // row_field/row_fields and data_field/data_fields are alternatives, so
+      // neither spelling can be required here. The handler insists on one of
+      // each and names the missing one.
+    }, ['path', 'source_range']),
   ),
   tool(
     'office_presentation_read',
@@ -308,14 +667,190 @@ const OFFICE_AUTOMATION_TOOLS = Object.freeze([
   tool(
     'office_presentation_add_slide',
     { zh: '新增 PPT 幻灯片', en: 'Add presentation slide' },
-    'Add a title-and-body slide to a PowerPoint presentation and save a new non-overwriting copy.',
+    'Add one slide to a presentation and save a new non-overwriting copy. '
+      + 'A deck built by office_presentation_compose is joined automatically: the slide picks up '
+      + "that deck's theme, type scale and footer, so use this to extend a deck you composed "
+      + 'rather than composing it again. A deck Magies did not compose keeps its own look and '
+      + 'gets a plain title-and-body slide. To build or rebuild a whole deck, use '
+      + 'office_presentation_compose instead — it is what makes a deck look designed.',
     schema({
       path: PATH_PROPERTY,
       after_slide: { type: 'integer', minimum: 0, description: 'Insert after this 1-based slide number. Use 0 for the beginning; omit for the end.' },
       title: { type: 'string', maxLength: 1000 },
       body: { type: 'array', maxItems: 20, items: { type: 'string', maxLength: 2000 } },
+      layout: {
+        type: 'string',
+        enum: ['title', 'section', 'bullets', 'two_column', 'quote', 'closing'],
+        description: 'Only used on a deck Magies composed. Defaults to bullets.',
+      },
+      theme: {
+        type: 'string',
+        enum: ['azure', 'midnight', 'sand', 'forest', 'mono'],
+        description: "Overrides the deck's own theme. Leave empty to match it.",
+      },
       output_directory: OUTPUT_DIRECTORY_PROPERTY,
     }, ['path']),
+  ),
+  tool(
+    'office_presentation_compose',
+    { zh: '生成整份 PPT', en: 'Compose a presentation' },
+    'Build a whole deck from an outline in ONE call: theme colours, backgrounds, type sizes, '
+      + 'margins, accent rules and per-layout placement are applied for you. '
+      + 'This is the right way to make a presentation — building slides one call at a time and '
+      + 'styling them afterwards produces a half-designed deck. '
+      + 'Themes: azure (deep blue), midnight (dark violet), sand (warm light), forest (deep green), '
+      + 'mono (white, black type). '
+      + 'Layouts: title, section, bullets, two_column, chart, kpi, steps, image, quote, closing. '
+      + 'Prefer chart / kpi / steps over another bullet list — a deck of nothing but bullets is what '
+      + 'makes a generated deck look generated. Charts are drawn from the numbers you pass, so a '
+      + 'visual costs you nothing and needs no picture file. '
+      + 'Supply the words; the theme decides how they look.',
+    schema({
+      path: PATH_PROPERTY,
+      theme: { type: 'string', enum: ['azure', 'midnight', 'sand', 'forest', 'mono'] },
+      font_name: {
+        type: 'string',
+        maxLength: 128,
+        description: 'Optional face for every slide. Leave empty unless the user asked for one.',
+      },
+      markdown: {
+        type: 'string',
+        maxLength: 40000,
+        description: 'Write the whole deck as Markdown instead of building the slides array — '
+          + 'usually the easier and better route. First "# " is the cover, later "# " are section '
+          + 'dividers, "## " starts a slide, "-" bullets fill it, a numbered list becomes a process, '
+          + '"> " a quote, "![](workspace/path.png)" an image, "---" forces a new slide. '
+          + 'A ```chart fence takes {"type","categories","series"} JSON and a ```kpi fence takes '
+          + '"value | label" lines.',
+      },
+      footer: {
+        type: 'string',
+        maxLength: 120,
+        description: 'Small text on every content slide, e.g. the deck title or the date.',
+      },
+      replace_existing: {
+        type: 'boolean',
+        description: 'Clear the deck first. Defaults to true — compose builds the whole deck.',
+      },
+      slides: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 60,
+        items: schema({
+          layout: {
+            type: 'string',
+            enum: [
+              'title', 'section', 'bullets', 'two_column',
+              'chart', 'kpi', 'steps', 'image', 'quote', 'closing',
+            ],
+          },
+          chart_type: {
+            type: 'string',
+            enum: ['column', 'bar', 'line', 'pie', 'area'],
+            description: 'chart layout. Defaults to column.',
+          },
+          categories: {
+            type: 'array',
+            maxItems: 12,
+            items: { type: 'string', maxLength: 60 },
+            description: 'chart layout: the x-axis labels.',
+          },
+          series: {
+            type: 'array',
+            maxItems: 4,
+            items: schema({
+              name: { type: 'string', maxLength: 60 },
+              values: { type: 'array', maxItems: 12, items: { type: 'number' } },
+            }, ['name', 'values']),
+            description: 'chart layout: one entry per line or bar group.',
+          },
+          kpis: {
+            type: 'array',
+            maxItems: 4,
+            items: schema({
+              value: { type: 'string', maxLength: 40, description: 'e.g. 12% or ¥1,240万' },
+              label: { type: 'string', maxLength: 80 },
+            }, ['value', 'label']),
+            description: 'kpi layout: two to four headline numbers.',
+          },
+          title: { type: 'string', maxLength: 300, description: 'For quote layouts this is the quote itself.' },
+          subtitle: { type: 'string', maxLength: 300, description: 'title and closing layouts.' },
+          body: {
+            type: 'array',
+            maxItems: 8,
+            items: { type: 'string', maxLength: 400 },
+            description: 'Bullets. For quote, one entry is the attribution. Keep them short — '
+              + 'a slide is not a paragraph.',
+          },
+          right: {
+            type: 'array',
+            maxItems: 8,
+            items: { type: 'string', maxLength: 400 },
+            description: 'The second column of a two_column slide.',
+          },
+          image_path: {
+            ...PATH_PROPERTY,
+            description: 'Image layout only. Workspace-relative path to a picture that already exists. '
+              + 'Leaving it out is fine and needs no apology: the slide draws a themed figure in the '
+              + "picture's place, so use the image layout for pacing whether or not you have a file.",
+          },
+        }, ['layout']),
+      },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path']),
+  ),
+  tool(
+    'office_presentation_format_text',
+    { zh: '设置 PPT 文字格式', en: 'Format presentation text' },
+    'Format the title or body text of one slide (or every slide) and save a new non-overwriting copy. '
+      + 'Without this a generated deck keeps the template default and reads as raw bullet text. '
+      + 'At least one format option is required.',
+    schema({
+      path: PATH_PROPERTY,
+      slide_number: { type: 'integer', minimum: 0, description: '1-based slide number. Use 0 for every slide.' },
+      target: {
+        type: 'string',
+        enum: ['title', 'body', 'all'],
+        description: 'Which placeholders to format on the selected slides.',
+      },
+      font_name: { type: 'string', maxLength: 128 },
+      font_size: { type: 'number', minimum: 6, maximum: 200, description: 'Points.' },
+      bold: { type: 'boolean' },
+      italic: { type: 'boolean' },
+      text_color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$' },
+      alignment: { type: 'string', enum: ['left', 'center', 'right', 'justify'] },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'target']),
+  ),
+  tool(
+    'office_presentation_apply_theme',
+    { zh: '为整份 PPT 换一套主题', en: 'Restyle a whole presentation' },
+    'Give an existing presentation one of the composed themes, applied through its slide master so '
+      + 'every slide inherits it — including slides added afterwards. Use this when the user wants a '
+      + 'deck they already have to look different; use office_presentation_compose when you are '
+      + 'writing the deck. Themes: azure (deep blue), midnight (dark violet), sand (warm light), '
+      + 'forest (deep green), mono (white, black type).',
+    schema({
+      path: PATH_PROPERTY,
+      theme: { type: 'string', enum: ['azure', 'midnight', 'sand', 'forest', 'mono'] },
+      footer: { type: 'string', maxLength: 120, description: 'Small text and a number on every slide.' },
+      font_name: { type: 'string', maxLength: 128, description: 'Optional face for every slide.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'theme']),
+  ),
+  tool(
+    'office_presentation_set_background',
+    { zh: '设置 PPT 背景', en: 'Set presentation background' },
+    'Paint the background of one slide or the whole deck, as a solid colour or a two-colour '
+      + 'gradient, then save a new non-overwriting copy. Pair it with office_presentation_format_text '
+      + 'so the text stays readable against the new background.',
+    schema({
+      path: PATH_PROPERTY,
+      slide_number: { type: 'integer', minimum: 0, description: '1-based slide number. Use 0 or omit for every slide.' },
+      color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$', description: 'Solid fill, or the start of the gradient.' },
+      gradient_to: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$', description: 'End colour. Omit for a solid fill.' },
+      output_directory: OUTPUT_DIRECTORY_PROPERTY,
+    }, ['path', 'color']),
   ),
   tool(
     'office_presentation_duplicate_slide',
@@ -557,6 +1092,167 @@ function presentationTableValues(value) {
   return value;
 }
 
+/** Paragraph blocks for a Word append: a style the document really has, plus text. */
+const BLOCK_STYLES = new Set([
+  'title', 'subtitle', 'heading1', 'heading2', 'heading3', 'body', 'bullet', 'number', 'quote',
+]);
+
+/** The styles a level means anything for. */
+const LIST_BLOCK_STYLES = new Set(['bullet', 'number']);
+
+function documentBlocks(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error('blocks must contain at least one block');
+  }
+  if (value.length > 200) throw new Error('blocks may contain at most 200 blocks');
+  return value.map((block, index) => {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) {
+      throw new Error(`blocks[${index}] must be an object with style and text`);
+    }
+    const style = String(block.style || '');
+    if (!BLOCK_STYLES.has(style)) {
+      throw new Error(`blocks[${index}].style must be one of ${[...BLOCK_STYLES].join(', ')}`);
+    }
+    const text = stringValue(block.text, `blocks[${index}].text`, { maxLength: 20000 });
+    // Only a list has a level. Carrying it on everything else would let a model
+    // indent a heading, which Word has no way to draw.
+    const level = Math.min(
+      Math.max(integerValue(block.level, `blocks[${index}].level`, 0, { optional: true }) ?? 0, 0),
+      4,
+    );
+    return LIST_BLOCK_STYLES.has(style) ? { style, text, level } : { style, text };
+  });
+}
+
+const SLIDE_LAYOUTS = new Set([
+  'title', 'section', 'bullets', 'two_column',
+  'chart', 'kpi', 'steps', 'image', 'quote', 'closing',
+]);
+
+/** Chart data for a composed slide: labels, and one number per label per series. */
+function slideChartData(slide, index) {
+  const categories = (Array.isArray(slide.categories) ? slide.categories : [])
+    .map((label, at) => stringValue(label, `slides[${index}].categories[${at}]`, { maxLength: 60 }));
+  if (categories.length === 0) {
+    throw new Error(`slides[${index}] is a chart and needs categories`);
+  }
+  if (categories.length > 12) throw new Error(`slides[${index}].categories may hold at most 12 labels`);
+  const rawSeries = Array.isArray(slide.series) ? slide.series : [];
+  if (rawSeries.length === 0) throw new Error(`slides[${index}] is a chart and needs series`);
+  if (rawSeries.length > 4) throw new Error(`slides[${index}].series may hold at most 4 series`);
+  const series = rawSeries.map((entry, at) => {
+    if (!entry || typeof entry !== 'object') {
+      throw new Error(`slides[${index}].series[${at}] must be an object`);
+    }
+    const values = (Array.isArray(entry.values) ? entry.values : []).map((value, position) => {
+      const number = Number(value);
+      if (!Number.isFinite(number)) {
+        throw new Error(`slides[${index}].series[${at}].values[${position}] must be a number`);
+      }
+      return number;
+    });
+    if (values.length !== categories.length) {
+      throw new Error(
+        `slides[${index}].series[${at}].values must hold one number per category`,
+      );
+    }
+    return {
+      name: stringValue(entry.name, `slides[${index}].series[${at}].name`, { maxLength: 60 }),
+      values,
+    };
+  });
+  return { categories, series };
+}
+
+function slideKpis(slide, index) {
+  const entries = Array.isArray(slide.kpis) ? slide.kpis : [];
+  if (entries.length === 0) throw new Error(`slides[${index}] is a kpi slide and needs kpis`);
+  if (entries.length > 4) throw new Error(`slides[${index}].kpis may hold at most 4 numbers`);
+  return entries.map((entry, at) => {
+    if (!entry || typeof entry !== 'object') {
+      throw new Error(`slides[${index}].kpis[${at}] must be an object`);
+    }
+    return {
+      value: stringValue(entry.value, `slides[${index}].kpis[${at}].value`, { maxLength: 40 }),
+      label: stringValue(entry.label, `slides[${index}].kpis[${at}].label`, { maxLength: 80 }),
+    };
+  });
+}
+
+/**
+ * Validates a composed deck. Image paths are resolved through the workspace
+ * here, so a slide can never point the renderer at a file outside the grant.
+ */
+async function composedSlides(value, workspace) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error('slides must contain at least one slide');
+  }
+  if (value.length > 60) throw new Error('slides may contain at most 60 slides');
+  const composed = [];
+  for (const [index, slide] of value.entries()) {
+    if (!slide || typeof slide !== 'object' || Array.isArray(slide)) {
+      throw new Error(`slides[${index}] must be an object`);
+    }
+    const layout = String(slide.layout || '');
+    if (!SLIDE_LAYOUTS.has(layout)) {
+      throw new Error(`slides[${index}].layout must be one of ${[...SLIDE_LAYOUTS].join(', ')}`);
+    }
+    const bullets = (list, label) => {
+      if (list === undefined || list === null) return [];
+      if (!Array.isArray(list)) throw new Error(`${label} must be an array of strings`);
+      if (list.length > 8) throw new Error(`${label} may contain at most 8 lines`);
+      return list.map((item, at) => stringValue(item, `${label}[${at}]`, { maxLength: 400 }));
+    };
+    const entry = {
+      layout,
+      title: stringValue(slide.title, `slides[${index}].title`, { maxLength: 300 }),
+      subtitle: stringValue(slide.subtitle, `slides[${index}].subtitle`, { maxLength: 300 }),
+      body: bullets(slide.body, `slides[${index}].body`),
+      right: bullets(slide.right, `slides[${index}].right`),
+    };
+    if (layout === 'image') {
+      // Optional on purpose: the slide draws a themed figure when there is no
+      // picture, which is the only visual most installations can produce.
+      const imageRelative = stringValue(slide.image_path, `slides[${index}].image_path`, {
+        maxLength: 1000,
+      });
+      if (imageRelative) entry.imagePath = await workspace.resolveInput(imageRelative);
+    }
+    if (layout === 'chart') {
+      const { categories, series } = slideChartData(slide, index);
+      entry.chartType = enumValue(
+        slide.chart_type, `slides[${index}].chart_type`, ['column', 'bar', 'line', 'pie', 'area'],
+      ) || 'column';
+      entry.categories = categories;
+      entry.series = series;
+    }
+    if (layout === 'kpi') entry.kpis = slideKpis(slide, index);
+    composed.push(entry);
+  }
+  return composed;
+}
+
+function enumValue(value, label, allowed) {
+  if (value === undefined || value === null) return undefined;
+  if (!allowed.includes(value)) throw new Error(`${label} must be one of ${allowed.join(', ')}`);
+  return value;
+}
+
+function booleanValue(value, label) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'boolean') throw new Error(`${label} must be a boolean`);
+  return value;
+}
+
+function pointSize(value, label, minimum, maximum) {
+  if (value === undefined || value === null) return undefined;
+  const size = Number(value);
+  if (!Number.isFinite(size) || size < minimum || size > maximum) {
+    throw new Error(`${label} must be between ${minimum} and ${maximum} points`);
+  }
+  return size;
+}
+
 function colorValue(value, label) {
   if (value === undefined) return '';
   if (typeof value !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(value)) {
@@ -682,11 +1378,75 @@ function boundedExcelRange(value, label) {
   return value;
 }
 
+const PIVOT_FUNCTIONS = {
+  sum: 'SUM',
+  count: 'COUNT',
+  average: 'AVERAGE',
+  min: 'MIN',
+  max: 'MAX',
+};
+
+/**
+ * One area of a pivot — rows, columns, or page filters.
+ *
+ * The singular argument is the shorthand for a one-field area, so a caller that
+ * knows only `row_field` keeps working and one that nests four fields can.
+ */
+function pivotFieldArea(list, singular, label) {
+  if (list === undefined) {
+    const only = stringValue(singular, label, { maxLength: 128 });
+    return only ? [only] : [];
+  }
+  if (!Array.isArray(list) || list.length > 4) {
+    throw new Error(`${label}s must be an array of at most 4 header names`);
+  }
+  const fields = list.map((field) => stringValue(field, `${label}s`, { required: true, maxLength: 128 }));
+  const only = stringValue(singular, label, { maxLength: 128 });
+  return only && !fields.includes(only) ? [only, ...fields] : fields;
+}
+
+/** The measures, each with its own aggregation and the header it is given. */
+function pivotMeasures(list, singular, singularFunction, singularLabel) {
+  const measure = (field, requested, label, where) => {
+    const aggregation = PIVOT_FUNCTIONS[stringValue(requested, `${where}function`, { maxLength: 20 }) || 'sum'];
+    if (!aggregation) throw new Error(`${where}function must be sum, count, average, min, or max`);
+    const named = {
+      field: stringValue(field, 'data_field', { required: true, maxLength: 128 }),
+      function: aggregation,
+    };
+    const header = stringValue(label, `${where}label`, { maxLength: 128 });
+    return header ? { ...named, label: header } : named;
+  };
+  if (list === undefined) return [measure(singular, singularFunction, singularLabel, '')];
+  if (!Array.isArray(list) || list.length === 0 || list.length > 4) {
+    throw new Error('data_fields must be an array of 1 to 4 measures');
+  }
+  return list.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error('Each data_fields entry must be an object with a field and an optional function');
+    }
+    return measure(entry.field, entry.function, entry.label, 'data_fields ');
+  });
+}
+
 function createOfficeAutomationProvider({
   workspace = createOfficeWorkspace(),
   getLibreOfficeExecutable,
   runUno,
   fileSystem = fs,
+  /**
+   * Close any open editor session on this absolute path before LibreOffice
+   * mutates the file (stale Editor.bin would otherwise overwrite AI work).
+   */
+  onBeforeDocumentWrite = null,
+  /** Tell the UI to reopen / refresh the path after an in-place apply. */
+  onAfterDocumentWrite = null,
+  /**
+   * Builds the picture tool around a workspace-bound save, so a downloaded or
+   * generated image can only ever land inside the granted folder. Given as a
+   * factory because the save it needs belongs to this provider's workspace.
+   */
+  createImageProvider = null,
 } = {}) {
   if (typeof getLibreOfficeExecutable !== 'function') {
     throw new TypeError('getLibreOfficeExecutable is required');
@@ -705,7 +1465,39 @@ function createOfficeAutomationProvider({
     signal: options?.signal,
   });
 
-  const callTool = async (functionName, rawArgs = {}, options = {}) => {
+  /**
+   * UNO stages the result to a temp path; this copies it onto the source and
+   * removes the staging file. The open tab then reloads that same path.
+   *
+   * No sibling copy is kept: an agent editing one document repeatedly left a
+   * pile of `name.magies-backup.ext` files beside it. Recovery comes from the
+   * editor's own undo and from version control, not from litter in the user's
+   * folder — and a write is refused outright while the tab holds unsaved edits.
+   */
+  const applyStagingInPlace = async (sourceRelative, stagingRelative) => {
+    const inputPath = await workspace.resolveInput(sourceRelative);
+    const stagingPath = await workspace.resolveInput(stagingRelative);
+    await fileSystem.copyFile(stagingPath, inputPath);
+    try {
+      await fileSystem.unlink(stagingPath);
+    } catch {
+      // Staging may already be gone; the source has the result either way.
+    }
+    return {
+      source: sourceRelative,
+      written: sourceRelative,
+      appliedInPlace: true,
+    };
+  };
+
+  const callToolInner = async (functionName, rawArgs = {}, options = {}) => {
+    if (functionName === 'office_image_search') {
+      const picture = images();
+      if (!picture) throw new Error('Pictures are not available in this build');
+      // Saving goes through the workspace, so this cannot write outside the grant.
+      workspace.getStatus().configured || await workspace.resolveInput('.');
+      return picture.callTool(functionName, rawArgs, options);
+    }
     const definition = OFFICE_AUTOMATION_TOOLS.find((candidate) => candidate.functionName === functionName);
     if (!definition) throw new Error(`Unknown Office Agent tool: ${functionName}`);
     const args = rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {};
@@ -809,6 +1601,171 @@ function createOfficeAutomationProvider({
       };
     }
 
+    if (functionName === 'office_word_append') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const authored = Array.isArray(args.blocks) && args.blocks.length > 0
+        ? args.blocks
+        : blocksFromMarkdown(stringValue(args.markdown, 'markdown', { maxLength: 40000 }));
+      if (!Array.isArray(authored) || authored.length === 0) {
+        throw new Error('Pass either blocks or markdown describing the content');
+      }
+      const blocks = documentBlocks(authored);
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, WORD_EXTENSIONS, 'Word');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'word_append',
+        inputPath,
+        outputPath: output.absolutePath,
+        blocks,
+        pageBreakBefore: args.page_break_before === true,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        blocksWritten: Number(result.blocksWritten) || blocks.length,
+      };
+    }
+
+    if (functionName === 'office_word_compose') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const theme = enumValue(
+        args.theme, 'theme', ['azure', 'slate', 'forest', 'plum', 'mono'],
+      ) || 'azure';
+      const authored = Array.isArray(args.blocks) && args.blocks.length > 0
+        ? args.blocks
+        : blocksFromMarkdown(stringValue(args.markdown, 'markdown', { maxLength: 40000 }));
+      if (!Array.isArray(authored) || authored.length === 0) {
+        throw new Error('Pass either blocks or markdown describing the document');
+      }
+      const blocks = documentBlocks(authored);
+      const title = stringValue(args.title, 'title', { maxLength: 300 });
+      // Markdown's leading "# " is the document title, but a cover page already
+      // carries one. Left alone the document opens with the title twice, once on
+      // the cover and once at the top of page two.
+      if (title && blocks[0].style === 'title') blocks[0] = { ...blocks[0], style: 'heading1' };
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, WORD_EXTENSIONS, 'Word');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'word_compose',
+        inputPath,
+        outputPath: output.absolutePath,
+        theme,
+        blocks,
+        // A cover needs a title; a subtitle or a byline on their own is a stray
+        // line at the top of page one, not a cover.
+        cover: title ? {
+          title,
+          subtitle: stringValue(args.subtitle, 'subtitle', { maxLength: 300 }),
+          byline: stringValue(args.byline, 'byline', { maxLength: 200 }),
+        } : null,
+        tableOfContents: args.table_of_contents === true,
+        tableOfContentsTitle: stringValue(args.table_of_contents_title, 'table_of_contents_title', {
+          maxLength: 100,
+        }),
+        pageNumbers: args.page_numbers !== false,
+        columns: integerValue(args.columns, 'columns', 1, { optional: true }) ?? 1,
+        columnGapMm: numberValue(args.column_gap_mm, 'column_gap_mm', 0, 40) ?? 6,
+        columnRule: args.column_rule === true,
+        fontName: stringValue(args.font_name, 'font_name', { maxLength: 128 }),
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        blocksWritten: Number(result.blocksWritten) || blocks.length,
+        theme,
+      };
+    }
+
+    if (functionName === 'office_word_add_footnotes') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const entries = Array.isArray(args.footnotes) ? args.footnotes : [];
+      if (entries.length === 0) throw new Error('footnotes must contain at least one note');
+      if (entries.length > 100) throw new Error('footnotes may contain at most 100 notes');
+      const footnotes = entries.map((entry, index) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          throw new Error(`footnotes[${index}] must be an object with find and text`);
+        }
+        return {
+          find: stringValue(entry.find, `footnotes[${index}].find`, {
+            required: true, maxLength: 2000,
+          }),
+          text: stringValue(entry.text, `footnotes[${index}].text`, {
+            required: true, maxLength: 20000,
+          }),
+          kind: enumValue(entry.kind, `footnotes[${index}].kind`, ['footnote', 'endnote'])
+            || 'footnote',
+          occurrence: integerValue(entry.occurrence, `footnotes[${index}].occurrence`, 1, {
+            optional: true,
+          }) ?? 1,
+          label: stringValue(entry.label, `footnotes[${index}].label`, { maxLength: 20 }),
+          matchCase: entry.match_case !== false,
+        };
+      });
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, WORD_EXTENSIONS, 'Word');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'word_add_footnotes',
+        inputPath,
+        outputPath: output.absolutePath,
+        footnotes,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        notesWritten: Number(result.notesWritten) || footnotes.length,
+      };
+    }
+
+    if (functionName === 'office_word_format_text') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const find = stringValue(args.find, 'find', { required: true, maxLength: 2000 });
+      const alignment = enumValue(
+        args.alignment, 'alignment', ['left', 'center', 'right', 'justify'],
+      );
+      const fontSize = pointSize(args.font_size, 'font_size', 6, 96);
+      const options_ = ['bold', 'italic', 'underline', 'font_name', 'font_size', 'text_color', 'highlight_color', 'alignment'];
+      if (!options_.some((key) => args[key] !== undefined)) {
+        throw new Error('Word text formatting requires at least one format option');
+      }
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, WORD_EXTENSIONS, 'Word');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'word_format_text',
+        inputPath,
+        outputPath: output.absolutePath,
+        find,
+        bold: booleanValue(args.bold, 'bold'),
+        italic: booleanValue(args.italic, 'italic'),
+        underline: booleanValue(args.underline, 'underline'),
+        fontName: stringValue(args.font_name, 'font_name', { maxLength: 128 }),
+        fontSize,
+        textColor: colorValue(args.text_color, 'text_color'),
+        highlightColor: colorValue(args.highlight_color, 'highlight_color'),
+        alignment,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        matched: Number(result.matched) || 0,
+      };
+    }
+
     if (functionName === 'office_word_insert_table') {
       const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
       const values = wordTableValues(args.values);
@@ -846,6 +1803,8 @@ function createOfficeAutomationProvider({
       );
       const result = await callUno({
         operation: 'word_insert_image',
+        caption: stringValue(args.caption, 'caption', { maxLength: 500 }),
+        captionLabel: stringValue(args.caption_label, 'caption_label', { maxLength: 40 }),
         inputPath,
         outputPath: output.absolutePath,
         imagePath,
@@ -964,6 +1923,50 @@ function createOfficeAutomationProvider({
       };
     }
 
+    if (functionName === 'office_excel_add_comments') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const entries = Array.isArray(args.comments) ? args.comments : [];
+      if (entries.length === 0) throw new Error('comments must contain at least one note');
+      if (entries.length > 200) throw new Error('comments may contain at most 200 notes');
+      const comments = entries.map((entry, index) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          throw new Error(`comments[${index}] must be an object with cell and text`);
+        }
+        const cell = stringValue(entry.cell, `comments[${index}].cell`, {
+          required: true, maxLength: 20,
+        }).toUpperCase();
+        if (!CELL_REFERENCE.test(cell)) {
+          throw new Error(`comments[${index}].cell must use A1 notation such as B4`);
+        }
+        return {
+          cell,
+          text: stringValue(entry.text, `comments[${index}].text`, {
+            required: true, maxLength: 4000,
+          }),
+          visible: entry.visible === true,
+        };
+      });
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, EXCEL_EXTENSIONS, 'Excel');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'excel_add_comments',
+        inputPath,
+        outputPath: output.absolutePath,
+        sheet: stringValue(args.sheet, 'sheet', { maxLength: 128 }),
+        comments,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        sheet: String(result.sheet || ''),
+        commentsWritten: Number(result.commentsWritten) || comments.length,
+      };
+    }
+
     if (functionName === 'office_excel_sort_range') {
       const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
       const range = boundedExcelRange(
@@ -1031,17 +2034,27 @@ function createOfficeAutomationProvider({
         stringValue(args.range, 'range', { required: true, maxLength: 50 }).toUpperCase(),
         'range',
       );
-      const hasFormat = ['bold', 'background_color', 'text_color', 'horizontal_alignment', 'optimal_width']
-        .some((key) => args[key] !== undefined);
+      const hasFormat = [
+        'bold', 'italic', 'font_name', 'font_size', 'background_color', 'text_color',
+        'horizontal_alignment', 'vertical_alignment', 'number_format', 'borders', 'merge',
+        'wrap_text', 'optimal_width',
+      ].some((key) => args[key] !== undefined);
       if (!hasFormat) throw new Error('Excel formatting requires at least one format option');
-      if (args.bold !== undefined && typeof args.bold !== 'boolean') throw new Error('bold must be a boolean');
-      if (args.optimal_width !== undefined && typeof args.optimal_width !== 'boolean') {
-        throw new Error('optimal_width must be a boolean');
-      }
+      booleanValue(args.bold, 'bold');
+      booleanValue(args.italic, 'italic');
+      booleanValue(args.merge, 'merge');
+      booleanValue(args.wrap_text, 'wrap_text');
+      booleanValue(args.optimal_width, 'optimal_width');
       const alignment = args.horizontal_alignment;
       if (alignment !== undefined && !['left', 'center', 'right'].includes(alignment)) {
         throw new Error('horizontal_alignment must be left, center, or right');
       }
+      const verticalAlignment = enumValue(
+        args.vertical_alignment, 'vertical_alignment', ['top', 'middle', 'bottom'],
+      );
+      const borders = enumValue(args.borders, 'borders', ['all', 'outline', 'none']);
+      const fontSize = pointSize(args.font_size, 'font_size', 6, 96);
+      const numberFormat = stringValue(args.number_format, 'number_format', { maxLength: 120 });
       const inputPath = await workspace.resolveInput(relativePath);
       requireExtension(inputPath, EXCEL_EXTENSIONS, 'Excel');
       const output = await workspace.uniqueOutputPath(
@@ -1055,15 +2068,66 @@ function createOfficeAutomationProvider({
         sheet: stringValue(args.sheet, 'sheet', { maxLength: 128 }),
         range,
         bold: args.bold,
+        italic: args.italic,
+        fontName: stringValue(args.font_name, 'font_name', { maxLength: 128 }),
+        fontSize,
         backgroundColor: colorValue(args.background_color, 'background_color'),
         textColor: colorValue(args.text_color, 'text_color'),
         horizontalAlignment: alignment,
+        verticalAlignment,
+        numberFormat,
+        borders,
+        merge: args.merge,
+        wrapText: args.wrap_text,
         optimalWidth: args.optimal_width,
       }, options);
       return {
         source: relativePath,
         written: output.relativePath,
         formattedRange: String(result.formattedRange || range),
+      };
+    }
+
+    if (functionName === 'office_excel_compose_table') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const theme = enumValue(
+        args.theme, 'theme', ['azure', 'slate', 'forest', 'plum', 'mono'],
+      ) || 'azure';
+      const headers = (Array.isArray(args.headers) ? args.headers : []).map((header, index) =>
+        stringValue(header, `headers[${index}]`, { maxLength: 200 }));
+      if (headers.length === 0) throw new Error('headers must contain at least one column');
+      const rows = excelValues(args.rows);
+      const columnFormats = (Array.isArray(args.column_formats) ? args.column_formats : [])
+        .map((code, index) => stringValue(code, `column_formats[${index}]`, { maxLength: 120 }));
+      const startCell = stringValue(args.start_cell, 'start_cell', { maxLength: 20 }) || 'A1';
+      if (!CELL_REFERENCE.test(startCell)) throw new Error('start_cell must use A1 notation');
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, EXCEL_EXTENSIONS, 'Excel');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'excel_compose_table',
+        inputPath,
+        outputPath: output.absolutePath,
+        sheet: stringValue(args.sheet, 'sheet', { maxLength: 128 }),
+        startCell: startCell.toUpperCase(),
+        title: stringValue(args.title, 'title', { maxLength: 300 }),
+        theme,
+        headers,
+        rows,
+        columnFormats,
+        totalsRow: args.totals_row === true,
+        totalsLabel: stringValue(args.totals_label, 'totals_label', { maxLength: 100 }),
+        bandedRows: args.banded_rows !== false,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        range: String(result.range || ''),
+        rowsWritten: Number(result.rowsWritten) || rows.length,
+        columns: Number(result.columns) || headers.length,
       };
     }
 
@@ -1163,23 +2227,23 @@ function createOfficeAutomationProvider({
         stringValue(args.source_range, 'source_range', { required: true, maxLength: 50 }).toUpperCase(),
         'source_range',
       );
-      const rowField = stringValue(args.row_field, 'row_field', { required: true, maxLength: 128 });
-      const columnField = stringValue(args.column_field, 'column_field', { maxLength: 128 });
-      const dataField = stringValue(args.data_field, 'data_field', { required: true, maxLength: 128 });
-      const selectedFields = [rowField, columnField, dataField].filter(Boolean);
+      const rowFields = pivotFieldArea(args.row_fields, args.row_field, 'row_field');
+      if (rowFields.length === 0) throw new Error('row_field or row_fields must name at least one header');
+      const columnFields = pivotFieldArea(args.column_fields, args.column_field, 'column_field');
+      const filterFields = pivotFieldArea(args.filter_fields, undefined, 'filter_field');
+      const dataFields = pivotMeasures(args.data_fields, args.data_field, args.function, args.label);
+      const selectedFields = [
+        ...rowFields, ...columnFields, ...filterFields, ...dataFields.map((measure) => measure.field),
+      ];
       if (new Set(selectedFields).size !== selectedFields.length) {
-        throw new Error('row_field, column_field, and data_field must use different fields');
+        throw new Error('row_field, column_field, filter_field, and data_field must use different fields');
       }
-      const functions = {
-        sum: 'SUM',
-        count: 'COUNT',
-        average: 'AVERAGE',
-        min: 'MIN',
-        max: 'MAX',
-      };
-      const requestedFunction = stringValue(args.function, 'function', { maxLength: 20 }) || 'sum';
-      const dataFunction = functions[requestedFunction];
-      if (!dataFunction) throw new Error('function must be sum, count, average, min, or max');
+      const sortByData = enumValue(args.sort_by_data, 'sort_by_data', ['descending', 'ascending']) || '';
+      const topN = args.top_n === undefined ? 0 : integerValue(args.top_n, 'top_n', 1);
+      if (topN > 100) throw new Error('top_n must be an integer between 1 and 100');
+      const chartType = enumValue(
+        args.chart_type, 'chart_type', ['column', 'bar', 'line', 'pie', 'area'],
+      ) || '';
       const destinationCell = (
         stringValue(args.destination_cell, 'destination_cell', { maxLength: 20 }) || 'A1'
       ).toUpperCase();
@@ -1198,13 +2262,21 @@ function createOfficeAutomationProvider({
         outputPath: output.absolutePath,
         sourceSheet: stringValue(args.source_sheet, 'source_sheet', { maxLength: 128 }),
         sourceRange,
-        rowField,
-        columnField,
-        dataField,
-        dataFunction,
+        rowFields,
+        columnFields,
+        filterFields,
+        dataFields,
+        sortByData,
+        topN,
+        numberFormat: stringValue(args.number_format, 'number_format', { maxLength: 60 }),
+        optimalWidth: booleanValue(args.optimal_width, 'optimal_width') !== false,
+        chartType,
+        chartTitle: stringValue(args.chart_title, 'chart_title', { maxLength: 200 }),
+        chartName: stringValue(args.chart_name, 'chart_name', { maxLength: 128 }),
         destinationSheet: stringValue(args.destination_sheet, 'destination_sheet', { maxLength: 128 }) || 'Pivot',
         destinationCell,
         pivotName: stringValue(args.name, 'name', { maxLength: 128 }) || 'MagiesPivot',
+        grandTotalLabel: stringValue(args.grand_total_label, 'grand_total_label', { maxLength: 60 }),
       }, options);
       return {
         source: relativePath,
@@ -1212,6 +2284,7 @@ function createOfficeAutomationProvider({
         pivotName: String(result.pivotName || 'MagiesPivot'),
         destinationSheet: String(result.destinationSheet || 'Pivot'),
         outputRange: String(result.outputRange || ''),
+        ...(chartType ? { chartName: String(result.chartName || '') } : {}),
       };
     }
 
@@ -1248,6 +2321,136 @@ function createOfficeAutomationProvider({
       };
     }
 
+    if (functionName === 'office_presentation_compose') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const theme = enumValue(
+        args.theme, 'theme', ['azure', 'midnight', 'sand', 'forest', 'mono'],
+      ) || 'azure';
+      const outline = Array.isArray(args.slides) && args.slides.length > 0
+        ? args.slides
+        : slidesFromMarkdown(stringValue(args.markdown, 'markdown', { maxLength: 40000 }));
+      if (!Array.isArray(outline) || outline.length === 0) {
+        throw new Error('Pass either slides or markdown describing the deck');
+      }
+      const slides = await composedSlides(outline, workspace);
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, PRESENTATION_EXTENSIONS, 'Presentation');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'presentation_compose',
+        inputPath,
+        outputPath: output.absolutePath,
+        theme,
+        fontName: stringValue(args.font_name, 'font_name', { maxLength: 128 }),
+        footer: stringValue(args.footer, 'footer', { maxLength: 120 }),
+        replaceExisting: args.replace_existing !== false,
+        slides,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        slidesComposed: Number(result.slidesComposed) || slides.length,
+        theme,
+      };
+    }
+
+    if (functionName === 'office_presentation_format_text') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const target = enumValue(args.target, 'target', ['title', 'body', 'all']);
+      if (!target) throw new Error('target must be one of title, body, all');
+      const slideNumber = integerValue(args.slide_number, 'slide_number', 0, { optional: true }) ?? 0;
+      const fontSize = pointSize(args.font_size, 'font_size', 6, 200);
+      const alignment = enumValue(
+        args.alignment, 'alignment', ['left', 'center', 'right', 'justify'],
+      );
+      const chosen = ['font_name', 'font_size', 'bold', 'italic', 'text_color', 'alignment'];
+      if (!chosen.some((key) => args[key] !== undefined)) {
+        throw new Error('Slide text formatting requires at least one format option');
+      }
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, PRESENTATION_EXTENSIONS, 'Presentation');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'presentation_format_text',
+        inputPath,
+        outputPath: output.absolutePath,
+        slideNumber,
+        target,
+        fontName: stringValue(args.font_name, 'font_name', { maxLength: 128 }),
+        fontSize,
+        bold: booleanValue(args.bold, 'bold'),
+        italic: booleanValue(args.italic, 'italic'),
+        textColor: colorValue(args.text_color, 'text_color'),
+        alignment,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        shapesFormatted: Number(result.shapesFormatted) || 0,
+      };
+    }
+
+    if (functionName === 'office_presentation_apply_theme') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const theme = enumValue(
+        args.theme, 'theme', ['azure', 'midnight', 'sand', 'forest', 'mono'],
+      );
+      if (!theme) throw new Error('theme must be azure, midnight, sand, forest, or mono');
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, PRESENTATION_EXTENSIONS, 'Presentation');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'presentation_apply_theme',
+        inputPath,
+        outputPath: output.absolutePath,
+        theme,
+        footer: stringValue(args.footer, 'footer', { maxLength: 120 }),
+        fontName: stringValue(args.font_name, 'font_name', { maxLength: 128 }),
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        slidesRestyled: Number(result.slidesRestyled) || 0,
+        theme,
+      };
+    }
+
+    if (functionName === 'office_presentation_set_background') {
+      const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
+      const color = colorValue(args.color, 'color');
+      if (!color) throw new Error('color is required, as #RRGGBB');
+      const gradientTo = colorValue(args.gradient_to, 'gradient_to');
+      const slideNumber = integerValue(args.slide_number, 'slide_number', 0, { optional: true }) ?? 0;
+      const inputPath = await workspace.resolveInput(relativePath);
+      requireExtension(inputPath, PRESENTATION_EXTENSIONS, 'Presentation');
+      const output = await workspace.uniqueOutputPath(
+        stringValue(args.output_directory, 'output_directory', { maxLength: 1000 }) || DEFAULT_OUTPUT_DIRECTORY,
+        path.basename(inputPath),
+      );
+      const result = await callUno({
+        operation: 'presentation_set_background',
+        inputPath,
+        outputPath: output.absolutePath,
+        slideNumber,
+        color,
+        gradientTo,
+      }, options);
+      return {
+        source: relativePath,
+        written: output.relativePath,
+        slidesPainted: Number(result.slidesPainted) || 0,
+      };
+    }
+
     if (functionName === 'office_presentation_add_slide') {
       const relativePath = stringValue(args.path, 'path', { required: true, maxLength: 1000 });
       const title = stringValue(args.title, 'title', { maxLength: 1000 });
@@ -1267,12 +2470,21 @@ function createOfficeAutomationProvider({
         afterSlide,
         title,
         body,
+        layout: enumValue(
+          args.layout, 'layout',
+          ['title', 'section', 'bullets', 'two_column', 'quote', 'closing'],
+        ),
+        theme: enumValue(
+          args.theme, 'theme', ['azure', 'midnight', 'sand', 'forest', 'mono'],
+        ),
       }, options);
       return {
         source: relativePath,
         written: output.relativePath,
         slideNumber: Number(result.slideNumber) || 0,
         slidesTotal: Number(result.slidesTotal) || 0,
+        // Empty on a deck Magies did not compose, which keeps its own look.
+        theme: typeof result.theme === 'string' ? result.theme : '',
       };
     }
 
@@ -1551,21 +2763,99 @@ function createOfficeAutomationProvider({
     return { mode, archived: written.length, written };
   };
 
-  const listTools = async () => workspace.getStatus().configured
-    ? OFFICE_AUTOMATION_TOOLS.map((definition) => ({ ...definition }))
-    : [];
+  const callTool = async (functionName, rawArgs = {}, options = {}) => {
+    const args = rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {};
+    const relativePath = typeof args.path === 'string' ? args.path : '';
+    /**
+     * In-place apply (overwrite source + UI reload) is the default for
+     * single-document mutators. An explicit custom output_directory keeps the
+     * historical "write a separate copy only" behaviour (used by tests and by
+     * callers that want a side-by-side export).
+     */
+    const outputDirectory = typeof args.output_directory === 'string'
+      ? args.output_directory.trim()
+      : '';
+    const applyInPlace = IN_PLACE_MUTATORS.has(functionName)
+      && relativePath
+      && (outputDirectory === '' || outputDirectory === DEFAULT_OUTPUT_DIRECTORY);
+
+    let absoluteSource = '';
+    if (applyInPlace) {
+      absoluteSource = await workspace.resolveInput(relativePath);
+      if (typeof onBeforeDocumentWrite === 'function') {
+        await onBeforeDocumentWrite(absoluteSource);
+      }
+    }
+
+    const result = await callToolInner(functionName, rawArgs, options);
+
+    if (
+      applyInPlace
+      && result
+      && typeof result === 'object'
+      && typeof result.source === 'string'
+      && typeof result.written === 'string'
+      && result.written !== result.source
+    ) {
+      const applied = await applyStagingInPlace(result.source, result.written);
+      if (typeof onAfterDocumentWrite === 'function' && absoluteSource) {
+        await onAfterDocumentWrite(absoluteSource);
+      }
+      return { ...result, ...applied };
+    }
+
+    return result;
+  };
+
+  /** Always available for API/MCP discovery — not gated on workspace grant. */
+  const describeTools = () => OFFICE_AUTOMATION_TOOLS.map((definition) => ({
+    functionName: definition.functionName,
+    toolId: definition.toolId,
+    name: definition.name,
+    description: definition.providerTool.function.description,
+    parameters: definition.providerTool.function.parameters,
+    unattended: definition.unattended !== false,
+  }));
+
+  /** Built-in AI only sees tools when a workspace is granted. */
+  /** Writes image bytes into the grant, never over an existing file. */
+  const saveWorkspaceImage = async (relativeDirectory, stem, extension, bytes) => {
+    const output = await workspace.uniqueOutputPath(relativeDirectory, `${stem}${extension}`);
+    await fileSystem.writeFile(output.absolutePath, bytes);
+    return output.relativePath;
+  };
+
+  let imageProvider;
+  const images = () => {
+    if (imageProvider === undefined) {
+      imageProvider = typeof createImageProvider === 'function'
+        ? createImageProvider(saveWorkspaceImage)
+        : null;
+    }
+    return imageProvider;
+  };
+
+  const listTools = async () => {
+    if (!workspace.getStatus().configured) return [];
+    const office = OFFICE_AUTOMATION_TOOLS.map((definition) => ({ ...definition }));
+    const picture = images() ? await images().listTools() : [];
+    return [...office, ...picture];
+  };
 
   return {
     callTool,
     clearWorkspace: workspace.clear,
+    describeTools,
     getWorkspaceStatus: workspace.getStatus,
     listTools,
     setWorkspaceRoot: workspace.setRoot,
+    setWorkspaceFromDocumentPath: workspace.setRootFromDocumentPath,
   };
 }
 
 module.exports = {
   DEFAULT_OUTPUT_DIRECTORY,
+  IN_PLACE_MUTATORS,
   OFFICE_AUTOMATION_TOOLS,
   createOfficeAutomationProvider,
   excelValues,

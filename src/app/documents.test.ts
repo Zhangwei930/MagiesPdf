@@ -4,6 +4,7 @@ import {
   HISTORY_BYTE_BUDGET,
   HISTORY_LIMIT,
   applyEdit,
+  applyEngineSaved,
   canRedo,
   canUndo,
   closeDocument,
@@ -11,8 +12,13 @@ import {
   isDirty,
   markSaved,
   nextActiveId,
+  officeCreateKind,
   openDocument,
   redo,
+  replaceDocument,
+  saveAsName,
+  saveTarget,
+  setEngineModified,
   undo,
 } from './documents.ts';
 import type { PickedFile } from './bridge.ts';
@@ -188,6 +194,249 @@ describe('openDocument', () => {
     const two = createDocument(picked('result.pdf', ''));
     const { documents } = openDocument([one], two);
     assert.equal(documents.length, 2, 'in-memory results are not the same document');
+  });
+});
+
+describe('replaceDocument', () => {
+  const a = createDocument(picked('a.pdf', '/docs/a.pdf'));
+  const b = createDocument(picked('b.pdf', '/docs/b.pdf'));
+  const c = createDocument(picked('c.pdf', '/docs/c.pdf'));
+
+  it('takes the old tab position rather than moving to the end', () => {
+    const rewritten = createDocument(picked('b.pdf', '/docs/b.pdf', 9));
+    const documents = replaceDocument([a, b, c], b.id, rewritten);
+    assert.deepEqual(documents.map((d) => d.id), [a.id, rewritten.id, c.id]);
+  });
+
+  it('drops another tab left on the same file, so the swap cannot duplicate it', () => {
+    const stale = createDocument(picked('b.pdf', '/docs/b.pdf', 2));
+    const rewritten = createDocument(picked('b.pdf', '/docs/b.pdf', 9));
+    const documents = replaceDocument([a, b, stale], b.id, rewritten);
+    assert.deepEqual(documents.map((d) => d.id), [a.id, rewritten.id]);
+  });
+
+  it('appends when the tab it should replace is already gone', () => {
+    const rewritten = createDocument(picked('d.pdf', '/docs/d.pdf'));
+    const documents = replaceDocument([a], 'missing-id', rewritten);
+    assert.deepEqual(documents.map((d) => d.id), [a.id, rewritten.id]);
+  });
+});
+
+describe('documents rendered from an Office file', () => {
+  const preview = (): PickedFile => ({
+    ...picked('报告.pdf', ''),
+    origin: { path: '/docs/报告.docx', kind: 'word' },
+  });
+
+  it('remembers the Office file it was rendered from', () => {
+    const doc = createDocument(preview());
+    assert.deepEqual(doc.origin, { path: '/docs/报告.docx', kind: 'word' });
+  });
+
+  it('is an ordinary document when it came from a real PDF', () => {
+    const doc = createDocument(picked('a.pdf', '/docs/a.pdf'));
+    assert.equal(doc.origin, null);
+  });
+
+  /**
+   * The bytes in this tab are a PDF rendering, and the path it came from is a
+   * .docx. Writing one over the other destroys the user's document, so a
+   * rendered document has no path to save over — Save As is the only route.
+   */
+  it('never carries a path that Save would overwrite', () => {
+    const doc = createDocument(preview());
+    assert.equal(doc.path, '');
+  });
+
+  /** Saving elsewhere produces a normal PDF, no longer tied to the source. */
+  it('stops being a rendering once it is saved somewhere of its own', () => {
+    const saved = markSaved(createDocument(preview()), '/docs/报告.pdf');
+    assert.equal(saved.path, '/docs/报告.pdf');
+    assert.equal(saved.origin, null);
+  });
+
+  /**
+   * Two renderings of the same source are the same tab. Without this they
+   * would stack up, because a rendering has no path to match on.
+   */
+  it('focuses the existing tab when the same Office file is opened again', () => {
+    const first = openDocument([], createDocument(preview()));
+    const second = openDocument(first.documents, createDocument(preview()));
+    assert.equal(second.documents.length, 1);
+    assert.equal(second.activeId, first.documents[0]?.id);
+  });
+});
+
+describe('documents held by the editor engine', () => {
+  const hosted = (overrides: Partial<PickedFile> = {}): PickedFile => ({
+    ...picked('报告.docx', '/docs/报告.docx', 0),
+    bytes: new Uint8Array(0),
+    editor: { sessionId: 'sess1', url: 'http://127.0.0.1:5000/editor/sess1', editorType: 'word' },
+    ...overrides,
+  });
+
+  it('remembers the session the engine is holding it in', () => {
+    const doc = createDocument(hosted());
+    assert.deepEqual(doc.editor, {
+      sessionId: 'sess1',
+      url: 'http://127.0.0.1:5000/editor/sess1',
+      editorType: 'word',
+    });
+  });
+
+  it('is an ordinary document when no engine is involved', () => {
+    assert.equal(createDocument(picked('a.pdf', '/docs/a.pdf')).editor, null);
+  });
+
+  /**
+   * The bytes live in the engine, not here, so this tab's history is the
+   * engine's too. Reporting anything else would offer an Undo that silently
+   * did nothing.
+   */
+  it('has no history of its own', () => {
+    const doc = createDocument(hosted());
+    assert.equal(canUndo(doc), false);
+    assert.equal(canRedo(doc), false);
+    assert.equal(doc.bytes.length, 0);
+  });
+
+  /** Editing happens in the engine, which tells us when it has begun. */
+  it('takes its dirty state from the engine', () => {
+    const doc = createDocument(hosted());
+    assert.equal(isDirty(doc), false);
+    assert.equal(isDirty(setEngineModified(doc, true)), true);
+    assert.equal(isDirty(setEngineModified(doc, false)), false);
+  });
+
+  /** It has a real file behind it, so ⌘S means "write it back", not Save As. */
+  it('keeps the path of the file it was opened from', () => {
+    assert.equal(createDocument(hosted()).path, '/docs/报告.docx');
+  });
+
+  it('is the same tab when the same file is opened again', () => {
+    const first = openDocument([], createDocument(hosted()));
+    const second = openDocument(first.documents, createDocument(hosted()));
+    assert.equal(second.documents.length, 1);
+  });
+
+  /**
+   * "New" in the engine's file menu must create the same kind of document as
+   * the one in front. Without the editor type on the tab, every new document
+   * would be Word — even when the open one is a sheet or a deck.
+   */
+  it('carries the engine type so New can match the open document', () => {
+    const sheet = createDocument(
+      hosted({
+        name: '表.xlsx',
+        path: '/docs/表.xlsx',
+        editor: { sessionId: 's2', url: 'http://127.0.0.1:9/e/s2', editorType: 'cell' },
+      }),
+    );
+    assert.equal(officeCreateKind(sheet), 'sheet');
+    assert.equal(
+      officeCreateKind(
+        createDocument(
+          hosted({
+            name: 'deck.pptx',
+            path: '/docs/deck.pptx',
+            editor: { sessionId: 's3', url: 'http://127.0.0.1:9/e/s3', editorType: 'slide' },
+          }),
+        ),
+      ),
+      'slide',
+    );
+    assert.equal(officeCreateKind(createDocument(hosted())), 'word');
+  });
+
+  /** Falls back to the file name when an older session lacks editorType. */
+  it('infers the create kind from the file name when the type is missing', () => {
+    const doc = createDocument(
+      hosted({
+        name: 'budget.xlsx',
+        path: '/docs/budget.xlsx',
+        editor: { sessionId: 's4', url: 'http://127.0.0.1:9/e/s4' },
+      }),
+    );
+    assert.equal(officeCreateKind(doc), 'sheet');
+  });
+
+  /**
+   * Save As rewrites the session's path in the main process. The tab has to
+   * follow, or the next ⌘S and the tab title still point at the original.
+   */
+  it('adopts the path and name the engine saved under', () => {
+    const dirty = setEngineModified(createDocument(hosted()), true);
+    const saved = applyEngineSaved(dirty, { path: '/docs/copy.docx', name: 'copy.docx' });
+    assert.equal(saved.path, '/docs/copy.docx');
+    assert.equal(saved.name, 'copy.docx');
+    assert.equal(isDirty(saved), false);
+  });
+
+  it('clears dirty even when the path did not change', () => {
+    const dirty = setEngineModified(createDocument(hosted()), true);
+    assert.equal(isDirty(applyEngineSaved(dirty, {})), false);
+  });
+});
+
+describe('where ⌘S sends a document', () => {
+  const hosted = (): PickedFile => ({
+    ...picked('报告.docx', '/docs/报告.docx', 0),
+    bytes: new Uint8Array(0),
+    editor: { sessionId: 'sess1', url: 'http://127.0.0.1:5000/editor/sess1', editorType: 'word' },
+  });
+
+  /**
+   * The bytes of a hosted document are in the engine; the shell holds an empty
+   * array. Writing that over the path would truncate the user's document to
+   * nothing, so this decision is a function rather than a condition buried in
+   * the store where nothing checks it.
+   */
+  it('sends a hosted document to the engine, never to a direct write', () => {
+    assert.equal(saveTarget(createDocument(hosted())), 'engine');
+  });
+
+  it('writes an ordinary document straight to its path', () => {
+    assert.equal(saveTarget(createDocument(picked('a.pdf', '/docs/a.pdf'))), 'path');
+  });
+
+  it('asks where to put a document that has no path yet', () => {
+    assert.equal(saveTarget(createDocument(picked('result.pdf', ''))), 'prompt');
+  });
+
+  /** A rendering has no path by construction; it must never be written back. */
+  it('asks where to put a rendering', () => {
+    const rendering = createDocument({
+      ...picked('报告.pdf', ''),
+      origin: { path: '/docs/报告.docx', kind: 'word' },
+    });
+    assert.equal(saveTarget(rendering), 'prompt');
+  });
+});
+
+describe('the name Save As proposes', () => {
+  /**
+   * A rendering's bytes are a PDF while its name still ends in .docx, because
+   * the tab shows the document the user opened. Proposing that name would save
+   * a PDF as a Word file — openable by nothing.
+   */
+  it('proposes a PDF name for a rendering', () => {
+    const doc = createDocument({
+      ...picked('报告.docx', ''),
+      origin: { path: '/docs/报告.docx', kind: 'word' },
+    });
+    assert.equal(saveAsName(doc), '报告.pdf');
+  });
+
+  it('leaves an ordinary document name alone', () => {
+    assert.equal(saveAsName(createDocument(picked('a.pdf', '/docs/a.pdf'))), 'a.pdf');
+  });
+
+  it('copes with a name that has no extension', () => {
+    const doc = createDocument({
+      ...picked('报告', ''),
+      origin: { path: '/docs/报告', kind: 'word' },
+    });
+    assert.equal(saveAsName(doc), '报告.pdf');
   });
 });
 

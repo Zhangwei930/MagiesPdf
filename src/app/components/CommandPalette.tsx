@@ -48,7 +48,7 @@ export function CommandPalette({ onClose, onSelect, filterAccept }: CommandPalet
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-4 pt-[12vh] backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-[var(--overlay-scrim)] px-4 pt-[12vh] backdrop-blur-sm"
       onClick={onClose}
       role="presentation"
     >

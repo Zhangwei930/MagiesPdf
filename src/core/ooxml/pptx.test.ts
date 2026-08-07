@@ -37,3 +37,35 @@ describe('slidesToPptx + extractPptxSlideTexts', () => {
     assert.ok(texts[1]?.includes('Next'));
   });
 });
+
+describe('the theme a presentation needs to be openable', () => {
+  const parts = () => zipRead(slidesToPptx([{ title: 'A', body: ['b'] }]));
+  const text = (name: string) => new TextDecoder().decode(parts().get(name)!);
+
+  /**
+   * A presentation without a theme is not merely plain — editors refuse to open
+   * it. The slide master resolves its colours, fonts and formats through the
+   * theme, and with nothing there the load fails rather than falling back.
+   */
+  it('includes a theme part', () => {
+    assert.ok(parts().has('ppt/theme/theme1.xml'), 'no theme in the package');
+  });
+
+  it('declares the theme so the package is valid', () => {
+    assert.match(text('[Content_Types].xml'), /theme\+xml/);
+  });
+
+  it('has the slide master point at it', () => {
+    const rels = text('ppt/slideMasters/_rels/slideMaster1.xml.rels');
+    assert.match(rels, /theme/);
+    assert.match(rels, /theme1\.xml/);
+  });
+
+  /** The colour scheme is what the master's placeholders actually reference. */
+  it('gives the theme a colour and font scheme', () => {
+    const theme = text('ppt/theme/theme1.xml');
+    assert.match(theme, /<a:clrScheme/);
+    assert.match(theme, /<a:fontScheme/);
+    assert.match(theme, /<a:fmtScheme/);
+  });
+});

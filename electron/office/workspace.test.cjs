@@ -98,4 +98,15 @@ describe('createOfficeWorkspace', () => {
     assert.deepEqual(workspace.getStatus(), { configured: false, path: '' });
     await assert.rejects(() => workspace.listDocuments(), /workspace folder/i);
   });
+
+  it('grants the parent directory of a saved document', async () => {
+    const root = await temporaryDirectory();
+    const file = path.join(root, '555.xlsx');
+    await fs.writeFile(file, 'x');
+    const workspace = createOfficeWorkspace();
+    const status = await workspace.setRootFromDocumentPath(file);
+    assert.equal(status.configured, true);
+    assert.equal(status.path, await fs.realpath(root));
+  });
 });
+

@@ -194,8 +194,56 @@ async function callRestTool({ tool, args, apiUrl, token, fetchImpl = fetch }) {
   };
 }
 
+/**
+ * Office automation tools already carry OpenAI-style JSON Schema parameters.
+ * Expose them on MCP under their function names (office_excel_write, …).
+ * Interactive-only tools (document macros) stay out of MCP discovery.
+ */
+function buildOfficeMcpTools(officeTools) {
+  return (Array.isArray(officeTools) ? officeTools : [])
+    .filter((tool) => tool && tool.unattended !== false && tool.functionName)
+    .map((tool) => ({
+      name: String(tool.functionName),
+      description: String(tool.description || tool.functionName),
+      inputSchema: tool.parameters && typeof tool.parameters === 'object'
+        ? tool.parameters
+        : { type: 'object', properties: {} },
+      toolId: String(tool.toolId || tool.functionName),
+      kind: 'office',
+      functionName: String(tool.functionName),
+    }));
+}
+
+async function callRestOfficeTool({ functionName, args, apiUrl, token, fetchImpl = fetch }) {
+  const localApiUrl = validateApiUrl(apiUrl);
+  if (!token) throw new Error('MAGIES_OFFICE_API_TOKEN is required');
+  const name = String(functionName || '');
+  if (!name) throw new Error('Office tool name is required');
+
+  const response = await fetchImpl(`${localApiUrl}/office/tools/${encodeURIComponent(name)}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(args && typeof args === 'object' ? args : {}),
+  });
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error(`Magies Office API returned invalid JSON (HTTP ${response.status})`);
+  }
+  if (!response.ok) {
+    throw new Error(payload.message || `Magies Office automation failed with HTTP ${response.status}`);
+  }
+  return payload.result !== undefined ? payload.result : payload;
+}
+
 module.exports = {
   buildMcpTools,
+  buildOfficeMcpTools,
+  callRestOfficeTool,
   callRestTool,
   isSecretDependent,
   readInputs,

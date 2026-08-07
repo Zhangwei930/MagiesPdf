@@ -11,14 +11,18 @@ function serviceWith(overrides = {}) {
       maxSteps: 6,
     },
   };
-  let apiKey = 'encrypted-key';
+  // Keyed by secret name: the migrated provider reads the pre-list `apiKey`.
+  const secrets = { apiKey: 'encrypted-key' };
   return createAiService({
     readCatalog: () => ({ tools: [] }),
     readSettings: () => settings,
     secretStore: {
-      hasApiKey: () => apiKey !== '',
-      getApiKey: () => apiKey,
-      setApiKey: (value) => { apiKey = value; },
+      hasSecret: (key) => typeof secrets[key] === 'string' && secrets[key] !== '',
+      getSecret: (key) => secrets[key] || '',
+      setSecret: (key, value) => {
+        if (value) secrets[key] = value;
+        else delete secrets[key];
+      },
     },
     executeTool: async () => ({ files: [] }),
     model: {},
@@ -31,18 +35,67 @@ describe('AI service', () => {
   it('reports model configuration without exposing the API key', () => {
     const service = serviceWith();
     assert.deepEqual(service.getConfig(), {
+      providers: [{
+        id: 'legacy',
+        providerId: 'custom',
+        name: 'Custom',
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        model: 'local-model',
+        reasoningEffort: '',
+        enabled: true,
+        apiKeyConfigured: true,
+      }],
+      activeProviderId: 'legacy',
+      maxSteps: 6,
       baseUrl: 'http://127.0.0.1:11434/v1',
       model: 'local-model',
-      maxSteps: 6,
       apiKeyConfigured: true,
     });
     assert.equal(JSON.stringify(service.getConfig()).includes('encrypted-key'), false);
   });
 
-  it('stores and clears the API key through the secret adapter', () => {
+  it('stores and clears the API key of a provider through the secret adapter', () => {
     const service = serviceWith();
-    assert.deepEqual(service.setApiKey('next-key'), { apiKeyConfigured: true });
-    assert.deepEqual(service.setApiKey(''), { apiKeyConfigured: false });
+    assert.deepEqual(service.setApiKey('next-key'), { providerId: 'legacy', apiKeyConfigured: true });
+    assert.deepEqual(service.setApiKey(''), { providerId: 'legacy', apiKeyConfigured: false });
+  });
+
+  it('refuses a remote turn while strict local privacy is on', async () => {
+    const service = serviceWith({
+      readSettings: () => ({
+        ai: {
+          strictLocalPrivacy: true,
+          providers: [{ id: 'a', name: 'A', baseUrl: 'https://api.example.com/v1', model: 'm', enabled: true }],
+          activeProviderId: 'a',
+        },
+      }),
+    });
+    await assert.rejects(
+      () => service.runTurn({ requestId: 'strict-1', prompt: 'hi' }, () => {}),
+      (error) => error.code === 'AI_STRICT_LOCAL_PRIVACY',
+    );
+  });
+
+  it('still runs a loopback turn while strict local privacy is on', async () => {
+    const service = serviceWith({
+      readSettings: () => ({
+        ai: {
+          strictLocalPrivacy: true,
+          providers: [{ id: 'a', name: 'A', baseUrl: 'http://127.0.0.1:11434/v1', model: 'm', enabled: true }],
+          activeProviderId: 'a',
+        },
+      }),
+    });
+    const result = await service.runTurn({ requestId: 'strict-2', prompt: 'hi' }, () => {});
+    assert.equal(result.message, 'ok');
+  });
+
+  it('refuses a turn when no provider is configured', async () => {
+    const service = serviceWith({ readSettings: () => ({ ai: { providers: [], activeProviderId: '' } }) });
+    await assert.rejects(
+      () => service.runTurn({ requestId: 'turn-none', prompt: 'hi' }, () => {}),
+      (error) => error.code === 'AI_CONFIG_INVALID',
+    );
   });
 
   it('correlates approval events and resumes the pending turn', async () => {

@@ -14,7 +14,12 @@ function requestedArch() {
   return process.env.npm_config_arch || process.env.npm_config_target_arch || process.arch;
 }
 
-const { assertOfficeRuntime } = require('./scripts/officePackaging.cjs');
+const {
+  assertDocumentEngine,
+  assertOfficeRuntime,
+  converterFilter,
+  sharedEngineFilter,
+} = require('./scripts/officePackaging.cjs');
 
 function builderArchName(arch) {
   if (typeof arch === 'string') return arch;
@@ -121,18 +126,40 @@ module.exports = {
   ],
 
   extraResources: [
+    // Both licences the app redistributes under. AGPL entitles whoever has the
+    // binary to these, so they ship beside it rather than only in the repo.
+    { from: 'LICENSE', to: 'LICENSE' },
+    { from: 'NOTICE.md', to: 'NOTICE.md' },
     {
       from: 'vendor/office-runtime/${os}-${arch}',
       to: 'office-runtime',
     },
+    // The document engine, composed from its two halves into the one directory
+    // the runtime reads. A checkout keeps them apart — the javascript once,
+    // the converter per target — and links them together; copying the target
+    // directory whole would copy those links, which lead nowhere in an app.
+    //
+    // The filter drops what no document passes through: see
+    // `documentEngineFilter`, and the packaging tests that name what survives.
+    {
+      from: 'vendor/onlyoffice/shared',
+      to: 'onlyoffice',
+      filter: sharedEngineFilter(),
+    },
+    {
+      from: 'vendor/onlyoffice/${os}-${arch}/converter',
+      to: 'onlyoffice/converter',
+      filter: converterFilter(),
+    },
   ],
 
   beforePack: async (context) => {
-    assertOfficeRuntime({
-      projectRoot: __dirname,
-      platform: context.electronPlatformName,
-      arch: builderArchName(context.arch),
-    });
+    const platform = context.electronPlatformName;
+    const arch = builderArchName(context.arch);
+    assertOfficeRuntime({ projectRoot: __dirname, platform, arch });
+    // A build without the engine installs and starts, and fails the first time
+    // anyone opens a document. Refuse here instead.
+    assertDocumentEngine({ projectRoot: __dirname, platform, arch });
   },
 
   mac: {

@@ -121,6 +121,30 @@ describe('AI task history store', () => {
     });
   });
 
+  it('removes one task without touching the rest', async () => {
+    const filePath = await temporaryHistoryPath();
+    let id = 0;
+    const store = createAiHistoryStore({
+      filePath,
+      createId: () => `history-${(id += 1)}`,
+      now: () => id,
+    });
+    store.append({ prompt: 'first' });
+    store.append({ prompt: 'second' });
+    store.append({ prompt: 'third' });
+
+    assert.equal(store.remove('history-2'), true);
+    assert.deepEqual(store.list().map((entry) => entry.prompt), ['third', 'first']);
+    // Persisted, not only dropped from the cache.
+    const saved = JSON.parse(await fs.readFile(filePath, 'utf8'));
+    assert.deepEqual(saved.entries.map((entry) => entry.id), ['history-3', 'history-1']);
+
+    // An id that is not there is a no-op, not a thrown error or a wipe.
+    assert.equal(store.remove('history-2'), false);
+    assert.equal(store.remove(''), false);
+    assert.equal(store.list().length, 2);
+  });
+
   it('filters malformed stored entries and unknown nested metadata', async () => {
     const filePath = await temporaryHistoryPath();
     await fs.writeFile(filePath, JSON.stringify({

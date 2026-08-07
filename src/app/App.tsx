@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import type { ToolMeta } from '@core/types.ts';
+import { defaultParams } from '@core/params.ts';
+import type { ToolMeta, ToolOutputFile } from '@core/types.ts';
 import { uiRegistry } from './catalog.ts';
 import {
   bridge,
@@ -8,23 +9,41 @@ import {
   type OfficeCreateKind,
   type PickedFile,
 } from './bridge.ts';
-import { t } from './i18n.ts';
-import { AlertCircle, Bot, Eye, Loader2, Settings } from './icons.ts';
+import { localized, t } from './i18n.ts';
+import { AlertCircle, Bot, Check, Eye, Loader2, Save, Settings, ToolIcon, X } from './icons.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
-import { activeJobCount, useApp } from './store.ts';
-import { isDirty, type DocumentState } from './documents.ts';
-import { canApplyToDocument } from './toolApply.ts';
-import { partitionDocumentPaths } from './office.ts';
+import { useApp } from './store.ts';
+import { isDirty, officeCreateKind, saveAsName, type DocumentState } from './documents.ts';
+import {
+  canApplyInstantly,
+  canOpenFromDocument,
+  canQuickApplyWithConfirm,
+  classifyOutput,
+} from './toolApply.ts';
+import { officeUiThemeFor, partitionDocumentPaths } from './office.ts';
+import {
+  EMPTY_APPROVAL_STATE,
+  withDecision,
+  withRequest,
+  withTimeout,
+  type ApprovalDecision,
+} from './ai/officeApprovals.ts';
 import { createDefaultBlankPdf } from './pdf/directEdit.ts';
 import { CommandPalette } from './components/CommandPalette.tsx';
 import { ApplyToolPanel } from './components/ApplyToolPanel.tsx';
 import { DocumentTabs } from './components/DocumentTabs.tsx';
 import { Home } from './components/Home.tsx';
-import { JobPanel } from './components/JobPanel.tsx';
 import { Ribbon } from './components/Ribbon.tsx';
 import { ToolPage } from './components/ToolPage.tsx';
 import { UpdatePrompt } from './components/UpdatePrompt.tsx';
-import { Badge, Button } from './components/ui.tsx';
+import { Button } from './components/ui.tsx';
+
+/** Brief feedback after a one-shot ribbon tool (WPS-style, no pane). */
+type TaskFeedback =
+  | { kind: 'working'; title: string }
+  | { kind: 'ok'; title: string; detail?: string }
+  | { kind: 'error'; title: string; detail: string }
+  | { kind: 'files'; title: string; summary?: string; files: ToolOutputFile[] };
 
 /**
  * Screens that most sessions never open, kept out of the entry chunk.
@@ -46,12 +65,25 @@ const PipelinePage = lazy(() =>
 const SettingsPanel = lazy(() =>
   import('./components/SettingsPanel.tsx').then((module) => ({ default: module.SettingsPanel })),
 );
+const OnboardingWizard = lazy(() =>
+  import('./components/OnboardingWizard.tsx').then((module) => ({ default: module.OnboardingWizard })),
+);
 const SignPage = lazy(() =>
   import('./components/SignPage.tsx').then((module) => ({ default: module.SignPage })),
+);
+const OfficeEditor = lazy(() =>
+  import('./components/OfficeEditor.tsx').then((module) => ({ default: module.OfficeEditor })),
 );
 const AIChatPanel = lazy(() =>
   import('./components/AIChatPanel.tsx').then((module) => ({ default: module.AIChatPanel })),
 );
+
+/**
+ * How long a rewritten document waits for the next write before the editor is
+ * reopened. One AI request often rewrites the same file several times, and each
+ * reopen is a full engine boot — long enough to look like the app restarting.
+ */
+const REOPEN_SETTLE_MS = 900;
 
 /** Shown while one of the screens above is being fetched. */
 function ScreenFallback() {
@@ -65,13 +97,12 @@ function ScreenFallback() {
 type MainView =
   | { name: 'welcome' }
   | { name: 'tool'; toolId: string; initialFile?: PickedFile }
-  | { name: 'document' }
-  | { name: 'settings' };
+  | { name: 'document' };
 
 export function App() {
   const ready = useApp((s) => s.ready);
   const locale = useApp((s) => s.locale);
-  const jobs = useApp((s) => s.jobs);
+  const updateSettings = useApp((s) => s.updateSettings);
   const startupError = useApp((s) => s.startupError);
   const initialize = useApp((s) => s.initialize);
   const documents = useApp((s) => s.documents);
@@ -80,49 +111,166 @@ export function App() {
   const closeDocument = useApp((s) => s.closeDocument);
   const setActiveDocument = useApp((s) => s.setActiveDocument);
   const saveDocument = useApp((s) => s.saveDocument);
+  const saveDocumentAs = useApp((s) => s.saveDocumentAs);
+  const setEngineModified = useApp((s) => s.setEngineModified);
+  const engineSaveRequest = useApp((s) => s.engineSaveRequest);
+  const engineSaved = useApp((s) => s.engineSaved);
 
   const [main, setMain] = useState<MainView>({ name: 'welcome' });
   const [paletteOpen, setPaletteOpen] = useState(false);
   // Set while the palette was opened from the document toolbar, so the results
   // are scoped to tools that accept a PDF.
   const [paletteForDocument, setPaletteForDocument] = useState(false);
-  const [jobsOpen, setJobsOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiMounted, setAiMounted] = useState(false);
   // A tab being closed with unsaved changes, held until the user decides.
   const [closing, setClosing] = useState<DocumentState | null>(null);
   // The tool being run against the open document, if any.
   const [applying, setApplying] = useState<ToolMeta | null>(null);
+  // Simple default-option tools: confirm once before applying with catalogue defaults.
+  const [quickConfirm, setQuickConfirm] = useState<ToolMeta | null>(null);
+  // One-shot tools: spinner / success / error / save-outputs toast.
+  const [taskFeedback, setTaskFeedback] = useState<TaskFeedback | null>(null);
+  const taskFeedbackTimer = useRef<number | null>(null);
   // Nested dragenter/dragleave pairs fire per child element; counting them is
   // the only reliable way to know the pointer has truly left the window.
   const dragDepth = useRef(0);
   const [dropping, setDropping] = useState(false);
   const [dropError, setDropError] = useState('');
+  // The Office files being rendered right now. Rendering is seconds of silence
+  // otherwise, which reads as the app having ignored the click.
+  const [opening, setOpening] = useState<string[]>([]);
+
+  /**
+   * Clears the drop overlay whatever swallowed the event.
+   *
+   * A tool's own drop zone calls `stopPropagation`, so dropping on one never
+   * reaches the window handler below and the depth counter would stay above
+   * zero — leaving "release to open" on screen for good. These listeners are
+   * on the capture phase, which a child cannot stop, and `dragend` covers a
+   * drag abandoned outside the window.
+   */
+  useEffect(() => {
+    const clear = () => {
+      dragDepth.current = 0;
+      setDropping(false);
+    };
+    window.addEventListener('drop', clear, true);
+    window.addEventListener('dragend', clear, true);
+    return () => {
+      window.removeEventListener('drop', clear, true);
+      window.removeEventListener('dragend', clear, true);
+    };
+  }, []);
 
   const activeDocument = documents.find((d) => d.id === activeDocumentId) ?? null;
+  const applyToolToDocument = useApp((s) => s.applyToolToDocument);
+
+  const clearTaskFeedbackTimer = useCallback(() => {
+    if (taskFeedbackTimer.current !== null) {
+      window.clearTimeout(taskFeedbackTimer.current);
+      taskFeedbackTimer.current = null;
+    }
+  }, []);
+
+  const showTaskFeedback = useCallback(
+    (next: TaskFeedback, autoHideMs?: number) => {
+      clearTaskFeedbackTimer();
+      setTaskFeedback(next);
+      if (autoHideMs !== undefined) {
+        taskFeedbackTimer.current = window.setTimeout(() => {
+          setTaskFeedback(null);
+          taskFeedbackTimer.current = null;
+        }, autoHideMs);
+      }
+    },
+    [clearTaskFeedbackTimer],
+  );
+
+  useEffect(() => () => clearTaskFeedbackTimer(), [clearTaskFeedbackTimer]);
 
   useEffect(() => {
     void initialize();
   }, [initialize]);
 
+  // The engine writes a document back through the main process, so the shell
+  // learns a save finished from there rather than from the frame — including
+  // the path after Save As, which the tab has to adopt.
+  useEffect(() => {
+    if (!hasBridge()) return undefined;
+    return bridge().onEditorSaved((payload) => engineSaved(payload));
+  }, [engineSaved]);
+
+  /** Apply a tool to the active PDF with default params (instant / quick-confirm). */
+  const runAgainstActiveDocument = useCallback(
+    (picked: ToolMeta, documentId: string) => {
+      const title = picked.name[locale];
+      showTaskFeedback({ kind: 'working', title });
+      void (async () => {
+        try {
+          const result = await applyToolToDocument(
+            documentId,
+            picked,
+            defaultParams(picked.params),
+          );
+          const outcome = classifyOutput(result.files);
+          const summary = result.summary ? localized(result.summary, locale) : undefined;
+          if (outcome.kind === 'document') {
+            // Compress etc. put size before/after in summary — surface it, not just the tool name.
+            showTaskFeedback(
+              { kind: 'ok', title, detail: summary },
+              summary ? 4500 : 2200,
+            );
+            return;
+          }
+          if (result.files.length > 0) {
+            showTaskFeedback({
+              kind: 'files',
+              title,
+              summary,
+              files: [...result.files],
+            });
+            return;
+          }
+          showTaskFeedback(
+            {
+              kind: 'ok',
+              title: summary ?? title,
+            },
+            3200,
+          );
+        } catch (cause) {
+          showTaskFeedback({
+            kind: 'error',
+            title,
+            detail: cause instanceof Error ? cause.message : String(cause),
+          });
+        }
+      })();
+    },
+    [applyToolToDocument, locale, showTaskFeedback],
+  );
+
   /**
    * Where picking a tool goes.
    *
-   * With a document in hand there are two cases. A tool that wants one PDF runs
-   * against it right there, with the result landing back in the page — the
-   * document is never found, saved and re-opened just to be worked on. A tool
-   * that needs more than that still needs its full page, but opens with the
-   * document already loaded rather than an empty drop zone.
-   *
-   * `withActiveDocument` is what makes the sidebar behave like a ribbon while a
-   * document is on screen, and like plain navigation when one is not.
+   * With a PDF open: zero-option tools apply immediately; simple default tools
+   * ask once; other tools dock as a right task pane; the rest open a window.
    */
   const routeToTool = useCallback(
     (toolId: string, withActiveDocument: boolean) => {
       const picked = uiRegistry.tryGet(toolId);
 
-      if (withActiveDocument && activeDocument && picked) {
-        if (canApplyToDocument(picked)) {
+      if (withActiveDocument && activeDocument && picked && !activeDocument.editor) {
+        if (canApplyInstantly(picked)) {
+          runAgainstActiveDocument(picked, activeDocument.id);
+          return;
+        }
+        if (canQuickApplyWithConfirm(picked)) {
+          setQuickConfirm(picked);
+          return;
+        }
+        if (canOpenFromDocument(picked)) {
           setApplying(picked);
           return;
         }
@@ -141,7 +289,7 @@ export function App() {
       }
       setMain({ name: 'tool', toolId });
     },
-    [activeDocument],
+    [activeDocument, runAgainstActiveDocument],
   );
 
   const openTool = useCallback(
@@ -158,8 +306,28 @@ export function App() {
   }, []);
 
   const openWelcome = useCallback(() => setMain({ name: 'welcome' }), []);
-  const openSettings = useCallback(() => setMain({ name: 'settings' }), []);
+  /**
+   * Settings is a dialog over whatever is open, not a screen of its own: it is
+   * a place you visit for one change and leave, and losing your document view
+   * to reach it costs more than the dialog does.
+   */
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const [pendingAiPrompt, setPendingAiPrompt] = useState<string | null>(null);
+  /** Closed for this session, whether or not the user asked to keep it away. */
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  /** Tabs whose engine session the AI closed, waiting for the rewritten file. */
+  const [reloadingIds, setReloadingIds] = useState<string[]>([]);
+  /** Confirm-mode questions from outside this window, and what was decided. */
+  const [officeApprovals, setOfficeApprovals] = useState(EMPTY_APPROVAL_STATE);
+
   const openAi = useCallback(() => {
+    setAiMounted(true);
+    setAiOpen(true);
+  }, []);
+
+  const handleAiPrompt = useCallback((prompt: string) => {
+    setPendingAiPrompt(prompt);
     setAiMounted(true);
     setAiOpen(true);
   }, []);
@@ -173,16 +341,38 @@ export function App() {
     [openDocument],
   );
 
-  /** Routes PDFs into Magies and Office documents into the local Office host. */
+  /**
+   * Opens every document in this window.
+   *
+   * PDFs are read as bytes for the viewer. Word, Sheet and Slide files open in
+   * the embedded engine (no second application). Both become tabs here.
+   */
+  const settings = useApp((s) => s.settings);
+  const darkMode = useApp((s) => s.darkMode);
+
   const openPaths = useCallback(
     async (paths: string[]) => {
       if (paths.length === 0) return;
       const partitioned = partitionDocumentPaths(paths);
-      if (partitioned.office.length > 0) await bridge().openOfficePaths(partitioned.office);
+      if (partitioned.office.length > 0) {
+        setOpening(partitioned.office);
+        try {
+          // Word, Sheet and Slide documents open in the engine, where they can
+          // be edited. PDFs stay with the viewer below. uiTheme keeps the
+          // engine chrome in step with Magies / the OS — without it a dark
+          // loadmask can sit over a light document.
+          const uiTheme = officeUiThemeFor(settings.theme, darkMode);
+          for (const file of await bridge().openInEditor(partitioned.office, { uiTheme })) {
+            showDocument(file);
+          }
+        } finally {
+          setOpening([]);
+        }
+      }
       for (const file of await bridge().readFiles(partitioned.pdf)) showDocument(file);
       if (partitioned.unsupported.length > 0) throw new Error(t('dropNotDocument', locale));
     },
-    [locale, showDocument],
+    [darkMode, locale, settings.theme, showDocument],
   );
 
   const openDocumentPicker = useCallback(async () => {
@@ -190,11 +380,127 @@ export function App() {
     await openPaths(paths);
   }, [openPaths]);
 
+  /**
+   * Reopens a path the AI just rewrote, into the tab that already held it.
+   *
+   * The engine session behind that tab was closed before the write (a stale
+   * Editor.bin would otherwise overwrite the result on the next save), so the
+   * document has to come back through a new session either way. What must not
+   * happen is the tab disappearing in between: with one document open the shell
+   * falls back to the welcome screen, and the window looks like it restarted.
+   */
+  const reopenApplied = useCallback(
+    async (absolutePath: string) => {
+      const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase();
+      const target = norm(absolutePath);
+      const held = useApp
+        .getState()
+        .documents.find((doc) => doc.path && norm(doc.path) === target && doc.editor);
+      try {
+        if (!held) {
+          // Not open here — the AI wrote a file the user is not looking at.
+          await openPaths([absolutePath]);
+          return;
+        }
+        const uiTheme = officeUiThemeFor(settings.theme, darkMode);
+        const [file] = await bridge().openInEditor([absolutePath], { uiTheme });
+        if (file) useApp.getState().replaceDocument(held.id, file);
+      } catch (cause) {
+        console.warn('[app] failed to reload AI-updated document:', cause);
+      } finally {
+        setReloadingIds([]);
+      }
+    },
+    [darkMode, openPaths, settings.theme],
+  );
+
+  useEffect(() => {
+    if (!hasBridge()) return undefined;
+    /** Set while a write is in flight, so the reopen can be coalesced. */
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    const unsubClosed = bridge().onOfficeSessionsClosed(({ sessions }) => {
+      const closedIds = new Set(sessions.map((session) => session.sessionId));
+      if (closedIds.size === 0) return;
+      if (pending) {
+        clearTimeout(pending);
+        pending = null;
+      }
+      // The tab stays; only its editor is replaced by a "reloading" panel,
+      // because the frame behind it no longer has a session to talk to.
+      setReloadingIds(
+        useApp
+          .getState()
+          .documents.filter((doc) => doc.editor && closedIds.has(doc.editor.sessionId))
+          .map((doc) => doc.id),
+      );
+    });
+    const unsubApplied = bridge().onOfficeDocumentApplied(({ path: absolutePath }) => {
+      if (!absolutePath) return;
+      if (pending) clearTimeout(pending);
+      // One AI request often writes the same file several times over. Waiting
+      // for the writes to stop reopens the editor once instead of once per
+      // write — each reopen is a full engine boot.
+      pending = setTimeout(() => {
+        pending = null;
+        void reopenApplied(absolutePath);
+      }, REOPEN_SETTLE_MS);
+    });
+    return () => {
+      if (pending) clearTimeout(pending);
+      unsubClosed();
+      unsubApplied();
+    };
+  }, [reopenApplied]);
+
+  /**
+   * Confirm-mode questions about Office tools called from outside this window.
+   *
+   * The subscription lives here rather than in the panel: the panel is lazy, and
+   * a request nobody draws is a request that times out denied. Arriving with the
+   * panel closed opens it — the answer belongs next to the work being watched.
+   */
+  const answerOfficeApproval = useCallback((approvalId: string, decision: ApprovalDecision) => {
+    setOfficeApprovals((current) => withDecision(current, approvalId, decision, Date.now()));
+    void bridge().respondOfficeToolApproval(approvalId, decision).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!hasBridge()) return undefined;
+    const unsubRequest = bridge().onOfficeToolApproval((request) => {
+      setOfficeApprovals((current) => withRequest(current, request));
+      setAiMounted(true);
+      setAiOpen(true);
+    });
+    const unsubCleared = bridge().onOfficeToolApprovalCleared(({ approvalId }) => {
+      setOfficeApprovals((current) => withTimeout(current, approvalId, Date.now()));
+    });
+    return () => {
+      unsubRequest();
+      unsubCleared();
+    };
+  }, []);
+
   const createOfficeDocument = useCallback(
     async (kind: OfficeCreateKind) => {
-      await bridge().createAndOpenOffice(kind);
+      // The blank document is rendered the same way an opened one is, so the
+      // wait — and the reassurance — has to be the same too.
+      // The file is created first and then opened the same way any other
+      // document is, so a new document and an existing one cannot end up
+      // being shown by different things.
+      const { created, canceled } = await bridge().createBlankOffice(kind);
+      if (canceled || !created) return;
+
+      setOpening([created]);
+      try {
+        const uiTheme = officeUiThemeFor(settings.theme, darkMode);
+        for (const file of await bridge().openInEditor([created], { uiTheme })) {
+          showDocument(file);
+        }
+      } finally {
+        setOpening([]);
+      }
     },
-    [],
+    [darkMode, settings.theme, showDocument],
   );
 
   const createPdfDocument = useCallback(async () => {
@@ -255,8 +561,11 @@ export function App() {
   );
 
   /**
-   * The shell's shortcuts. Document shortcuts (save, zoom, paging) belong to
-   * the Viewer and are handled there; the two sets are disjoint.
+   * The shell's shortcuts.
+   *
+   * PDF save / zoom / paging stay on the Viewer. Hosted Office documents have
+   * no Viewer, so save and save-as are handled here — only when the open tab
+   * is engine-held, so the two sets stay disjoint.
    */
   useEffect(() => {
     const platform = currentPlatform();
@@ -276,7 +585,6 @@ export function App() {
           break;
         case 'dismiss':
           closePalette();
-          setJobsOpen(false);
           setDropError('');
           break;
         case 'close':
@@ -287,6 +595,18 @@ export function App() {
           else if (view.name !== 'welcome') openWelcome();
           else return;
           break;
+        case 'save':
+          if (view.name === 'document' && activeDocument?.editor && activeDocumentId) {
+            void saveDocument(activeDocumentId);
+            break;
+          }
+          return;
+        case 'saveAs':
+          if (view.name === 'document' && activeDocument?.editor && activeDocumentId) {
+            void saveDocumentAs(activeDocumentId);
+            break;
+          }
+          return;
         default:
           return;
       }
@@ -295,7 +615,17 @@ export function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeDocumentId, closePalette, view.name, openDocumentPicker, openWelcome, requestCloseTab]);
+  }, [
+    activeDocument,
+    activeDocumentId,
+    closePalette,
+    view.name,
+    openDocumentPicker,
+    openWelcome,
+    requestCloseTab,
+    saveDocument,
+    saveDocumentAs,
+  ]);
 
   if (!ready) {
     return (
@@ -322,9 +652,54 @@ export function App() {
     );
   }
 
-  const running = activeJobCount(jobs);
+  /**
+   * What the engine's file menu asks for. The engine only asks; creating,
+   * picking a file and choosing where a copy goes are all the shell's.
+   *
+   * WPS-style: 另存为 is one path dialog; 输出为PDF is the same with a .pdf name.
+   */
+  const handleEditorRequest = async (
+    document: DocumentState,
+    what: 'createNew' | 'open' | 'saveAs' | 'exportPdf',
+  ) => {
+    if (what === 'open') return openDocumentPicker();
+    // Same kind as the open document — derived from the engine type, not the
+    // old PDF-preview origin field (hosted tabs do not have one).
+    if (what === 'createNew') return createOfficeDocument(officeCreateKind(document));
+
+    // Where it goes is settled first; the save that follows lands there
+    // rather than over the original. PDF uses a .pdf default so the filter
+    // and LibreOffice path kick in without an engine format gallery.
+    const suggested = what === 'exportPdf' ? saveAsName(document) : document.name;
+    const target = await bridge().pickEditorSaveAsTarget(
+      document.editor?.sessionId ?? '',
+      suggested,
+    );
+    if (target) await useApp.getState().requestEngineSave(document.id);
+    return undefined;
+  };
+
+  /**
+   * The engine's "Save copy as" (另存副本为).
+   *
+   * By the time this runs the engine has already converted and uploaded the
+   * file. Writing it is a disk write of those bytes — not another engine save,
+   * which would try to treat a PDF as Editor.bin and fail silently.
+   */
+  const handleEditorExport = async (document: DocumentState, title: string) => {
+    if (!document.editor) return;
+    await bridge().saveEditorExport(document.editor.sessionId, title || document.name);
+  };
+
   const tool = view.name === 'tool' ? uiRegistry.tryGet(view.toolId) : undefined;
-  const showRibbon = view.name !== 'settings' && view.name !== 'welcome';
+  // The PDF ribbon belongs to a PDF. An Office document has the engine's own
+  // toolbar right below it, and none of these tools apply to what is open —
+  // two stacked toolbars where the top one does nothing for the document.
+  const officeEditor = view.name === 'document' && Boolean(activeDocument?.editor);
+  // PDF has its own WPS-style chrome inside Viewer; the toolbox Ribbon only
+  // belongs on tool pages (and the welcome never shows it).
+  const pdfDocumentOpen = view.name === 'document' && Boolean(activeDocument && !activeDocument.editor);
+  const showRibbon = view.name !== 'welcome' && !officeEditor && !pdfDocumentOpen;
 
   return (
     <div
@@ -360,18 +735,35 @@ export function App() {
         });
       }}
     >
-      <header className="drag-region flex h-11 shrink-0 items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-3">
+      <header className="drag-region flex h-12 shrink-0 items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-3">
         <div className="w-[68px] shrink-0" />
 
         <button
           type="button"
           onClick={openWelcome}
-          className="no-drag rounded-md px-2 py-1 text-[13px] font-semibold tracking-tight transition-colors hover:bg-[var(--surface-hover)]"
+          className="no-drag flex shrink-0 items-center gap-2 rounded-md px-2 py-1 text-[14.5px] font-semibold tracking-tight transition-colors hover:bg-[var(--surface-hover)]"
         >
+          <img
+            src={`${import.meta.env.BASE_URL}logo.png`}
+            alt=""
+            width={24}
+            height={24}
+            className="h-6 w-6 select-none"
+            draggable={false}
+          />
           {t('appName', locale)}
         </button>
 
-        <div className="flex-1" />
+        {/* WPS-style: document tabs sit in the title bar, not a second strip. */}
+        <div className="no-drag min-w-0 flex-1 overflow-hidden">
+          <DocumentTabs
+            variant="titlebar"
+            documents={documents}
+            activeId={view.name === 'document' ? activeDocumentId : null}
+            onSelect={selectTab}
+            onClose={requestCloseTab}
+          />
+        </div>
 
         <button
           type="button"
@@ -379,7 +771,7 @@ export function App() {
             setAiMounted(true);
             setAiOpen((open) => !open);
           }}
-          className="no-drag flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+          className="no-drag flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
         >
           <Bot size={15} />
           {t('aiAssistantShort', locale)}
@@ -387,18 +779,9 @@ export function App() {
 
         <button
           type="button"
-          onClick={() => setJobsOpen(true)}
-          className="no-drag flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[13px] text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
-        >
-          {t('jobs', locale)}
-          {running > 0 && <Badge tone="accent">{running}</Badge>}
-        </button>
-
-        <button
-          type="button"
           onClick={openSettings}
           aria-label={t('settings', locale)}
-          className="no-drag rounded-md p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
+          className="no-drag shrink-0 rounded-md p-1.5 text-[var(--text-secondary)] transition-colors hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)]"
         >
           <Settings size={15} />
         </button>
@@ -421,26 +804,66 @@ export function App() {
 
       <div className="flex min-h-0 flex-1">
         <div className="flex min-h-0 w-0 min-w-0 flex-1 flex-col">
-          <DocumentTabs
-            documents={documents}
-            activeId={view.name === 'document' ? activeDocumentId : null}
-            onSelect={selectTab}
-            onClose={requestCloseTab}
-          />
-
           <main
             className={clsx(
               'min-h-0 flex-1 bg-[var(--surface-app)]',
-              view.name === 'settings' || view.name === 'document'
-                ? 'overflow-hidden'
-                : 'overflow-y-auto',
+              view.name === 'document' ? 'overflow-hidden' : 'overflow-y-auto',
             )}
           >
             {/* One boundary for every lazily-loaded screen below. */}
             <Suspense fallback={<ScreenFallback />}>
-            {view.name === 'settings' && <SettingsPanel onBack={openWelcome} />}
+            {/*
+              Office engines stay mounted for every open tab. Switching only
+              toggles visibility — remounting the iframe reloads the whole
+              editor (fonts, sdkjs, document) and is far too slow for tab flips.
+            */}
+            {documents.map((doc) => {
+              if (!doc.editor) return null;
+              const active = view.name === 'document' && doc.id === activeDocumentId;
+              return (
+                <div
+                  key={doc.id}
+                  className={clsx('h-full w-full', active ? 'block' : 'hidden')}
+                  // Inactive editors stay in the tree so their frames keep state.
+                  aria-hidden={!active}
+                >
+                  {reloadingIds.includes(doc.id) ? (
+                    /* Its engine session is gone: the frame has nothing left to
+                       talk to, so it is replaced rather than left looking live. */
+                    <div
+                      className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[var(--bg)]"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <Loader2 size={24} className="animate-spin text-[var(--accent)]" />
+                      <p className="text-sm font-medium">{t('officeApplyingAiEdit', locale)}</p>
+                      <p className="max-w-sm truncate text-xs text-[var(--text-muted)]">{doc.name}</p>
+                    </div>
+                  ) : (
+                  <OfficeEditor
+                    document={doc}
+                    onModifiedChange={(modified) => {
+                      setEngineModified(doc.id, modified);
+                      // The main process refuses AI writes to a dirty document,
+                      // so it has to hear about the edit as it happens.
+                      if (doc.editor && hasBridge()) {
+                        void bridge()
+                          .setEditorModified(doc.editor.sessionId, modified)
+                          .catch(() => {});
+                      }
+                    }}
+                    saveRequestedAt={
+                      engineSaveRequest?.id === doc.id ? engineSaveRequest.at : 0
+                    }
+                    onRequest={(what) => void handleEditorRequest(doc, what)}
+                    onExportReady={(title) => void handleEditorExport(doc, title)}
+                  />
+                  )}
+                </div>
+              );
+            })}
 
-            {view.name === 'document' && activeDocument && (
+            {view.name === 'document' && activeDocument && !activeDocument.editor && (
               /* Keyed by document id so switching tabs remounts the viewer's
                  own view state — scroll, zoom, mode — per document, while the
                  bytes and history stay in the store. */
@@ -448,42 +871,19 @@ export function App() {
                 key={activeDocument.id}
                 document={activeDocument}
                 onChooseTool={openToolPickerForDocument}
+                onRunTool={(toolId) => openTool(toolId)}
+                onOpenDocument={() => void openDocumentPicker()}
+                onOpenRecent={(path) => void openPaths([path])}
+                onOpenSettings={openSettings}
+                onAiPrompt={handleAiPrompt}
               />
             )}
 
-            {view.name === 'tool' &&
-              (tool ? (
-                tool.id === 'advanced.pipeline' ? (
-                  <PipelinePage key={tool.id} tool={tool} onBack={openWelcome} />
-                ) : tool.id === 'advanced.batch' ? (
-                  <BatchPage key={tool.id} tool={tool} onBack={openWelcome} />
-                ) : tool.id === 'security.add-signature' ? (
-                  <SignPage key={tool.id} tool={tool} onBack={openWelcome} />
-                ) : (
-                  <ToolPage
-                    key={tool.id}
-                    tool={tool}
-                    onBack={openWelcome}
-                    initialFile={view.initialFile}
-                    onPreviewFile={showDocument}
-                  />
-                )
-              ) : (
-                <Home
-                  onOpenTool={openTool}
-                  onOpenSearch={() => setPaletteOpen(true)}
-                  onOpenDocument={openDocumentPicker}
-                  onCreateOffice={createOfficeDocument}
-                  onCreatePdf={createPdfDocument}
-                  onOpenRecent={(path) => openPaths([path])}
-                  onOpenAi={openAi}
-                />
-              ))}
-
-            {view.name === 'welcome' && (
+            {/* Keep the start centre under tool dialogs so closing feels like
+                dismissing a WPS window, not navigating away from a full page. */}
+            {(view.name === 'welcome' || view.name === 'tool') && (
               <Home
                 onOpenTool={openTool}
-                onOpenSearch={() => setPaletteOpen(true)}
                 onOpenDocument={openDocumentPicker}
                 onCreateOffice={createOfficeDocument}
                 onCreatePdf={createPdfDocument}
@@ -494,22 +894,49 @@ export function App() {
             </Suspense>
           </main>
         </div>
+
         {aiMounted && (
           <Suspense fallback={null}>
             <AIChatPanel
               open={aiOpen}
               locale={locale}
               activeDocument={activeDocument}
+              pendingPrompt={pendingAiPrompt}
+              onClearPendingPrompt={() => setPendingAiPrompt(null)}
               onClose={() => setAiOpen(false)}
               onOpenSettings={() => {
                 setAiOpen(false);
                 openSettings();
               }}
               onPreviewFile={showDocument}
+              onOpenPaths={(paths) => { void openPaths(paths); }}
+              officeApprovals={officeApprovals.pending}
+              officeApprovalRecords={officeApprovals.records}
+              onAnswerOfficeApproval={answerOfficeApproval}
             />
           </Suspense>
         )}
       </div>
+
+      {view.name === 'tool' && tool && (
+        <Suspense fallback={null}>
+          {tool.id === 'advanced.pipeline' ? (
+            <PipelinePage key={tool.id} tool={tool} onBack={openWelcome} />
+          ) : tool.id === 'advanced.batch' ? (
+            <BatchPage key={tool.id} tool={tool} onBack={openWelcome} />
+          ) : tool.id === 'security.add-signature' ? (
+            <SignPage key={tool.id} tool={tool} onBack={openWelcome} />
+          ) : (
+            <ToolPage
+              key={tool.id}
+              tool={tool}
+              onBack={openWelcome}
+              initialFile={view.initialFile}
+              onPreviewFile={showDocument}
+            />
+          )}
+        </Suspense>
+      )}
 
       {paletteOpen && (
         <CommandPalette
@@ -526,7 +953,72 @@ export function App() {
           onClose={() => setApplying(null)}
         />
       )}
-      <JobPanel open={jobsOpen} onClose={() => setJobsOpen(false)} />
+
+      {quickConfirm && activeDocument && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4"
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={quickConfirm.name[locale]}
+            className="w-full max-w-sm space-y-3 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-panel)] p-4 shadow-2xl"
+          >
+            <div className="flex items-start gap-2.5">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)]">
+                <ToolIcon name={quickConfirm.icon} size={16} className="text-[var(--accent)]" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-[13px] font-semibold">{quickConfirm.name[locale]}</h2>
+                <p className="mt-1 text-[12px] leading-relaxed text-[var(--text-secondary)]">
+                  {t('pdfTaskQuickBody', locale)}
+                </p>
+                <p className="mt-1 truncate text-[11px] text-[var(--text-muted)]">
+                  {activeDocument.name}
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label={t('close', locale)}
+                className="rounded p-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                onClick={() => setQuickConfirm(null)}
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setQuickConfirm(null)}>
+                {t('cancel', locale)}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  const tool = quickConfirm;
+                  setQuickConfirm(null);
+                  setApplying(tool);
+                }}
+              >
+                {t('pdfTaskMoreOptions', locale)}
+              </Button>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  const tool = quickConfirm;
+                  const docId = activeDocument.id;
+                  setQuickConfirm(null);
+                  runAgainstActiveDocument(tool, docId);
+                }}
+              >
+                {t('pdfTaskOk', locale)}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <UpdatePrompt />
 
       {dropping && (
@@ -537,6 +1029,26 @@ export function App() {
           <div className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-[var(--accent)] px-10 py-8">
             <Eye size={26} className="text-[var(--accent)]" />
             <p className="text-sm font-medium text-[var(--accent)]">{t('dropToOpen', locale)}</p>
+          </div>
+        </div>
+      )}
+
+      {opening.length > 0 && (
+        <div
+          className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-[var(--bg)]/80 backdrop-blur-sm"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex flex-col items-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-10 py-8 shadow-lg">
+            <Loader2 size={24} className="animate-spin text-[var(--accent)]" />
+            <p className="max-w-sm truncate text-sm font-medium">
+              {t('openingOffice', locale)}
+              {/* A new document has no path yet — the label stands alone. */}
+              {opening.some((p) => p !== '')
+                ? ` ${opening.filter((p) => p !== '').map((p) => p.split(/[/\\]/).pop()).join('、')}`
+                : '…'}
+            </p>
+            <p className="text-xs text-[var(--text-muted)]">{t('openingOfficeHint', locale)}</p>
           </div>
         </div>
       )}
@@ -556,9 +1068,95 @@ export function App() {
         </div>
       )}
 
+      {taskFeedback && (
+        <div
+          className={clsx(
+            'fixed bottom-4 left-1/2 z-50 flex max-w-md -translate-x-1/2 items-start gap-2 rounded-xl border px-3 py-2.5 shadow-lg',
+            taskFeedback.kind === 'error'
+              ? 'border-[var(--danger)] bg-[var(--danger-soft)] text-[var(--danger)]'
+              : taskFeedback.kind === 'ok'
+                ? 'border-[var(--success)] bg-[var(--success-soft)] text-[var(--text-primary)]'
+                : 'border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[var(--text-primary)]',
+          )}
+          role="status"
+          aria-live="polite"
+        >
+          {taskFeedback.kind === 'working' && (
+            <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin text-[var(--accent)]" />
+          )}
+          {taskFeedback.kind === 'ok' && (
+            <Check size={14} className="mt-0.5 shrink-0 text-[var(--success)]" />
+          )}
+          {taskFeedback.kind === 'error' && (
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          )}
+          {taskFeedback.kind === 'files' && (
+            <Save size={14} className="mt-0.5 shrink-0 text-[var(--accent)]" />
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[12px] font-medium">{taskFeedback.title}</p>
+            {taskFeedback.kind === 'working' && (
+              <p className="text-[11px] text-[var(--text-muted)]">{t('running', locale)}</p>
+            )}
+            {taskFeedback.kind === 'ok' && taskFeedback.detail && (
+              <p className="mt-0.5 break-words text-[11px] text-[var(--text-secondary)]">
+                {taskFeedback.detail}
+              </p>
+            )}
+            {taskFeedback.kind === 'ok' && !taskFeedback.detail && (
+              <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">
+                {t('pdfTaskAppliedSaveHint', locale)}
+              </p>
+            )}
+            {taskFeedback.kind === 'error' && (
+              <p className="mt-0.5 break-words text-[11px] opacity-90">{taskFeedback.detail}</p>
+            )}
+            {taskFeedback.kind === 'files' && (
+              <>
+                {taskFeedback.summary && (
+                  <p className="mt-0.5 truncate text-[11px] text-[var(--text-muted)]">
+                    {taskFeedback.summary}
+                  </p>
+                )}
+                <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">
+                  {taskFeedback.files.length} {t('fileCount', locale)}
+                </p>
+              </>
+            )}
+          </div>
+          {taskFeedback.kind === 'files' && (
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => {
+                void bridge().saveOutputs(taskFeedback.files).then(() => {
+                  showTaskFeedback({ kind: 'ok', title: t('savedTo', locale) }, 2200);
+                });
+              }}
+            >
+              <Save size={12} />
+              {t('saveAll', locale)}
+            </Button>
+          )}
+          {taskFeedback.kind !== 'working' && (
+            <button
+              type="button"
+              aria-label={t('close', locale)}
+              className="shrink-0 rounded p-0.5 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+              onClick={() => {
+                clearTaskFeedbackTimer();
+                setTaskFeedback(null);
+              }}
+            >
+              <X size={13} />
+            </button>
+          )}
+        </div>
+      )}
+
       {closing && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay-scrim)] px-4 backdrop-blur-sm"
           role="presentation"
         >
           <div
@@ -608,6 +1206,29 @@ export function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {settingsOpen && (
+        <Suspense fallback={null}>
+          <SettingsPanel onBack={() => setSettingsOpen(false)} />
+        </Suspense>
+      )}
+
+
+      {ready && settings.onboardingComplete !== true && !onboardingDismissed && (
+        <Suspense fallback={null}>
+          <OnboardingWizard
+            open={true}
+            locale={locale}
+            // Closing always ends the tour for this session; the checkbox is
+            // what decides whether it also ends for the next launch.
+            onClose={(dontShowAgain) => {
+              setOnboardingDismissed(true);
+              if (dontShowAgain) void updateSettings({ onboardingComplete: true });
+            }}
+            onOpenSettings={openSettings}
+          />
+        </Suspense>
       )}
     </div>
   );

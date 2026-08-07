@@ -7,6 +7,7 @@ const { registerIpc } = require('./ipc.cjs');
 const settings = require('./settings.cjs');
 const { startUpdater } = require('./updater/index.cjs');
 const { syncApiServer, stopApiServer } = require('./api/server.cjs');
+const { createApprovalGate } = require('./api/approvalGate.cjs');
 const { MAIN_WINDOW_WEB_PREFERENCES, isTrustedRendererUrl } = require('./security.cjs');
 
 /**
@@ -31,6 +32,19 @@ let mainWindow = null;
 /** @type {JobPool | null} */
 let pool = null;
 let ipcServices = null;
+
+/**
+ * Office tools reached over the local REST API (which is how the magies-office
+ * MCP server talks to this app) ask here in "confirm" mode. Without it a CLI
+ * agent holding the API token would edit documents with no in-app question,
+ * which is the one thing the permission mode is supposed to prevent.
+ */
+const restApprovals = createApprovalGate({
+  // The question is drawn in the AI panel, next to the work it is about — see
+  // electron/api/rendererApprovalPrompt.cjs. Before the window exists there is
+  // nobody to ask, and the gate's own answer for that is no.
+  prompt: (request) => ipcServices?.requestToolApproval?.(request) ?? Promise.resolve('deny'),
+});
 
 /**
  * Documents asked for before the renderer could receive them.
@@ -71,10 +85,13 @@ function resolveBackgroundColor() {
 
 function createWindow() {
   const window = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 960,
-    minHeight: 640,
+    // An editor's ribbon, the document, and a rail on either side all have to
+    // fit at once — an office suite opened at a browser's default size makes
+    // every one of them cramped.
+    width: 1560,
+    height: 980,
+    minWidth: 1180,
+    minHeight: 760,
     show: false,
     title: 'Magies Office',
     // Dock / taskbar icon (Windows & Linux; macOS uses the .icns in the bundle).
@@ -139,6 +156,9 @@ function createWindow() {
   return window;
 }
 
+// The embedded editor's font scheme has to be declared before the app is ready,
+// or it will not resolve relative urls or be allowed past the page's CSP.
+
 // A second instance would fight over the settings file and the API port.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -167,7 +187,14 @@ if (!app.requestSingleInstanceLock()) {
       getWindow: () => mainWindow,
       trustedRendererUrl: RENDERER_URL,
       onSettingsChanged: () => {
-        void syncApiServer({ pool }).catch((error) => {
+        // Changing the permission mode (or the token) starts a fresh run:
+        // tools allowed "for this run" have to be asked about again.
+        restApprovals.reset();
+        void syncApiServer({
+          pool,
+          officeProvider: ipcServices?.officeAutomation ?? null,
+          requestApproval: restApprovals.request,
+        }).catch((error) => {
           console.error('[magiespdf] REST API failed to start:', error.message);
         });
       },
@@ -178,7 +205,12 @@ if (!app.requestSingleInstanceLock()) {
     requestOpen(documentPathsFromArgv(process.argv, { isPackaged: app.isPackaged }));
 
     // Honour a previously-enabled API setting from the last session.
-    void syncApiServer({ pool }).catch((error) => {
+    // Office automation is the same provider the built-in AI uses.
+    void syncApiServer({
+      pool,
+      officeProvider: ipcServices?.officeAutomation ?? null,
+      requestApproval: restApprovals.request,
+    }).catch((error) => {
       console.error('[magiespdf] REST API failed to start:', error.message);
     });
 

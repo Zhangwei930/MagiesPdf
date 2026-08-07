@@ -13,6 +13,9 @@ export default [
       'coverage/**',
       'node_modules/**',
       'vendor/office-runtime/**',
+      // The vendored document engine is upstream AGPL source, ~600 MB of it.
+      // It is not ours to lint, and scanning it makes a lint run take minutes.
+      'vendor/onlyoffice/**',
     ],
   },
   js.configs.recommended,
@@ -159,6 +162,10 @@ export default [
         queueMicrotask: 'readonly',
         URL: 'readonly',
         fetch: 'readonly',
+        // Electron's protocol handlers are answered with a Response, and it
+        // comes from the same fetch standard already listed above.
+        Response: 'readonly',
+        Request: 'readonly',
         structuredClone: 'readonly',
         AbortController: 'readonly',
         TextDecoder: 'readonly',

@@ -19,11 +19,21 @@ interface ParamFormProps {
   values: ParamValues;
   locale: Locale;
   disabled?: boolean;
+  /** Compact density for the WPS-style right task pane. */
+  density?: 'default' | 'compact';
   onChange(values: ParamValues): void;
 }
 
-export function ParamForm({ params, values, locale, disabled, onChange }: ParamFormProps) {
+export function ParamForm({
+  params,
+  values,
+  locale,
+  disabled,
+  density = 'default',
+  onChange,
+}: ParamFormProps) {
   const [showMore, setShowMore] = useState(false);
+  const compact = density === 'compact';
 
   const { primary, more } = useMemo(
     () => partitionToolParams(params, values),
@@ -37,7 +47,7 @@ export function ParamForm({ params, values, locale, disabled, onChange }: ParamF
   }
 
   return (
-    <div className="space-y-4">
+    <div className={clsx(compact ? 'space-y-3' : 'space-y-4')}>
       {primary.map((param) => (
         <ParamControl
           key={param.key}
@@ -45,17 +55,21 @@ export function ParamForm({ params, values, locale, disabled, onChange }: ParamF
           value={values[param.key]}
           locale={locale}
           disabled={disabled}
+          compact={compact}
           onChange={(value) => set(param.key, value)}
         />
       ))}
 
       {more.length > 0 && (
-        <div className="pt-1">
+        <div className={compact ? 'pt-0' : 'pt-1'}>
           <button
             type="button"
             disabled={disabled}
             onClick={() => setShowMore((open) => !open)}
-            className="inline-flex items-center gap-1 text-[13px] font-medium text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+            className={clsx(
+              'inline-flex items-center gap-1 font-medium text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]',
+              compact ? 'text-[12px]' : 'text-[13px]',
+            )}
           >
             {showMore ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             {t('moreSettings', locale)}
@@ -63,7 +77,12 @@ export function ParamForm({ params, values, locale, disabled, onChange }: ParamF
           </button>
 
           {showMore && (
-            <div className="mt-3 space-y-4 border-l-2 border-[var(--border-subtle)] pl-4">
+            <div
+              className={clsx(
+                'border-l-2 border-[var(--border-subtle)] pl-3',
+                compact ? 'mt-2 space-y-3' : 'mt-3 space-y-4 pl-4',
+              )}
+            >
               {more.map((param) => (
                 <ParamControl
                   key={param.key}
@@ -71,6 +90,7 @@ export function ParamForm({ params, values, locale, disabled, onChange }: ParamF
                   value={values[param.key]}
                   locale={locale}
                   disabled={disabled}
+                  compact={compact}
                   onChange={(value) => set(param.key, value)}
                 />
               ))}
@@ -87,13 +107,18 @@ interface ControlProps {
   value: unknown;
   locale: Locale;
   disabled?: boolean;
+  compact?: boolean;
   onChange(value: ParamValues[string]): void;
 }
 
-function ParamControl({ param, value, locale, disabled, onChange }: ControlProps) {
+function ParamControl({ param, value, locale, disabled, compact, onChange }: ControlProps) {
   const id = `param-${param.key}`;
   const label = param.label[locale];
-  const help = param.help?.[locale];
+  // Compact pane: drop long help so the dialog stays short like WPS.
+  const help = compact ? undefined : param.help?.[locale];
+  const labelClass = compact
+    ? 'block text-[12px] font-medium text-[var(--text-primary)]'
+    : 'block text-[13px] font-medium text-[var(--text-primary)]';
 
   switch (param.type) {
     case 'boolean':
@@ -114,7 +139,7 @@ function ParamControl({ param, value, locale, disabled, onChange }: ControlProps
             className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent)]"
           />
           <span className="min-w-0">
-            <span className="block text-[13px] font-medium text-[var(--text-primary)]">{label}</span>
+            <span className={labelClass}>{label}</span>
             {help && <span className="mt-0.5 block text-xs leading-relaxed text-[var(--text-muted)]">{help}</span>}
           </span>
         </label>
@@ -127,8 +152,8 @@ function ParamControl({ param, value, locale, disabled, onChange }: ControlProps
             <div
               role="radiogroup"
               aria-label={label}
-              className="grid gap-1.5"
-              style={{ gridTemplateColumns: `repeat(${param.options.length}, minmax(0, 1fr))` }}
+              className={clsx('grid', compact ? 'gap-1' : 'gap-1.5')}
+              style={{ gridTemplateColumns: `repeat(${Math.min(param.options.length, compact ? 2 : param.options.length)}, minmax(0, 1fr))` }}
             >
               {param.options.map((option) => {
                 const selected = String(value ?? param.default) === option.value;
@@ -141,7 +166,8 @@ function ParamControl({ param, value, locale, disabled, onChange }: ControlProps
                     disabled={disabled}
                     onClick={() => onChange(option.value)}
                     className={clsx(
-                      'min-h-9 rounded-lg border px-2 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-60',
+                      'rounded-lg border font-medium transition-colors disabled:opacity-60',
+                      compact ? 'min-h-8 px-1.5 py-1 text-[11px]' : 'min-h-9 px-2 py-1.5 text-[12px]',
                       selected
                         ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]'
                         : 'border-[var(--border-subtle)] bg-[var(--surface-sunken)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)]',

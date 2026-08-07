@@ -6,6 +6,8 @@ const { afterEach, describe, it } = require('node:test');
 
 const {
   buildMcpTools,
+  buildOfficeMcpTools,
+  callRestOfficeTool,
   callRestTool,
 } = require('./adapter.cjs');
 
@@ -120,5 +122,54 @@ describe('MCP tool adapter', () => {
       }),
       /absolute/i,
     );
+  });
+
+  it('maps Office automation tools under their function names for MCP', () => {
+    const tools = buildOfficeMcpTools([
+      {
+        functionName: 'office_excel_write',
+        toolId: 'office:excel:write',
+        description: 'Write Excel range',
+        parameters: {
+          type: 'object',
+          properties: { path: { type: 'string' } },
+          required: ['path'],
+        },
+        unattended: true,
+      },
+      {
+        functionName: 'office_macro_run',
+        toolId: 'office:macro:run',
+        description: 'Run macro',
+        parameters: { type: 'object', properties: {} },
+        unattended: false,
+      },
+    ]);
+    assert.equal(tools.length, 1);
+    assert.equal(tools[0].name, 'office_excel_write');
+    assert.equal(tools[0].kind, 'office');
+    assert.deepEqual(tools[0].inputSchema.required, ['path']);
+  });
+
+  it('calls the local Office automation REST route', async () => {
+    let seenUrl = '';
+    let seenBody = null;
+    const result = await callRestOfficeTool({
+      functionName: 'office_excel_write',
+      args: { path: '555.xlsx', start_cell: 'A1', values: [['a']] },
+      apiUrl: 'http://127.0.0.1:8737/v1',
+      token: 'token',
+      fetchImpl: async (url, init) => {
+        seenUrl = url;
+        seenBody = JSON.parse(init.body);
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { written: 'Magies Office Output/555.xlsx', cellsWritten: 1 },
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      },
+    });
+    assert.match(seenUrl, /\/office\/tools\/office_excel_write$/);
+    assert.equal(seenBody.path, '555.xlsx');
+    assert.equal(result.written, 'Magies Office Output/555.xlsx');
   });
 });

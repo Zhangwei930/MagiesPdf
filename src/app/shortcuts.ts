@@ -11,6 +11,7 @@ export type ShortcutAction =
   | 'open'
   | 'save'
   | 'saveAs'
+  | 'print'
   | 'close'
   | 'undo'
   | 'redo'
@@ -74,6 +75,8 @@ export function matchShortcut(
         return chord.shiftKey ? 'saveAs' : 'save';
       case 'w':
         return 'close';
+      case 'p':
+        return 'print';
       case 'k':
         return 'palette';
       // No text field claims ⌘F, so find works from one too.

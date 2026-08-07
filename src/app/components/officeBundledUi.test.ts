@@ -4,27 +4,125 @@ import { describe, it } from 'node:test';
 
 const homeSource = readFileSync(new URL('./Home.tsx', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
-const settingsSource = readFileSync(new URL('./OfficeSettingsSection.tsx', import.meta.url), 'utf8');
 
 describe('bundled Office customer experience', () => {
   it('does not ask customers to download or locate another editor', () => {
-    for (const source of [homeSource, settingsSource]) {
+    // The settings pane that used to report the bundled engine is gone, so the
+    // only surfaces left that could ask are the start centre and the shell.
+    for (const source of [homeSource, appSource]) {
       assert.doesNotMatch(source, /pickLibreOfficeExecutable/);
       assert.doesNotMatch(source, /openLibreOfficeDownload/);
       assert.doesNotMatch(source, /installLibreOffice/);
+      assert.doesNotMatch(source, /libreOfficeExecutable/);
     }
   });
 
-  it('does not expose an executable path setting', () => {
-    assert.doesNotMatch(settingsSource, /libreOfficeExecutable/);
-    assert.doesNotMatch(settingsSource, /<input/);
+  /**
+   * The start centre is about the customer's files, not about explaining how
+   * the suite works. Two panels used to describe editing by hand and editing
+   * by assistant, which is a description of the product rather than a way into
+   * a document; the assistant is reached from the rail and the title bar.
+   */
+  it('does not spend the start centre explaining its own modes', () => {
+    assert.doesNotMatch(homeSource, /manualOfficeMode/);
+    assert.doesNotMatch(homeSource, /aiOfficeMode/);
   });
 
-  it('exposes both manual editing and AI automation from the home screen', () => {
-    assert.match(homeSource, /manualOfficeMode/);
-    assert.match(homeSource, /aiOfficeMode/);
+  it('always clears the drop overlay, even when a drop zone swallows the event', () => {
+    // A tool's drop zone calls stopPropagation, so the window-level reset has
+    // to be on the capture phase or "release to open" stays on screen.
+    assert.match(appSource, /addEventListener\('drop', clear, true\)/);
+    assert.match(appSource, /addEventListener\('dragend', clear, true\)/);
+  });
+
+  it('still opens the assistant from the home screen', () => {
     assert.match(homeSource, /onOpenAi/);
     assert.match(appSource, /onOpenAi=\{openAi\}/);
     assert.match(appSource, /setAiMounted\(true\);\s*setAiOpen\(true\)/);
+  });
+
+  /**
+   * The start centre puts the customer's documents in the middle and what can
+   * be done to them at the side, the way a file-first office suite does —
+   * rather than a page of panels that has to be scrolled past to reach a file.
+   */
+  it('leads with documents, with the tools alongside them', () => {
+    assert.match(homeSource, /data-home-region="documents"/);
+    assert.match(homeSource, /data-home-region="tools"/);
+    assert.ok(
+      homeSource.indexOf('data-home-region="documents"') < homeSource.indexOf('data-home-region="tools"'),
+      'documents come first',
+    );
+  });
+
+  /**
+   * The toolbox is not on the start centre. Every one of those tools is in the
+   * ribbon of an open PDF, which is where someone is when they want one — a
+   * copy here is a second list to keep in step, and a category to pick before
+   * a document exists to apply it to.
+   */
+  it('does not repeat the toolbox before a document is open', () => {
+    assert.doesNotMatch(homeSource, /pdfToolbox/);
+    assert.doesNotMatch(homeSource, /selectedCategory/);
+    assert.doesNotMatch(homeSource, /railTools/);
+  });
+
+  /** Creating something is one button, not a grid competing with the files. */
+  it('puts creating a document behind one control', () => {
+    assert.match(homeSource, /createOpen/);
+  });
+});
+
+describe('an open Office document', () => {
+  /**
+   * The PDF ribbon belongs to a PDF. Above a Word, Sheet or Slide document
+   * there are two toolbars stacked — the app's, whose tools do not apply, and
+   * the editor's own, which does — and the one on top is the one that does
+   * nothing for the document being looked at.
+   */
+  it('does not stack the pdf ribbon above the editor', () => {
+    assert.match(appSource, /showRibbon/);
+    assert.match(appSource, /officeEditor/);
+    assert.match(appSource, /pdfDocumentOpen/);
+  });
+
+  /** PDF opens with its own WPS-style chrome, not the toolbox ribbon. */
+  it('hides the toolbox ribbon while a PDF document is open', () => {
+    assert.match(appSource, /!pdfDocumentOpen/);
+  });
+
+  /**
+   * Switching tabs must not remount the engine iframe. Reloading sdkjs + fonts
+   * + the document for every click is what made tab switches feel broken.
+   */
+  it('keeps every open Office editor mounted and only hides the inactive ones', () => {
+    assert.match(appSource, /documents\.map/);
+    assert.match(appSource, /hidden/);
+    assert.match(appSource, /Office engines stay mounted|stay mounted/i);
+    // Must not key a single OfficeEditor on the active document id alone —
+    // that unmounts the previous frame on every switch.
+    assert.doesNotMatch(
+      appSource,
+      /activeDocument\.editor\s*\?\s*\([\s\S]*?<OfficeEditor[\s\S]*?key=\{activeDocument\.id\}/,
+    );
+  });
+});
+
+describe('the title bar', () => {
+  /**
+   * The mark belongs where the app is named, which is the title bar. The start
+   * centre used to name the app again above the customer's files — a second
+   * title on a page whose subject is their documents, not the product.
+   */
+  it('carries the mark beside the name', () => {
+    assert.match(appSource, /logo\.png/);
+    assert.doesNotMatch(homeSource, /logo\.png/);
+    assert.doesNotMatch(homeSource, /officeTagline/);
+  });
+
+  /** Jobs were a panel of their own; the work they showed now speaks for itself. */
+  it('does not offer a jobs panel', () => {
+    assert.doesNotMatch(appSource, /setJobsOpen/);
+    assert.doesNotMatch(appSource, /JobPanel/);
   });
 });

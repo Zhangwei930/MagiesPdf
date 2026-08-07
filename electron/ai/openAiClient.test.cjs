@@ -20,6 +20,25 @@ function responseFromChunks(chunks, init = {}) {
 }
 
 describe('OpenAI-compatible streaming client', () => {
+  it('sends reasoning_effort only when one is chosen', async () => {
+    const bodies = [];
+    const client = new OpenAiCompatibleClient({
+      fetchImpl: async (_url, init) => {
+        bodies.push(JSON.parse(init.body));
+        return responseFromChunks(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n', 'data: [DONE]\n\n']);
+      },
+    });
+
+    const call = { baseUrl: 'http://127.0.0.1:11434/v1', apiKey: '', model: 'local', messages: [] };
+    await client.streamMessage(call);
+    await client.streamMessage({ ...call, reasoningEffort: 'high' });
+
+    // A provider that does not know the field rejects the whole request, so it
+    // must be absent rather than null when the user has not chosen one.
+    assert.equal('reasoning_effort' in bodies[0], false);
+    assert.equal(bodies[1].reasoning_effort, 'high');
+  });
+
   it('normalizes base URLs without duplicating the endpoint', () => {
     assert.equal(chatCompletionsUrl('https://api.example.com/v1/'), 'https://api.example.com/v1/chat/completions');
     assert.equal(

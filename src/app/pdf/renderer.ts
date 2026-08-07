@@ -16,6 +16,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 export interface PdfDocumentHandle {
   numPages: number;
   getPage(pageNumber: number): Promise<pdfjsLib.PDFPageProxy>;
+  getOutline(): Promise<unknown[] | null>;
+  getDestination(id: string): Promise<unknown[] | null>;
+  getPageIndex(ref: unknown): Promise<number>;
   destroy(): void;
 }
 
@@ -72,6 +75,9 @@ export async function loadPdfDocument(
   return {
     numPages: proxy.numPages,
     getPage: (pageNumber) => proxy.getPage(pageNumber),
+    getOutline: () => proxy.getOutline(),
+    getDestination: (id) => proxy.getDestination(id),
+    getPageIndex: (ref) => proxy.getPageIndex(ref as Parameters<typeof proxy.getPageIndex>[0]),
     destroy: () => void loadingTask.destroy(),
   };
 }

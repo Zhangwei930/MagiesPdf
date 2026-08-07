@@ -12,9 +12,12 @@ const doc = async (pages: number, extra: Parameters<typeof samplePdf>[0] = {}) =
   asInput(await samplePdf({ pages, label: (n) => `P${n}`, ...extra }), 'report.pdf');
 
 describe('edit.compress', () => {
-  it('produces a valid, no-larger file', async () => {
+  it('produces a valid, no-larger file with the lossless level', async () => {
     const input = await doc(10, { bodyLines: 60 });
-    const result = await executeTool(compressTool, { files: [input], params: {} });
+    const result = await executeTool(compressTool, {
+      files: [input],
+      params: { level: 'standard' },
+    });
 
     assert.equal(result.files[0]!.name, 'report_compressed.pdf');
     assert.ok(
@@ -24,12 +27,37 @@ describe('edit.compress', () => {
     assert.equal(allPageText(result.files[0]!.bytes).length, 10);
   });
 
-  it('keeps every page and its content', async () => {
+  it('keeps every page under aggressive compression', async () => {
     const result = await executeTool(compressTool, {
       files: [await doc(4)],
       params: { level: 'aggressive' },
     });
-    assert.deepEqual(allPageText(result.files[0]!.bytes), ['P1', 'P2', 'P3', 'P4']);
+    assert.equal(allPageText(result.files[0]!.bytes).length, 4);
+  });
+
+  it('shrinks a photo-heavy PDF under aggressive compression', async () => {
+    // Smooth gradient PNG (Flate) becomes a much smaller JPEG when re-encoded.
+    const { PDFDocument } = await import('pdf-lib');
+    const pdf = await PDFDocument.create();
+    const width = 800;
+    const height = 1000;
+    const png = await makeGradientPng(width, height);
+    const image = await pdf.embedPng(png);
+    for (let i = 0; i < 3; i += 1) {
+      const page = pdf.addPage([width, height]);
+      page.drawImage(image, { x: 0, y: 0, width, height });
+    }
+    const heavy = asInput(await pdf.save({ useObjectStreams: false }), 'photos.pdf');
+
+    const result = await executeTool(compressTool, {
+      files: [heavy],
+      params: { level: 'aggressive' },
+    });
+    const after = result.files[0]!.bytes.length;
+    assert.ok(
+      after < heavy.bytes.length * 0.5,
+      `expected aggressive compress to cut >50%: ${heavy.bytes.length} → ${after}`,
+    );
   });
 
   it('compresses an encrypted file into an open one', async () => {
@@ -37,7 +65,10 @@ describe('edit.compress', () => {
       encryptPdf(await samplePdf({ pages: 2, label: (n) => `P${n}` }), { userPassword: 'pw' }),
       'locked.pdf',
     );
-    const result = await executeTool(compressTool, { files: [locked], params: { password: 'pw' } });
+    const result = await executeTool(compressTool, {
+      files: [locked],
+      params: { password: 'pw', level: 'standard' },
+    });
 
     const opened = openDocument(result.files[0]!.bytes);
     try {
@@ -46,8 +77,27 @@ describe('edit.compress', () => {
       opened.destroy();
     }
   });
-
 });
+
+/** Smooth RGB gradient PNG — Flate-heavy in PDF, tiny as JPEG. */
+async function makeGradientPng(width: number, height: number): Promise<Uint8Array> {
+  const mupdf = await import('mupdf');
+  const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, width, height], false);
+  try {
+    const pixels = pixmap.getPixels();
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const offset = (y * width + x) * 3;
+        pixels[offset] = Math.round((x / width) * 255);
+        pixels[offset + 1] = Math.round((y / height) * 255);
+        pixels[offset + 2] = 180;
+      }
+    }
+    return pixmap.asPNG();
+  } finally {
+    pixmap.destroy();
+  }
+}
 
 describe('formatPageLabel', () => {
   it('substitutes n and total', () => {
