@@ -28,6 +28,17 @@ is never saved by Magies Office.
 
 ---
 
+## Screenshots
+
+AI Office assistant: natural-language edits on PowerPoint and Word, with live
+document preview and per-action approval.
+
+| Edit a presentation with AI | Draft a report from spreadsheet data |
+| :-------------------------: | :----------------------------------: |
+| ![AI assistant editing a PowerPoint file in Magies Office](docs/screenshots/ai-assistant-pptx.jpg) | ![AI assistant drafting a Word quarterly report from Excel data](docs/screenshots/ai-assistant-docx.jpg) |
+
+---
+
 ## Three ways to work
 
 | Mode | What it is | Where it runs |
