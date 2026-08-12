@@ -1,5 +1,7 @@
 # Magies Office
 
+**English** · [简体中文](./README.zh-CN.md)
+
 **Local-first desktop workspace for Word, Excel, PowerPoint and PDF.**
 
 Merge, convert, protect, edit and automate — **everything runs on your own machine**.
@@ -33,22 +35,6 @@ separate Office install. **Linux ARM64** has no prebuilt package — see
 Installers are **unsigned** (open source), same policy as MagiesTerminal.
 PDF certificate signing is local-only: P12/PFX material never leaves the machine
 and is never saved by Magies Office.
-
----
-
-## 中文简介
-
-**Magies Office** 是一款本地优先的桌面办公套件：在同一窗口内处理
-**Word / Excel / PowerPoint / PDF**。
-
-- **文档不上传**：编辑、转换、签名、OCR、AI 自动化均在本机完成
-- **Word / 表格 / 演示文稿**以内嵌 ONLYOFFICE 标签页打开，无需外挂程序
-- **PDF** 原生工作区：61 个工具（合并、拆分、转换、加密、脱敏、签章…）+ 撤销
-- **AI 办公助手**（可选）：OpenAI 兼容接口，工具调用需确认，可接 Ollama 本地模型
-- **本机 REST API / MCP**：给脚本和外部智能体用，默认关闭
-
-下载：[Releases](https://github.com/Zhangwei930/MagiesPdf/releases) ·
-官网：<https://pdf.magies.top>
 
 ---
 
