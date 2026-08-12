@@ -40,8 +40,11 @@ and is never saved by Magies Office.
 
 ## Screenshots
 
-AI Office assistant: natural-language edits on PowerPoint and Word, with live
-document preview and per-action approval.
+Start centre and AI settings, then the AI Office assistant in action.
+
+| Home — create documents and convert | Settings — local / private AI models |
+| :---------------------------------: | :----------------------------------: |
+| ![Magies Office start centre with new document types and common conversions](docs/screenshots/home-start-centre.jpg) | ![Settings: AI and MCP — Ollama, LM Studio, and OpenAI-compatible providers](docs/screenshots/settings-ai-mcp.jpg) |
 
 | Edit a presentation with AI | Draft a report from spreadsheet data |
 | :-------------------------: | :----------------------------------: |

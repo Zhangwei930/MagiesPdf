@@ -39,7 +39,11 @@ PDF 证书签名仅在本地处理：P12/PFX 材料不会离开本机，也不�
 
 ## 截图
 
-AI 办公助手：用自然语言编辑 PowerPoint 与 Word，实时预览文档，每一步操作需确认。
+起始页与 AI 设置，以及 AI 办公助手的实际操作界面。
+
+| 起始页 — 新建文档与常用转换 | 设置 — 本地 / 隐私模型 |
+| :------------------------: | :--------------------: |
+| ![Magies Office 起始页：新建文档类型与常用转换](docs/screenshots/home-start-centre.jpg) | ![设置：AI 与 MCP — Ollama、LM Studio 与 OpenAI 兼容服务商](docs/screenshots/settings-ai-mcp.jpg) |
 
 | 用 AI 改演示文稿 | 根据表格数据起草报告 |
 | :--------------: | :------------------: |
