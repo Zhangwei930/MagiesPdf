@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security report
+    url: https://github.com/Zhangwei930/MagiesPdf/blob/main/SECURITY.md
+    about: Do not open a public issue for exploitable vulnerabilities.
+  - name: Download installers
+    url: https://github.com/Zhangwei930/MagiesPdf/releases
+    about: Get the latest Magies Office builds for your platform.

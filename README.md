@@ -8,10 +8,10 @@ Merge, convert, protect, edit and automate — **everything runs on your own mac
 No cloud upload, no account, no telemetry.
 
 <p align="center">
-  <a href="https://github.com/Zhangwei930/MagiesPdf/releases"><img alt="Download" src="https://img.shields.io/github/v/release/Zhangwei930/MagiesPdf?label=Download&style=flat-square" /></a>
-  <a href="https://pdf.magies.top"><img alt="Website" src="https://img.shields.io/badge/Website-pdf.magies.top-blue?style=flat-square" /></a>
+  <a href="https://github.com/Zhangwei930/MagiesPdf/releases/latest"><img alt="Download" src="https://img.shields.io/github/v/release/Zhangwei930/MagiesPdf?label=Download&style=flat-square" /></a>
+  <a href="https://github.com/Zhangwei930/MagiesPdf/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Zhangwei930/MagiesPdf/actions/workflows/ci.yml/badge.svg" /></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/License-AGPL--3.0--or--later-green?style=flat-square" /></a>
-  <a href="./CHANGELOG.md"><img alt="Version" src="https://img.shields.io/badge/version-3.0.0-informational?style=flat-square" /></a>
+  <a href="https://pdf.magies.top"><img alt="Website" src="https://img.shields.io/badge/Website-pdf.magies.top-blue?style=flat-square" /></a>
 </p>
 
 The app product name is **Magies Office**. The source repository remains
@@ -29,22 +29,27 @@ and an embedded **ONLYOFFICE Document Server 9.4** editor. You do not need a
 separate Office install. **Linux ARM64** has no prebuilt package — see
 [Linux ARM64](#linux-arm64-support).
 
-**Current version: 3.0.0** — [CHANGELOG](./CHANGELOG.md) ·
-[Releases](https://github.com/Zhangwei930/MagiesPdf/releases).
+**Latest release** — [CHANGELOG](./CHANGELOG.md) ·
+[Releases](https://github.com/Zhangwei930/MagiesPdf/releases/latest) ·
+[Contributing](./CONTRIBUTING.md) · [Security](./SECURITY.md)
 
-Installers are **unsigned** (open source), same policy as MagiesTerminal.
-PDF certificate signing is local-only: P12/PFX material never leaves the machine
-and is never saved by Magies Office.
+Installers are **unsigned** open-source builds (Gatekeeper / SmartScreen may
+warn on first open). PDF certificate signing is local-only: P12/PFX material
+never leaves the machine and is never saved by Magies Office.
 
 ---
 
 ## Screenshots
 
-Start centre and AI settings, then the AI Office assistant in action.
-
 | Home — create documents and convert | Settings — local / private AI models |
 | :---------------------------------: | :----------------------------------: |
 | ![Magies Office start centre with new document types and common conversions](docs/screenshots/home-start-centre.jpg) | ![Settings: AI and MCP — Ollama, LM Studio, and OpenAI-compatible providers](docs/screenshots/settings-ai-mcp.jpg) |
+
+<p align="center">
+  <img src="docs/screenshots/office-editor-tabs.jpg" alt="Embedded Word editor with tabs for docx, xlsx, pptx and pdf" width="920" />
+  <br />
+  <em>Word, Excel, PowerPoint and PDF as tabs in one window</em>
+</p>
 
 | Edit a presentation with AI | Draft a report from spreadsheet data |
 | :-------------------------: | :----------------------------------: |
@@ -332,6 +337,11 @@ rules with review vs unattended modes and a hard ban on unattended macros.
 Layer rules and MuPDF gotchas are documented in [`Claude.md`](./Claude.md).
 
 ---
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Report security issues privately via
+[SECURITY.md](./SECURITY.md) — do not open a public issue for exploitables.
 
 ## Licence
 

@@ -8,10 +8,10 @@
 不上传云端、不需要账号、无遥测。
 
 <p align="center">
-  <a href="https://github.com/Zhangwei930/MagiesPdf/releases"><img alt="下载" src="https://img.shields.io/github/v/release/Zhangwei930/MagiesPdf?label=Download&style=flat-square" /></a>
-  <a href="https://pdf.magies.top"><img alt="官网" src="https://img.shields.io/badge/Website-pdf.magies.top-blue?style=flat-square" /></a>
+  <a href="https://github.com/Zhangwei930/MagiesPdf/releases/latest"><img alt="下载" src="https://img.shields.io/github/v/release/Zhangwei930/MagiesPdf?label=Download&style=flat-square" /></a>
+  <a href="https://github.com/Zhangwei930/MagiesPdf/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Zhangwei930/MagiesPdf/actions/workflows/ci.yml/badge.svg" /></a>
   <a href="./LICENSE"><img alt="许可证" src="https://img.shields.io/badge/License-AGPL--3.0--or--later-green?style=flat-square" /></a>
-  <a href="./CHANGELOG.md"><img alt="版本" src="https://img.shields.io/badge/version-3.0.0-informational?style=flat-square" /></a>
+  <a href="https://pdf.magies.top"><img alt="官网" src="https://img.shields.io/badge/Website-pdf.magies.top-blue?style=flat-square" /></a>
 </p>
 
 产品名称为 **Magies Office**。源码仓库仍为
@@ -28,22 +28,27 @@
 以及内嵌的 **ONLYOFFICE Document Server 9.4** 编辑器。无需再单独安装 Office。
 **Linux ARM64** 暂无预编译包，见 [Linux ARM64](#linux-arm64-支持)。
 
-**当前版本：3.0.0** — [更新日志](./CHANGELOG.md) ·
-[Releases](https://github.com/Zhangwei930/MagiesPdf/releases) ·
+**最新版本** — [更新日志](./CHANGELOG.md) ·
+[Releases](https://github.com/Zhangwei930/MagiesPdf/releases/latest) ·
+[贡献指南](./CONTRIBUTING.md) · [安全政策](./SECURITY.md) ·
 官网：<https://pdf.magies.top>
 
-安装包为**未签名**开源构建（策略与 MagiesTerminal 相同）。
+安装包为**未签名**开源构建（首次打开时系统可能提示未验证开发者）。
 PDF 证书签名仅在本地处理：P12/PFX 材料不会离开本机，也不会被 Magies Office 保存。
 
 ---
 
 ## 截图
 
-起始页与 AI 设置，以及 AI 办公助手的实际操作界面。
-
 | 起始页 — 新建文档与常用转换 | 设置 — 本地 / 隐私模型 |
 | :------------------------: | :--------------------: |
 | ![Magies Office 起始页：新建文档类型与常用转换](docs/screenshots/home-start-centre.jpg) | ![设置：AI 与 MCP — Ollama、LM Studio 与 OpenAI 兼容服务商](docs/screenshots/settings-ai-mcp.jpg) |
+
+<p align="center">
+  <img src="docs/screenshots/office-editor-tabs.jpg" alt="内嵌 Word 编辑器，标签页含 docx、xlsx、pptx 与 pdf" width="920" />
+  <br />
+  <em>Word / Excel / PowerPoint / PDF 同窗标签页</em>
+</p>
 
 | 用 AI 改演示文稿 | 根据表格数据起草报告 |
 | :--------------: | :------------------: |
@@ -324,6 +329,11 @@ LibreOffice 继续负责 PDF 预览与转换。若引擎不完整，打包会直
 分层规则与 MuPDF 注意事项见 [`Claude.md`](./Claude.md)。
 
 ---
+
+## 参与贡献
+
+见 [CONTRIBUTING.md](./CONTRIBUTING.md)。安全问题请按 [SECURITY.md](./SECURITY.md)
+私下报告，不要公开提可利用的漏洞。
 
 ## 许可证
 
