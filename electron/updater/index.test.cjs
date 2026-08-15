@@ -54,6 +54,8 @@ async function withUpdaterMocks(
   };
 
   const originalLoad = Module._load;
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { ...originalPlatform, value: platform });
   Module._load = function patched(request, parent, isMain) {
     if (request === 'electron-updater') {
       return { autoUpdater: fakeAutoUpdater };
@@ -104,6 +106,7 @@ async function withUpdaterMocks(
     });
   } finally {
     Module._load = originalLoad;
+    Object.defineProperty(process, 'platform', originalPlatform);
     delete require.cache[INDEX_PATH];
     delete require.cache[settingsPath];
   }
