@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.2 — 2026-08-15
+
+### macOS updates
+
+- Publish one macOS update manifest containing both Intel and Apple Silicon packages, so automatic updates always select the native architecture
+
 ## 3.0.1 — 2026-08-15
 
 ### macOS client branding
