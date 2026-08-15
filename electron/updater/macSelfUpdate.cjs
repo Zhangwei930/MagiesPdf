@@ -8,9 +8,9 @@
  * so the zip on disk is already sha512-verified against latest-mac.yml. This
  * module replaces only the install step:
  *
- *   extract zip (ditto) → rename current .app aside → move new .app in place
- *   → clear quarantine → caller relaunches. Any failure rolls the original
- *   bundle back.
+ *   extract zip (ditto) → rename current .app aside → install the new .app
+ *   under its product name → clear quarantine → caller relaunches. Any failure
+ *   rolls the original bundle back.
  */
 
 const fs = require('node:fs');
@@ -50,6 +50,18 @@ function findAppBundle(dir) {
   return null;
 }
 
+/** Find the packaged executable so the caller can relaunch from its new path. */
+function findAppExecutable(bundlePath) {
+  const macosDir = path.join(bundlePath, 'Contents', 'MacOS');
+  const executable = fs
+    .readdirSync(macosDir, { withFileTypes: true })
+    .find((entry) => entry.isFile());
+  if (!executable) {
+    throw new Error('Update app bundle contains no executable.');
+  }
+  return path.join(macosDir, executable.name);
+}
+
 /**
  * Swap the installed bundle with the update contained in `zipPath`.
  * Throws with a user-presentable message on any failure; the original bundle
@@ -61,6 +73,7 @@ function findAppBundle(dir) {
  * @param {Function} [options.execFileSync] - injectable for tests
  * @param {string} [options.tmpRoot] - staging dir root, defaults to os.tmpdir()
  * @param {{ warn: Function }} [options.log]
+ * @returns {Promise<{ bundlePath: string, executablePath: string }>}
  */
 async function installMacUpdateFromZip({
   zipPath,
@@ -85,6 +98,9 @@ async function installMacUpdateFromZip({
 
   const stagingDir = fs.mkdtempSync(path.join(tmpRoot, 'magiespdf-update-'));
   let backupPath = null;
+  let installSucceeded = false;
+  let installedBundlePath = null;
+  let installedExecutablePath = null;
   try {
     // ditto preserves symlinks, permissions, and extended attributes — the
     // canonical way to unpack .app zips (plain unzip can corrupt frameworks).
@@ -95,35 +111,60 @@ async function installMacUpdateFromZip({
       throw new Error('Update archive contains no .app bundle.');
     }
 
+    installedBundlePath = path.join(parentDir, path.basename(newAppPath));
+    if (installedBundlePath !== bundlePath && fs.existsSync(installedBundlePath)) {
+      const error = new Error(`Updated app destination already exists: ${installedBundlePath}`);
+      error.code = 'MAC_UPDATE_DESTINATION_EXISTS';
+      throw error;
+    }
+    const executableRelativePath = path.relative(
+      newAppPath,
+      findAppExecutable(newAppPath),
+    );
+    installedExecutablePath = path.join(installedBundlePath, executableRelativePath);
+
     backupPath = path.join(parentDir, `${path.basename(bundlePath)}.update-backup-${process.pid}`);
     fs.renameSync(bundlePath, backupPath);
     try {
       try {
-        fs.renameSync(newAppPath, bundlePath);
+        fs.renameSync(newAppPath, installedBundlePath);
       } catch (err) {
         if (err?.code !== 'EXDEV') throw err;
         // Staging dir is on a different volume — fall back to a copy.
-        execFileSync('ditto', [newAppPath, bundlePath]);
+        execFileSync('ditto', [newAppPath, installedBundlePath]);
       }
     } catch (err) {
       // Put the original bundle back so the running install stays intact.
-      fs.renameSync(backupPath, bundlePath);
-      backupPath = null;
+      try {
+        if (fs.existsSync(installedBundlePath)) {
+          fs.rmSync(installedBundlePath, { recursive: true, force: true });
+        }
+        fs.renameSync(backupPath, bundlePath);
+        backupPath = null;
+      } catch (rollbackError) {
+        const error = new Error(`Failed to restore the original app from ${backupPath}`, {
+          cause: err,
+        });
+        error.code = 'MAC_UPDATE_ROLLBACK_FAILED';
+        error.rollbackError = rollbackError;
+        throw error;
+      }
       throw err;
     }
+    installSucceeded = true;
 
     // The zip was downloaded by this app, not a browser, so quarantine is not
     // expected — but clear it defensively or Gatekeeper would block the
     // relaunch of an unsigned bundle.
     try {
-      execFileSync('xattr', ['-dr', 'com.apple.quarantine', bundlePath]);
+      execFileSync('xattr', ['-dr', 'com.apple.quarantine', installedBundlePath]);
     } catch (err) {
       log.warn?.('[macSelfUpdate] Failed to clear quarantine:', err?.message || err);
     }
   } finally {
     // On success backupPath is the OLD bundle; on rollback it was reset to
     // null after restoring, so this never deletes the live app.
-    if (backupPath) {
+    if (installSucceeded && backupPath) {
       try {
         fs.rmSync(backupPath, { recursive: true, force: true });
       } catch (err) {
@@ -136,6 +177,11 @@ async function installMacUpdateFromZip({
       log.warn?.('[macSelfUpdate] Failed to remove staging dir:', err?.message || err);
     }
   }
+
+  return {
+    bundlePath: installedBundlePath,
+    executablePath: installedExecutablePath,
+  };
 }
 
 module.exports = {

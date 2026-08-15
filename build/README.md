@@ -12,5 +12,5 @@ electron-builder reads icons from this directory
 | `icon.icns` | macOS |
 | `icon.ico` | Windows |
 
-Regenerate from `logo-source.png` with `sips` + `iconutil` + `png-to-ico` if the
+Regenerate from `logo-source.png` with `node scripts/brand-assets.mjs` if the
 artwork changes.

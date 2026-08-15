@@ -16,10 +16,10 @@ function makeTempDir(t, prefix) {
 }
 
 /** Create a fake .app bundle whose Contents/MacOS/<name> holds `marker`. */
-function writeFakeAppBundle(bundlePath, marker) {
+function writeFakeAppBundle(bundlePath, marker, executableName = 'MagiesPdf') {
   const macosDir = path.join(bundlePath, 'Contents', 'MacOS');
   fs.mkdirSync(macosDir, { recursive: true });
-  fs.writeFileSync(path.join(macosDir, 'MagiesPdf'), marker);
+  fs.writeFileSync(path.join(macosDir, executableName), marker);
 }
 
 test('resolveMacBundlePath derives the .app bundle from the executable path', () => {
@@ -76,6 +76,87 @@ test('installMacUpdateFromZip swaps the bundle, clears quarantine, and cleans up
   // No backup bundle or staging dir left behind next to the app.
   const leftovers = fs.readdirSync(root).filter((name) => name !== 'MagiesPdf.app' && name !== 'update.zip');
   assert.deepEqual(leftovers, [], `no leftovers expected, got: ${JSON.stringify(leftovers)}`);
+});
+
+test('installMacUpdateFromZip migrates a legacy bundle to the product name', async (t) => {
+  const root = makeTempDir(t, 'magiespdf-mac-update-');
+  const legacyBundlePath = path.join(root, 'MagiesPdf.app');
+  const productBundlePath = path.join(root, 'Magies Office.app');
+  writeFakeAppBundle(legacyBundlePath, 'old-version');
+
+  const zipPath = path.join(root, 'update.zip');
+  fs.writeFileSync(zipPath, 'fake-zip-bytes');
+
+  const execCalls = [];
+  const fakeExecFileSync = (cmd, args) => {
+    execCalls.push([cmd, ...args]);
+    if (cmd === 'ditto' && args[0] === '-x') {
+      writeFakeAppBundle(
+        path.join(args[3], 'Magies Office.app'),
+        'new-version',
+        'Magies Office',
+      );
+    }
+  };
+
+  const installed = await installMacUpdateFromZip({
+    zipPath,
+    bundlePath: legacyBundlePath,
+    execFileSync: fakeExecFileSync,
+    tmpRoot: root,
+  });
+
+  assert.deepEqual(installed, {
+    bundlePath: productBundlePath,
+    executablePath: path.join(productBundlePath, 'Contents', 'MacOS', 'Magies Office'),
+  });
+  assert.equal(fs.existsSync(legacyBundlePath), false);
+  assert.equal(
+    fs.readFileSync(path.join(productBundlePath, 'Contents', 'MacOS', 'Magies Office'), 'utf8'),
+    'new-version',
+  );
+  assert.ok(
+    execCalls.some((call) => call[0] === 'xattr' && call.includes(productBundlePath)),
+    `xattr must target the renamed bundle, got: ${JSON.stringify(execCalls)}`,
+  );
+});
+
+test('installMacUpdateFromZip does not overwrite an existing product-named bundle', async (t) => {
+  const root = makeTempDir(t, 'magiespdf-mac-update-');
+  const legacyBundlePath = path.join(root, 'MagiesPdf.app');
+  const productBundlePath = path.join(root, 'Magies Office.app');
+  writeFakeAppBundle(legacyBundlePath, 'legacy-version');
+  writeFakeAppBundle(productBundlePath, 'existing-version', 'Magies Office');
+
+  const zipPath = path.join(root, 'update.zip');
+  fs.writeFileSync(zipPath, 'fake-zip-bytes');
+
+  await assert.rejects(
+    installMacUpdateFromZip({
+      zipPath,
+      bundlePath: legacyBundlePath,
+      execFileSync(cmd, args) {
+        if (cmd === 'ditto' && args[0] === '-x') {
+          writeFakeAppBundle(
+            path.join(args[3], 'Magies Office.app'),
+            'new-version',
+            'Magies Office',
+          );
+        }
+      },
+      tmpRoot: root,
+    }),
+    /already exists/i,
+  );
+
+  assert.equal(
+    fs.readFileSync(path.join(legacyBundlePath, 'Contents', 'MacOS', 'MagiesPdf'), 'utf8'),
+    'legacy-version',
+  );
+  assert.equal(
+    fs.readFileSync(path.join(productBundlePath, 'Contents', 'MacOS', 'Magies Office'), 'utf8'),
+    'existing-version',
+  );
 });
 
 test('installMacUpdateFromZip restores the original bundle when extraction yields no app', async (t) => {

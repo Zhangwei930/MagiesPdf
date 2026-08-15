@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.1 — 2026-08-15
+
+### macOS client branding
+
+- Scale the macOS application mark to the same visual footprint as standard system icons while keeping the artwork centred at every icon size
+- Existing installs named `MagiesPdf.app` now migrate to `Magies Office.app` during an in-app update and relaunch from the renamed executable
+- Refuse to overwrite an existing `Magies Office.app` during migration, leaving both installed applications intact
+
 ## 3.0.0 — 2026-08-07
 
 ### Office documents open in this window

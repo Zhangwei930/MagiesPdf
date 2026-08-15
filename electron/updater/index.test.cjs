@@ -16,6 +16,7 @@ const CHANNEL_PATH = require.resolve('./releaseChannel.cjs');
 async function withUpdaterMocks(
   {
     checkForUpdates,
+    installMacUpdateFromZip,
     appLocale = 'en-US',
     platform = 'darwin',
     isPackaged = true,
@@ -24,6 +25,8 @@ async function withUpdaterMocks(
 ) {
   const feeds = [];
   const listeners = new Map();
+  const relaunchCalls = [];
+  let quitCalls = 0;
   const fakeAutoUpdater = {
     autoDownload: false,
     autoInstallOnAppQuit: true,
@@ -51,6 +54,8 @@ async function withUpdaterMocks(
   };
 
   const originalLoad = Module._load;
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { ...originalPlatform, value: platform });
   Module._load = function patched(request, parent, isMain) {
     if (request === 'electron-updater') {
       return { autoUpdater: fakeAutoUpdater };
@@ -62,9 +67,23 @@ async function withUpdaterMocks(
           getLocale: () => appLocale,
           getVersion: () => '1.0.0',
           getPath: () => '/Applications/MagiesPdf.app/Contents/MacOS/MagiesPdf',
-          relaunch() {},
-          quit() {},
+          relaunch(options) {
+            relaunchCalls.push(options);
+          },
+          quit() {
+            quitCalls += 1;
+          },
         },
+      };
+    }
+    if (
+      request === './macSelfUpdate.cjs' &&
+      parent?.filename === INDEX_PATH &&
+      typeof installMacUpdateFromZip === 'function'
+    ) {
+      return {
+        resolveMacBundlePath: () => '/Applications/MagiesPdf.app',
+        installMacUpdateFromZip,
       };
     }
     return originalLoad.call(this, request, parent, isMain);
@@ -76,9 +95,18 @@ async function withUpdaterMocks(
   // releaseChannel has no electron dep; leave it cached.
   try {
     const updater = require('./index.cjs');
-    return await fn({ updater, feeds, fakeAutoUpdater, listeners, platform });
+    return await fn({
+      updater,
+      feeds,
+      fakeAutoUpdater,
+      listeners,
+      platform,
+      relaunchCalls,
+      getQuitCalls: () => quitCalls,
+    });
   } finally {
     Module._load = originalLoad;
+    Object.defineProperty(process, 'platform', originalPlatform);
     delete require.cache[INDEX_PATH];
     delete require.cache[settingsPath];
   }
@@ -208,6 +236,38 @@ describe('status snapshot', () => {
       assert.equal(updater.getLastStatus().state, 'available');
       assert.equal(updater.getLastStatus().version, '2.1.0');
     });
+  });
+});
+
+describe('macOS client rename during update', () => {
+  it('relaunches from the product-named app returned by the installer', async () => {
+    const installCalls = [];
+    const executablePath = '/Applications/Magies Office.app/Contents/MacOS/Magies Office';
+
+    await withUpdaterMocks(
+      {
+        async installMacUpdateFromZip(options) {
+          installCalls.push(options);
+          return {
+            bundlePath: '/Applications/Magies Office.app',
+            executablePath,
+          };
+        },
+      },
+      async ({ updater, fakeAutoUpdater, relaunchCalls, getQuitCalls }) => {
+        updater.startUpdater(() => {});
+        fakeAutoUpdater.emit('update-downloaded', {
+          version: '2.0.0',
+          downloadedFile: '/tmp/MagiesPdf-2.0.0-mac.zip',
+        });
+
+        await updater.quitAndInstall();
+
+        assert.equal(installCalls.length, 1);
+        assert.deepEqual(relaunchCalls, [{ execPath: executablePath }]);
+        assert.equal(getQuitCalls(), 1);
+      },
+    );
   });
 });
 

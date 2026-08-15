@@ -310,6 +310,20 @@ function markOnly(image, box) {
   return { width: side, height: side, pixels: out };
 }
 
+function addTransparentMargin(image, scale) {
+  const side = Math.ceil(Math.max(image.width, image.height) / scale);
+  const pixels = Buffer.alloc(side * side * 4);
+  const offsetX = Math.floor((side - image.width) / 2);
+  const offsetY = Math.floor((side - image.height) / 2);
+
+  for (let y = 0; y < image.height; y += 1) {
+    const from = y * image.width * 4;
+    const to = ((y + offsetY) * side + offsetX) * 4;
+    image.pixels.copy(pixels, to, from, from + image.width * 4);
+  }
+  return { width: side, height: side, pixels };
+}
+
 // ---- outputs ---------------------------------------------------------------
 
 const source = argument('source', path.join(projectRoot, 'build', 'logo-source.png'));
@@ -321,8 +335,13 @@ console.log(`[brand] source ${decoded.width}x${decoded.height}, tile at ${box.le
 // for anywhere the app is shown at icon size.
 const lockupPath = path.join(projectRoot, 'build', 'lockup-master.png');
 const markPath = path.join(projectRoot, 'build', 'mark-master.png');
+const macMarkPath = path.join(projectRoot, 'build', 'mac-mark-master.png');
+const mark = markOnly(decoded, box);
 fs.writeFileSync(lockupPath, encodePng(decoded));
-fs.writeFileSync(markPath, encodePng(markOnly(decoded, box)));
+fs.writeFileSync(markPath, encodePng(mark));
+// Match the visual footprint of standard macOS app icons. The transparent
+// margin applies only to the .icns; web, Windows and Linux assets stay intact.
+fs.writeFileSync(macMarkPath, encodePng(addTransparentMargin(mark, 0.84)));
 
 /** `sips` is on every macOS box and resamples better than anything here. */
 function resize(master, target, size) {
@@ -349,10 +368,37 @@ const iconset = path.join(projectRoot, 'build', 'icon.iconset');
 fs.rmSync(iconset, { recursive: true, force: true });
 fs.mkdirSync(iconset, { recursive: true });
 for (const size of ICONSET) {
-  if (size <= 512) resize(markPath, path.join(iconset, `icon_${size}x${size}.png`), size);
-  if (size >= 32) resize(markPath, path.join(iconset, `icon_${size / 2}x${size / 2}@2x.png`), size);
+  if (size <= 512) resize(macMarkPath, path.join(iconset, `icon_${size}x${size}.png`), size);
+  if (size >= 32) resize(macMarkPath, path.join(iconset, `icon_${size / 2}x${size / 2}@2x.png`), size);
 }
-execFileSync('iconutil', ['-c', 'icns', iconset, '-o', path.join(projectRoot, 'build', 'icon.icns')]);
+
+function writeIcns(target) {
+  const representations = [
+    ['ic04', 'icon_16x16.png'],
+    ['ic11', 'icon_16x16@2x.png'],
+    ['ic05', 'icon_32x32.png'],
+    ['ic12', 'icon_32x32@2x.png'],
+    ['ic07', 'icon_128x128.png'],
+    ['ic13', 'icon_128x128@2x.png'],
+    ['ic08', 'icon_256x256.png'],
+    ['ic14', 'icon_256x256@2x.png'],
+    ['ic09', 'icon_512x512.png'],
+    ['ic10', 'icon_512x512@2x.png'],
+  ];
+  const chunks = representations.map(([type, file]) => {
+    const data = fs.readFileSync(path.join(iconset, file));
+    const header = Buffer.alloc(8);
+    header.write(type, 0, 'ascii');
+    header.writeUInt32BE(data.length + header.length, 4);
+    return Buffer.concat([header, data]);
+  });
+  const header = Buffer.alloc(8);
+  header.write('icns', 0, 'ascii');
+  header.writeUInt32BE(header.length + chunks.reduce((total, item) => total + item.length, 0), 4);
+  fs.writeFileSync(target, Buffer.concat([header, ...chunks]));
+}
+
+writeIcns(path.join(projectRoot, 'build', 'icon.icns'));
 console.log('[brand] wrote build/icon.icns');
 
 /**
@@ -400,4 +446,5 @@ console.log('[brand] wrote build/icon.ico');
 
 fs.rmSync(lockupPath, { force: true });
 fs.rmSync(markPath, { force: true });
+fs.rmSync(macMarkPath, { force: true });
 console.log('[brand] done');

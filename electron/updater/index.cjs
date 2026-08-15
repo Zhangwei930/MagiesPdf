@@ -276,12 +276,12 @@ async function quitAndInstall() {
     const bundlePath = macSelfUpdate.resolveMacBundlePath(
       typeof app.getPath === 'function' ? app.getPath('exe') : process.execPath,
     );
-    await macSelfUpdate.installMacUpdateFromZip({
+    const installed = await macSelfUpdate.installMacUpdateFromZip({
       zipPath: downloadedFile,
       bundlePath,
     });
     try {
-      app.relaunch();
+      app.relaunch({ execPath: installed.executablePath });
     } catch (err) {
       console.warn('[MagiesPdf/updater] relaunch failed:', err?.message || err);
     }
