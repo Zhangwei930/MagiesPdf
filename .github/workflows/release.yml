@@ -137,6 +137,9 @@ jobs:
             \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.deb' \
                -o -name '*.AppImage' -o -name '*.blockmap' -o -name 'latest*.yml' \) \
             -exec cp {} staging/ \;
+          if [ "${{ matrix.platform }}" = "darwin" ]; then
+            mv staging/latest-mac.yml "staging/update-mac-${{ matrix.arch }}.yml"
+          fi
           ls -l staging
 
       - uses: actions/upload-artifact@v4
@@ -166,6 +169,16 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+
+      # Separate native macOS runners each generate latest-mac.yml. Preserve
+      # both, then combine their file entries so electron-updater can choose
+      # x64 or arm64 instead of whichever manifest happened to download last.
+      - name: Merge macOS update manifests
+        run: >-
+          node scripts/mergeMacUpdateManifests.mjs
+          artifacts/update-mac-x64.yml
+          artifacts/update-mac-arm64.yml
+          artifacts/latest-mac.yml
 
       # The changelog was written by hand for people; notes generated from
       # commit subjects would say something different, and worse.
