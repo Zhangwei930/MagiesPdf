@@ -209,6 +209,14 @@ accident.
 - RED → GREEN → REFACTOR. A failing test before the production change.
 - Conventional Commits, scoped: `feat(organize): add booklet imposition`,
   `fix(pdf): copy save buffer out of the WASM heap`.
+- **A lock-file change is proven by `npm ci --dry-run`, not by `npm install`
+  succeeding.** CI installs with `npm ci`, which refuses a lock that has drifted
+  from `package.json`. `npm install --package-lock-only` run against a tree that
+  already has `node_modules` will write versions inferred from what is on disk,
+  and a bundled dependency's version inferred that way can differ from a clean
+  resolution — which fails on the runner and nowhere else. Deleting the lock and
+  rebuilding is worse: it drops the other platforms' optional binaries, and the
+  Linux runner then installs nothing for them.
 - Branch per change (`feat/…`, `fix/…`). Small, focused PRs.
 - Office documents are opened by a bundled engine, not by another application.
   This rule used to read "never bundle, reference or mention any third-party

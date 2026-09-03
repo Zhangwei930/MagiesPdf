@@ -23,18 +23,35 @@ describe('dependency security policy', () => {
   });
 
   /**
-   * An override pins a transitive dependency to a version known good *at the
-   * time it was written*. That makes it a floor that stops rising: `fast-uri`
-   * was pinned to 3.1.5 to escape one advisory, and four later advisories then
-   * named 3.0.0–3.1.5 as the affected range — the pin was holding the tree
-   * inside it. So each pin needs a lower bound that is checked, not assumed.
+   * `fast-uri` and `hono` were once pinned in `overrides` to escape advisories.
+   * A pin is written against what is known that day, and then it stops moving:
+   * `fast-uri` was held at exactly 3.1.5, and four later advisories named
+   * 3.0.0–3.1.5 as the affected range — the pin was keeping the tree inside it.
+   *
+   * The pins are gone. `ajv` asks for ^3.0.1 and the MCP SDK for ^4.11.4, so
+   * both resolve past those ranges on their own and can keep rising.
+   *
+   * The check moved with them, from `overrides` to the lock file: an override
+   * says what we tried to force, while the lock says what `npm ci` will install,
+   * and an advisory is about the second one.
    */
-  it('keeps the fast-uri override above the range four SSRF advisories name', () => {
-    const [major, minor, patch] = packageJson.overrides['fast-uri'].split('.').map(Number);
-    assert.ok(
-      major > 3 || (major === 3 && (minor > 1 || (minor === 1 && patch >= 7))),
-      `fast-uri override ${packageJson.overrides['fast-uri']} is inside GHSA-5jgf-p345-68v8 (<= 3.1.5)`,
-    );
+  it('locks fast-uri and hono past the ranges their advisories name', () => {
+    const lock = JSON.parse(readFileSync(join(__dirname, '..', 'package-lock.json'), 'utf8'));
+    const atLeast = (name, floor) => {
+      const installed = lock.packages[`node_modules/${name}`]?.version;
+      assert.ok(installed, `${name} is missing from the lock file`);
+      const [major, minor, patch] = installed.split('.').map(Number);
+      const [minMajor, minMinor, minPatch] = floor.split('.').map(Number);
+      const ok =
+        major > minMajor ||
+        (major === minMajor && (minor > minMinor || (minor === minMinor && patch >= minPatch)));
+      assert.ok(ok, `${name} resolves to ${installed}, below the required ${floor}`);
+    };
+    // GHSA-5jgf-p345-68v8 and three sibling advisories: fast-uri <= 3.1.5.
+    atLeast('fast-uri', '3.1.7');
+    // hono carries no advisory today; the floor is the version the pin was
+    // holding it below, so the tree cannot silently sink back to it.
+    atLeast('hono', '4.13.0');
   });
 
   it('builds the worker bundle before running worker integration coverage', () => {
