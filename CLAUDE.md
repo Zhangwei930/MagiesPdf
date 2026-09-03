@@ -207,6 +207,16 @@ accident.
 ## Conventions
 
 - RED → GREEN → REFACTOR. A failing test before the production change.
+- **A model's answer is untrusted input.** It reaches the pane through
+  `renderAssistantMarkdown` (`src/app/ai/markdown.ts`) — never `marked.parse`
+  into `dangerouslySetInnerHTML`, which is what it used to do. A turn can read a
+  document, and a document carries instructions written by whoever produced it.
+  The page's CSP is the second line, not the first: it still permits inline
+  styles, which can repaint the pane as a form asking for an API key, and a
+  loopback frame, which is where this app's own editor host and API listen.
+- `shell.openExternal` is handed a url only after `isExternalUrlAllowed`
+  (`electron/security.cjs`). It launches the OS handler, so `file:` opens an
+  executable and a custom scheme reaches whatever claimed it.
 - Conventional Commits, scoped: `feat(organize): add booklet imposition`,
   `fix(pdf): copy save buffer out of the WASM heap`.
 - **A lock-file change is proven by `npm ci --dry-run`, not by `npm install`

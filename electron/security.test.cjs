@@ -6,6 +6,7 @@ const { pathToFileURL } = require('node:url');
 const {
   MAIN_WINDOW_WEB_PREFERENCES,
   constantTimeTokenEqual,
+  isExternalUrlAllowed,
   isTrustedIpcSender,
   isTrustedRendererUrl,
   safeFileName,
@@ -45,6 +46,34 @@ describe('Electron security boundary', () => {
     assert.equal(constantTimeTokenEqual('secret-token', 'secret-tokeN'), false);
     assert.equal(constantTimeTokenEqual('secret-token', 'short'), false);
     assert.equal(constantTimeTokenEqual('', ''), false);
+  });
+
+  it('hands the desktop only the schemes a browser would have opened', () => {
+    assert.equal(isExternalUrlAllowed('https://example.com/docs'), true);
+    assert.equal(isExternalUrlAllowed('http://example.com/docs'), true);
+    assert.equal(isExternalUrlAllowed('mailto:someone@example.com'), true);
+  });
+
+  it('refuses schemes that would make openExternal a way to launch things', () => {
+    for (const url of [
+      'file:///etc/passwd',
+      'file:///C:/Windows/System32/calc.exe',
+      'smb://attacker.example/share',
+      'ms-msdt:/id',
+      'javascript:steal()',
+      'data:text/html,<script>steal()</script>',
+      'vscode://file/etc/passwd',
+      '',
+      'not a url',
+    ]) {
+      assert.equal(isExternalUrlAllowed(url), false, url);
+    }
+  });
+
+  it('refuses anything that is not a string', () => {
+    for (const value of [undefined, null, 42, {}, ['https://example.com']]) {
+      assert.equal(isExternalUrlAllowed(value), false);
+    }
   });
 
   it('accepts IPC only from the active trusted renderer frame', () => {

@@ -8,7 +8,11 @@ const settings = require('./settings.cjs');
 const { startUpdater } = require('./updater/index.cjs');
 const { syncApiServer, stopApiServer } = require('./api/server.cjs');
 const { createApprovalGate } = require('./api/approvalGate.cjs');
-const { MAIN_WINDOW_WEB_PREFERENCES, isTrustedRendererUrl } = require('./security.cjs');
+const {
+  MAIN_WINDOW_WEB_PREFERENCES,
+  isExternalUrlAllowed,
+  isTrustedRendererUrl,
+} = require('./security.cjs');
 
 /**
  * MagiesPdf main process.
@@ -118,11 +122,7 @@ function createWindow() {
 
   // Documents are local; nothing in the UI should ever navigate or open a window.
   window.webContents.setWindowOpenHandler(({ url }) => {
-    try {
-      if (/^https?:$/.test(new URL(url).protocol)) void shell.openExternal(url);
-    } catch {
-      // Invalid URLs are denied below.
-    }
+    if (isExternalUrlAllowed(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
   window.webContents.on('will-navigate', (event, url) => {
