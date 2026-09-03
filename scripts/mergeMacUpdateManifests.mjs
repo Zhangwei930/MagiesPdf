@@ -1,4 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 function parseManifest(source, label) {
@@ -29,7 +30,7 @@ function renderFile(file) {
   return lines.join('\n');
 }
 
-export function mergeMacUpdateManifests(x64Source, arm64Source) {
+export function mergeMacUpdateManifests(x64Source, arm64Source, { minimumSystemVersion } = {}) {
   const x64 = parseManifest(x64Source, 'x64 manifest');
   const arm64 = parseManifest(arm64Source, 'arm64 manifest');
 
@@ -57,6 +58,11 @@ export function mergeMacUpdateManifests(x64Source, arm64Source) {
     `path: ${defaultFile.url}`,
     `sha512: ${defaultFile.sha512}`,
     `releaseDate: ${x64.releaseDate}`,
+    // electron-updater compares this against the running OS and skips the
+    // release when it is lower. It never reads the bundle's plist, so a floor
+    // declared only for packaging would still let the update install here and
+    // replace a working app with one that cannot launch.
+    ...(minimumSystemVersion ? [`minimumSystemVersion: ${minimumSystemVersion}`] : []),
     '',
   ].join('\n');
 }
@@ -70,5 +76,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     readFile(x64Path, 'utf8'),
     readFile(arm64Path, 'utf8'),
   ]);
-  await writeFile(outputPath, mergeMacUpdateManifests(x64Source, arm64Source));
+  // One source for the floor: the same config that stamps LSMinimumSystemVersion
+  // into the bundle, so the two cannot drift apart.
+  const { mac } = createRequire(import.meta.url)('../electron-builder.config.cjs');
+  await writeFile(
+    outputPath,
+    mergeMacUpdateManifests(x64Source, arm64Source, {
+      minimumSystemVersion: mac?.minimumSystemVersion,
+    }),
+  );
 }

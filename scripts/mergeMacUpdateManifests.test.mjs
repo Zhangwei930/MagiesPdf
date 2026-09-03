@@ -18,6 +18,28 @@ releaseDate: '2026-08-15T10:00:00.000Z'
 `;
 
 describe('macOS update manifest merge', () => {
+  /**
+   * Electron 44 requires macOS 13, so a Monterey machine that installs this
+   * build gets an app that cannot launch. `LSMinimumSystemVersion` in the
+   * bundle stops a fresh install, but electron-updater never reads a plist —
+   * it reads this manifest, and skips a release whose `minimumSystemVersion`
+   * is above the running OS. Without the field the update ships anyway and
+   * breaks the app it replaces.
+   */
+  it('carries the minimum OS version electron-updater checks before offering an update', () => {
+    const merged = mergeMacUpdateManifests(manifest('x64'), manifest('arm64'), {
+      minimumSystemVersion: '13.0',
+    });
+
+    assert.match(merged, /^minimumSystemVersion: 13\.0$/m);
+  });
+
+  it('omits the field when no minimum is given, rather than writing an empty one', () => {
+    const merged = mergeMacUpdateManifests(manifest('x64'), manifest('arm64'));
+
+    assert.doesNotMatch(merged, /minimumSystemVersion/);
+  });
+
   it('keeps both architectures so electron-updater can select the native zip', () => {
     const merged = mergeMacUpdateManifests(manifest('x64'), manifest('arm64'));
 
