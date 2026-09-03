@@ -191,7 +191,13 @@ the mirror down with it.
 Bump the version and write the entry in `CHANGELOG.md` **and** the in-app copies
 in `src/app/changelog/{zh,en}.md` — the app's "What's New" reads the latter, and
 `CHANGELOG.md` keeps the sentence-final full stops that the in-app copy drops.
-Then push a `v<major>.<minor>.<patch>` tag.
+Raise `RELEASE_VERSION` in `scripts/releaseVersion.test.mjs` too, and its
+`describe` name with it: that test is what checks the four version strings agree,
+so it fails on the tag's own verify run if the bump missed one — after the tag
+exists, which is the expensive place to find out. Use
+`npm version <v> --no-git-tag-version`, which moves `package.json` and both
+version fields in `package-lock.json` together. Then push a
+`v<major>.<minor>.<patch>` tag.
 
 `.github/workflows/release.yml` takes it from there: it verifies, builds every
 platform on its own runner, and publishes the GitHub Release with notes lifted
