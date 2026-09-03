@@ -24,6 +24,9 @@ artefacts keep the `MagiesPdf-…` file prefix for continuity.
 | Windows | x64 + ARM64 | NSIS, portable, zip |
 | Linux | x64 | AppImage + deb |
 
+**macOS 13 (Ventura) or later** — the Electron 44 runtime follows Chromium in
+dropping macOS 12.
+
 Each installer ships a matching **LibreOffice** runtime (preview & conversion)
 and an embedded **ONLYOFFICE Document Server 9.4** editor. You do not need a
 separate Office install. **Linux ARM64** has no prebuilt package — see
