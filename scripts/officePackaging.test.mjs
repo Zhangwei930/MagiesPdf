@@ -202,4 +202,17 @@ describe('bundled Office packaging', () => {
     assert.match(releaseWorkflow, /macos-15-intel/);
     assert.match(releaseWorkflow, /windows-11-arm/);
   });
+
+  /**
+   * Electron 44 follows Chromium in dropping macOS 12. Declaring the floor is
+   * what turns that into a system message on Monterey instead of an app that
+   * launches to nothing; the same number reaches electron-updater through
+   * `mergeMacUpdateManifests`, which is what keeps the update from shipping
+   * there at all. Raise it whenever Electron raises its own.
+   */
+  it('declares the macOS floor the bundled Electron actually requires', () => {
+    const builderConfig = require('../electron-builder.config.cjs');
+    const [major] = builderConfig.mac.minimumSystemVersion.split('.').map(Number);
+    assert.ok(major >= 13, `macOS floor ${builderConfig.mac.minimumSystemVersion} is below Electron 44's`);
+  });
 });

@@ -164,6 +164,11 @@ module.exports = {
 
   mac: {
     icon: 'build/icon.icns',
+    // Electron 44 follows Chromium in dropping macOS 12. Declared here so
+    // Monterey says why it will not open the app, and read by
+    // `scripts/mergeMacUpdateManifests.mjs` so electron-updater does not offer
+    // the update there in the first place.
+    minimumSystemVersion: '13.0',
     // Open-source builds: no paid Developer ID / notarization (same as MagiesTerminal).
     identity: null,
     notarize: false,
