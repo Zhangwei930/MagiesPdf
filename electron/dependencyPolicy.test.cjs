@@ -54,6 +54,27 @@ describe('dependency security policy', () => {
     atLeast('hono', '4.13.0');
   });
 
+  /**
+   * Every `resolved` url names the public registry, and the rewriting is
+   * one-directional: npm replaces the host of a `registry.npmjs.org` url with
+   * whatever registry is configured, so a mirror user still fetches from their
+   * mirror. A lock that names the mirror instead does not get rewritten back —
+   * it sends everyone there, CI runners included, and makes a build in one
+   * country depend on a mirror in another.
+   *
+   * The SheetJS tarball is the exception the package.json declares: that
+   * package is distributed from its own CDN and not from npm at all.
+   */
+  it('resolves every dependency from the public registry', () => {
+    const lock = JSON.parse(readFileSync(join(__dirname, '..', 'package-lock.json'), 'utf8'));
+    const elsewhere = Object.entries(lock.packages)
+      .filter(([, meta]) => typeof meta.resolved === 'string')
+      .filter(([, meta]) => !meta.resolved.startsWith('https://registry.npmjs.org/'))
+      .filter(([, meta]) => !meta.resolved.startsWith('https://cdn.sheetjs.com/'))
+      .map(([name, meta]) => `${name} <- ${meta.resolved}`);
+    assert.deepEqual(elsewhere, []);
+  });
+
   it('builds the worker bundle before running worker integration coverage', () => {
     assert.match(packageJson.scripts['test:coverage'], /^npm run build:node && c8 /);
   });
