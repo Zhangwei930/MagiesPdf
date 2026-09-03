@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.1.0 — 2026-09-03
+
+### macOS 13 is now required
+
+- **This release needs macOS 13 (Ventura) or later.** The updated runtime follows Chromium in dropping macOS 12, so Monterey machines are not offered this update and stay on 3.0.2 — the update is withheld rather than installed and then unable to open
+
+### Security
+
+- An assistant reply is rendered as text and never as markup. A document can carry instructions written by whoever produced it, and a reply shaped by those instructions could previously restyle the panel or embed a frame; neither is possible now
+- Links in an assistant reply open in your browser, and only for the schemes a browser would follow. Clicking one previously did nothing at all
+
+### Under the hood
+
+- Chromium and the desktop runtime updated to Electron 44, taking several months of upstream security fixes
+
 ## 3.0.2 — 2026-08-15
 
 ### macOS updates
