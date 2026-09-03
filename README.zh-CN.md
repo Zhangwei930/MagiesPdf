@@ -24,6 +24,9 @@
 | Windows | x64 + ARM64 | NSIS、便携版、zip |
 | Linux | x64 | AppImage + deb |
 
+**macOS 需 13 (Ventura) 及以上** —— 所用的 Electron 44 运行时随 Chromium
+一同停止支持 macOS 12。
+
 每个安装包都内置对应的 **LibreOffice** 运行时（预览与格式转换），
 以及内嵌的 **ONLYOFFICE Document Server 9.4** 编辑器。无需再单独安装 Office。
 **Linux ARM64** 暂无预编译包，见 [Linux ARM64](#linux-arm64-支持)。

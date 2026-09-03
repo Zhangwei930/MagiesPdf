@@ -82,7 +82,7 @@
     "c8": "^12.0.0",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
-    "electron": "^42.3.3",
+    "electron": "^44.1.1",
     "electron-builder": "^26.15.2",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
@@ -94,7 +94,7 @@
     "wait-on": "^9.0.3"
   },
   "overrides": {
-    "fast-uri": "3.1.5",
+    "fast-uri": "3.1.7",
     "hono": "4.12.34"
   }
 }
