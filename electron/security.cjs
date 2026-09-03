@@ -27,6 +27,26 @@ function safeFileName(name) {
   return name;
 }
 
+/**
+ * Schemes `shell.openExternal` may be handed.
+ *
+ * `openExternal` is the desktop's "open this the way the OS would", which on
+ * every platform includes launching a registered handler. A `file:` url opens
+ * a document — or an executable; a custom scheme reaches whatever application
+ * claimed it. So the answer is not "a valid url" but "a url a browser would
+ * have navigated to", which is these three and nothing else.
+ */
+const EXTERNAL_URL_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
+
+function isExternalUrlAllowed(url) {
+  if (typeof url !== 'string' || url === '') return false;
+  try {
+    return EXTERNAL_URL_SCHEMES.has(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
+
 function isTrustedRendererUrl(actualUrl, expectedUrl) {
   try {
     const actual = new URL(actualUrl);
@@ -70,6 +90,7 @@ function constantTimeTokenEqual(provided, expected) {
 module.exports = {
   MAIN_WINDOW_WEB_PREFERENCES,
   constantTimeTokenEqual,
+  isExternalUrlAllowed,
   isTrustedIpcSender,
   isTrustedRendererUrl,
   safeFileName,

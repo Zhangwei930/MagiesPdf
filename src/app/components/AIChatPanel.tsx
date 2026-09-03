@@ -40,7 +40,7 @@ import {
   Workflow,
   X,
 } from '../icons.ts';
-import { marked } from 'marked';
+import { renderAssistantMarkdown } from '../ai/markdown.ts';
 import {
   applyAiEvent,
   createHistoryInput,
@@ -1495,7 +1495,7 @@ export function AIChatPanel({
                   ) : (
                     <div
                       className={PROSE}
-                      dangerouslySetInnerHTML={{ __html: marked.parse(message.content || '') as string }}
+                      dangerouslySetInnerHTML={{ __html: renderAssistantMarkdown(message.content || '') }}
                     />
                   )}
                   {message.artifacts && (
@@ -1513,7 +1513,7 @@ export function AIChatPanel({
               {turn.assistantText ? (
                 <div
                   className={PROSE}
-                  dangerouslySetInnerHTML={{ __html: marked.parse(turn.assistantText) as string }}
+                  dangerouslySetInnerHTML={{ __html: renderAssistantMarkdown(turn.assistantText) }}
                 />
               ) : turn.approvals.length === 0 ? (
                 <ActivityIndicator label={t('aiThinking', locale)} />

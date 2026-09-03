@@ -10,7 +10,7 @@ const { collectFilePaths } = require('./files/walk.cjs');
 const { InputBudget } = require('./files/inputBudget.cjs');
 const writableTargets = require('./files/writableTargets.cjs');
 const updater = require('./updater/index.cjs');
-const { isTrustedIpcSender, safeFileName } = require('./security.cjs');
+const { isExternalUrlAllowed, isTrustedIpcSender, safeFileName } = require('./security.cjs');
 const { createOfficeService } = require('./office/service.cjs');
 const { createOfficeSessions } = require('./office/session.cjs');
 const { createEditorService } = require('./office/editorService.cjs');
@@ -533,11 +533,9 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     return true;
   });
   handle('shell:openExternal', async (_event, { url }) => {
-    if (typeof url === 'string' && url !== '') {
-      await shell.openExternal(url);
-      return true;
-    }
-    return false;
+    if (!isExternalUrlAllowed(url)) return false;
+    await shell.openExternal(url);
+    return true;
   });
   handle('app:printPdf', async (event) => {
     event.sender.print();
