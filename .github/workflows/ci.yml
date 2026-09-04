@@ -18,7 +18,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm audit --omit=dev --audit-level=high
+      # Fails on a high/critical advisory; warns instead of blocking when npm's
+      # advisory service will not answer. See scripts/audit.mjs.
+      - run: node scripts/audit.mjs
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:coverage

@@ -18,8 +18,33 @@ describe('dependency security policy', () => {
     );
   });
 
-  it('blocks vulnerabilities in shipped dependencies without breaking build-only tools', () => {
-    assert.match(ciWorkflow, /npm audit --omit=dev --audit-level=high/);
+  /**
+   * The gate itself moved into `scripts/audit.mjs`, because `npm audit` exits
+   * non-zero both for a vulnerable dependency and for npm's advisory service
+   * being down, and only the first is about this repository. What must not
+   * move is the shape of the check: shipped dependencies only, high and above.
+   */
+  it('blocks vulnerabilities in shipped dependencies without breaking build-only tools', async () => {
+    assert.match(ciWorkflow, /node scripts\/audit\.mjs/);
+    // Dynamic import rather than require: this file is CommonJS and the gate is
+    // an ES module, and require() of one only works from node 22.12.
+    const { AUDIT_ARGS } = await import('../scripts/audit.mjs');
+    assert.ok(AUDIT_ARGS.includes('--omit=dev'), 'build-only tools must not fail the build');
+    assert.ok(AUDIT_ARGS.includes('--audit-level=high'), 'high and critical are what stop a merge');
+  });
+
+  /**
+   * The one thing the retry must never do is turn "npm did not answer" into a
+   * pass on a real advisory. Guarded here as well as in the script's own tests,
+   * because this is the policy and that is the implementation.
+   */
+  it('still fails the build for a high or critical advisory', async () => {
+    const { classify } = await import('../scripts/audit.mjs');
+    const found = classify({
+      code: 1,
+      stdout: JSON.stringify({ metadata: { vulnerabilities: { high: 1, critical: 0 } } }),
+    });
+    assert.equal(found.outcome, 'vulnerable');
   });
 
   /**
