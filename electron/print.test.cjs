@@ -4,6 +4,8 @@ const { EventEmitter } = require('node:events');
 const {
   createPdfPrinter,
   whenDocumentSettles,
+  whenDocumentRendered,
+  renderedPageCount,
   MAX_PRINTABLE_BYTES,
 } = require('./print.cjs');
 
@@ -297,5 +299,123 @@ describe('waiting for the document to be there to print', () => {
     await s.waiting;
     assert.equal(s.contents.listenerCount('did-start-loading'), 0);
     assert.equal(s.contents.listenerCount('frame-created'), 0);
+  });
+});
+
+/**
+ * Waiting for the page to go quiet is not the same as the document being
+ * there, and on a loaded machine the gap is longer than any settle window
+ * worth waiting. The integration test caught it: a sixty-page document printed
+ * as one blank page during a full `npm run verify`, while passing on its own.
+ *
+ * So readiness is checked rather than timed. Chromium's own `printToPDF`
+ * reports one blank page until the plugin has the document, and the page count
+ * once it does — and the renderer already knows how many pages the document
+ * has, because pdf.js just laid them out.
+ */
+describe('checking the document is rendered rather than waiting for it', () => {
+  const pdfWith = (pages) => Buffer.from(`%PDF-1.7 /Type /Pages /Count ${pages} trailer`);
+
+  it('reads the page count out of a rendered PDF', () => {
+    assert.equal(renderedPageCount(pdfWith(60)), 60);
+    assert.equal(renderedPageCount(pdfWith(1)), 1);
+    assert.equal(renderedPageCount(Buffer.from('not a pdf')), 0);
+  });
+
+  function rendering(pageCounts, options = {}) {
+    let probe = 0;
+    const contents = {
+      printToPDF: async () => {
+        const pages = pageCounts[Math.min(probe, pageCounts.length - 1)];
+        probe += 1;
+        return pdfWith(pages);
+      },
+    };
+    // The probe interval and the deadline are both timers; a tick that fired
+    // both would end the wait on the first pass and prove nothing.
+    const PROBE_MS = 100;
+    const TIMEOUT_MS = 5000;
+    const timers = [];
+    const clock = {
+      setTimeout: (run, ms) => {
+        timers.push({ run, ms });
+        return timers.length;
+      },
+      clearTimeout: () => {},
+    };
+    const fire = (predicate) => {
+      const due = timers.filter(predicate);
+      for (const timer of due) timers.splice(timers.indexOf(timer), 1);
+      for (const timer of due) timer.run();
+    };
+    return {
+      run: whenDocumentRendered(contents, {
+        expectedPages: options.expectedPages ?? 60,
+        clock,
+        probeIntervalMs: PROBE_MS,
+        timeoutMs: TIMEOUT_MS,
+      }),
+      probes: () => probe,
+      tick: () => fire((timer) => timer.ms === PROBE_MS),
+      expire: () => fire((timer) => timer.ms === TIMEOUT_MS),
+    };
+  }
+
+  it('waits while the window still reports a single blank page', async () => {
+    const r = rendering([1, 1, 60]);
+    let done = false;
+    const waiting = r.run.then(() => {
+      done = true;
+    });
+
+    for (let step = 0; step < 20 && !done; step += 1) {
+      await Promise.resolve();
+      r.tick();
+    }
+    await waiting;
+
+    assert.equal(done, true);
+    assert.equal(r.probes(), 3, 'two blank answers, then the real one');
+  });
+
+  it('stops as soon as the count matches the document', async () => {
+    const r = rendering([60]);
+    await r.run;
+    assert.equal(r.probes(), 1, 'no extra render once the document is there');
+  });
+
+  /**
+   * A one-page document is the blind spot: an unready plugin reports one page
+   * and so does the finished render. It is left to the settle window, which is
+   * what every document had before — no worse, and honest about it.
+   */
+  it('does not wait on a one-page document, because it cannot tell', async () => {
+    const r = rendering([1], { expectedPages: 1 });
+    await r.run;
+    assert.equal(r.probes(), 0, 'one page is ambiguous, so it is left to the settle window');
+  });
+
+  it('gives up and prints rather than holding the job forever', async () => {
+    const r = rendering([1, 1, 1, 1, 1, 1, 1, 1]);
+    let settled = false;
+    const waiting = r.run.then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    r.expire();
+    for (let step = 0; step < 20 && !settled; step += 1) {
+      await Promise.resolve();
+      r.tick();
+    }
+    await waiting;
+
+    assert.equal(settled, true, 'the deadline ends the wait even while it still reports one page');
+  });
+
+  it('prints anyway when the page count is not known', async () => {
+    const r = rendering([1], { expectedPages: 0 });
+    await r.run;
+    assert.equal(r.probes(), 0, 'nothing to check against, so nothing is rendered twice');
   });
 });

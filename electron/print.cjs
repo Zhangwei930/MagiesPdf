@@ -111,13 +111,85 @@ function whenDocumentSettles(contents, options = {}) {
   });
 }
 
+/** How often the window is asked whether it has the document yet. */
+const RENDER_PROBE_MS = 150;
+
+/**
+ * The page count of a PDF this code produced — never of the user's document.
+ *
+ * The only bytes parsed here come from `printToPDF`, which writes a plain
+ * uncompressed page tree, so the count is in the text. A user's PDF may keep
+ * its catalogue in an object stream where none of this is visible, which is
+ * why the *expected* count comes from the renderer instead: pdf.js has already
+ * laid the document out and knows.
+ */
+function renderedPageCount(bytes) {
+  const text = Buffer.from(bytes).toString('latin1');
+  const counts = [...text.matchAll(/\/Count\s+(\d+)/g)].map((match) => Number(match[1]));
+  return counts.length > 0 ? Math.max(...counts) : 0;
+}
+
+/**
+ * Resolves once the window has the document, not merely once it has stopped
+ * loading.
+ *
+ * Settling was a timing heuristic — quiet for 500ms — and on a loaded machine
+ * the plugin needs longer than that, so a sixty-page document printed as one
+ * blank page. This asks instead: `printToPDF` reports a single blank page
+ * until the plugin has parsed the document, and the real count once it has.
+ *
+ * Never rejects, and never waits past its deadline: printing a moment early is
+ * bad, and refusing to print at all is worse.
+ *
+ * The blind spot is a one-page document, where an unready plugin and a
+ * finished render both report 1. Those fall back to the settle window, which
+ * is what every document had before this.
+ */
+async function whenDocumentRendered(contents, options = {}) {
+  const {
+    expectedPages = 0,
+    clock = REAL_CLOCK,
+    probeIntervalMs = RENDER_PROBE_MS,
+    timeoutMs = PLUGIN_READY_TIMEOUT_MS,
+  } = options;
+
+  // Nothing to check against — the caller could not say how many pages the
+  // document has, so there is no question to ask.
+  if (!Number.isInteger(expectedPages) || expectedPages < 2) return;
+
+  const deadline = new Promise((resolve) => {
+    clock.setTimeout(() => resolve('deadline'), timeoutMs);
+  });
+  let expired = false;
+  void deadline.then(() => {
+    expired = true;
+  });
+
+  while (!expired) {
+    let rendered = 0;
+    try {
+      rendered = renderedPageCount(await contents.printToPDF({}));
+    } catch {
+      // The window cannot answer; let the print attempt speak for itself.
+      return;
+    }
+    if (rendered >= expectedPages) return;
+    await Promise.race([
+      new Promise((resolve) => {
+        clock.setTimeout(resolve, probeIntervalMs);
+      }),
+      deadline,
+    ]);
+  }
+}
+
 function createPdfPrinter({ writeTemp, removeTemp, openWindow }) {
   return {
     /**
      * @param {Uint8Array} bytes the document as the tab currently has it
      * @returns {Promise<{ printed: boolean, reason?: string }>}
      */
-    async print(bytes, { name } = {}) {
+    async print(bytes, { name, pages = 0 } = {}) {
       if (!isPdfBytes(bytes)) throw new Error('Not a PDF: refusing to print');
       if (bytes.byteLength > MAX_PRINTABLE_BYTES) {
         throw new Error('The document is too large to print');
@@ -126,7 +198,7 @@ function createPdfPrinter({ writeTemp, removeTemp, openWindow }) {
       const { path: filePath, directory } = await writeTemp(bytes, printableFileName(name));
       let window = null;
       try {
-        window = await openWindow(filePath);
+        window = await openWindow(filePath, { expectedPages: pages });
         // Not silent: choosing the printer, the range and the copies is the
         // print dialog's job, and the OS already has one.
         return await window.print({ silent: false, printBackground: true });
@@ -142,6 +214,8 @@ function createPdfPrinter({ writeTemp, removeTemp, openWindow }) {
 
 module.exports = {
   createPdfPrinter,
+  whenDocumentRendered,
+  renderedPageCount,
   printableFileName,
   whenDocumentSettles,
   MAX_PRINTABLE_BYTES,

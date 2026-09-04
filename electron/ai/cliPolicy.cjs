@@ -38,7 +38,9 @@ function isOfficeWriteTool(functionName) {
 const ACCEPT_EDITS_ARGS = {
   claude: ['--permission-mode', 'acceptEdits'],
   antigravity: ['--mode', 'accept-edits'],
-  gemini: ['--mode', 'accept-edits'],
+  // Not `--mode`: gemini has no such flag. Its own spelling is
+  // `--approval-mode`, whose values are default | auto_edit | yolo | plan.
+  gemini: ['--approval-mode', 'auto_edit'],
 };
 
 /**
@@ -57,7 +59,10 @@ const ACCEPT_EDITS_ARGS = {
  */
 const WORKSPACE_GRANT_ARGS = {
   claude: ['--allowedTools', 'Bash Edit Write Read Glob Grep WebFetch WebSearch'],
-  codex: ['--sandbox', 'workspace-write', '--ask-for-approval', 'never'],
+  // `codex exec` dropped `--ask-for-approval`, and passing it now exits with
+  // code 2 before the turn starts. The same policy is a config override:
+  // `codex doctor -c approval_policy="never"` reports it back as Never.
+  codex: ['--sandbox', 'workspace-write', '-c', 'approval_policy="never"'],
 };
 
 /**

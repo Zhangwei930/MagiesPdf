@@ -18,7 +18,11 @@ const {
   isTrustedIpcSender,
   safeFileName,
 } = require('./security.cjs');
-const { createPdfPrinter, whenDocumentSettles } = require('./print.cjs');
+const {
+  createPdfPrinter,
+  whenDocumentSettles,
+  whenDocumentRendered,
+} = require('./print.cjs');
 const { createOfficeService } = require('./office/service.cjs');
 const { createOfficeSessions } = require('./office/session.cjs');
 const { createEditorService } = require('./office/editorService.cjs');
@@ -620,7 +624,7 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
       return { path: target, directory };
     },
     removeTemp: (directory) => fs.rm(directory, { recursive: true, force: true }),
-    openWindow: async (filePath) => {
+    openWindow: async (filePath, { expectedPages = 0 } = {}) => {
       const window = new BrowserWindow({
         show: false,
         webPreferences: { ...PRINT_WINDOW_WEB_PREFERENCES },
@@ -628,9 +632,11 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
       try {
         await window.loadFile(filePath);
         // Loading is not the same as having the document: the viewer loads
-        // again on its own, and printing before it settles produces a single
-        // blank page. See whenDocumentSettles.
+        // again on its own, and printing too early produces a single blank
+        // page. Settling is the cheap half; the render check is the half that
+        // holds when the machine is busy. See print.cjs.
         await whenDocumentSettles(window.webContents);
+        await whenDocumentRendered(window.webContents, { expectedPages });
       } catch (cause) {
         window.destroy();
         throw cause;
@@ -650,7 +656,13 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
       };
     },
   });
-  handle('app:printPdf', (_event, { bytes, name } = {}) => pdfPrinter.print(bytes, { name }));
+  handle('app:printPdf', (_event, { bytes, name, pages } = {}) => pdfPrinter.print(bytes, {
+    name,
+    // How many pages the renderer laid out. It is a hint used only to tell a
+    // finished render from an unready one, so anything odd simply means "do
+    // not check" rather than being rejected.
+    pages: Number.isInteger(pages) && pages > 0 ? pages : 0,
+  }));
 
   const hostBridge = createHostBridge();
   const secretStore = getSecretStore();

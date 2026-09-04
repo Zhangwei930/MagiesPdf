@@ -69,6 +69,10 @@ test('automatic mode grants the CLI its own edit permission, never a bypass', ()
   const agy = buildAgentCommand('antigravity', 'go', { permissionMode: 'auto' }).args.join(' ');
   assert.match(agy, /--mode accept-edits/);
 
+  // gemini spells it differently, and has no --mode at all.
+  const gemini = buildAgentCommand('gemini', 'go', { permissionMode: 'auto' }).args.join(' ');
+  assert.match(gemini, /--approval-mode auto_edit/);
+
   // Never the blanket bypass from the mode alone.
   for (const id of ['claude', 'codex', 'cursor', 'gemini', 'antigravity']) {
     const args = buildAgentCommand(id, 'x', { permissionMode: 'auto' }).args.join(' ');
@@ -170,6 +174,19 @@ test('a follow-up turn continues the CLI own conversation', () => {
   assert.match(buildAgentCommand('grok', 'again', { resume: true }).args.join(' '), /--continue/);
   assert.match(buildAgentCommand('cursor', 'again', { resume: true }).args.join(' '), /--continue/);
 });
+
+/**
+ * `gemini --help` has no `--continue`. Resuming is `-r, --resume`, and
+ * "latest" is how it names the most recent session. The flag it was given
+ * failed every follow-up turn — and only follow-ups, which is why it went
+ * unnoticed: the first turn of any conversation was fine.
+ */
+test('gemini resumes with the flag it actually has', () => {
+  const resumed = buildAgentCommand('gemini', 'again', { resume: true }).args.join(' ');
+  assert.match(resumed, /--resume latest/);
+  assert.doesNotMatch(resumed, /--continue/);
+});
+
 
 test('Codex keeps the prompt trailing once model flags are added', () => {
   // Its prompt is a positional, so a flag appended after it would be read as
@@ -456,4 +473,30 @@ test('cancelling a run kills the child process', async () => {
   assert.equal(child.killed, true);
   child.emit('close', null);
   await assert.rejects(running, /cancel/i);
+});
+
+/**
+ * A resume that has nothing to resume is not a failed turn.
+ *
+ * grok keys its sessions by working directory and exits 1 with "No session
+ * found for current directory" when there is none — which happens whenever the
+ * granted folder changes, or its session store is cleaned, even though this app
+ * believes the conversation is ongoing. The turn should start a fresh session
+ * rather than hand the user an error about session bookkeeping.
+ */
+test('a missing session is told apart from a real failure', () => {
+  const { isMissingSessionFailure } = require('./cliRunner.cjs');
+
+  assert.equal(isMissingSessionFailure(
+    "Error: No session found for current directory. Use 'grok' to start a new session.",
+  ), true);
+  assert.equal(isMissingSessionFailure('No previous session to continue'), true);
+  assert.equal(isMissingSessionFailure('nothing to resume'), true);
+
+  // Real failures must still be reported as failures.
+  assert.equal(isMissingSessionFailure('rate limit exceeded'), false);
+  assert.equal(isMissingSessionFailure('unexpected argument --ask-for-approval found'), false);
+  assert.equal(isMissingSessionFailure('the session produced no output'), false);
+  assert.equal(isMissingSessionFailure(''), false);
+  assert.equal(isMissingSessionFailure(undefined), false);
 });

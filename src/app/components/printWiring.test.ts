@@ -20,9 +20,9 @@ describe('printing wiring', () => {
   });
 
   it('sends the document the tab is showing, bytes and all', () => {
-    assert.match(viewerSource, /printPdf\(bytes, name\)/);
-    assert.match(preloadSource, /invoke\('app:printPdf', \{ bytes, name \}\)/);
-    assert.match(ipcSource, /pdfPrinter\.print\(bytes, \{ name \}\)/);
+    assert.match(viewerSource, /printPdf\(bytes, name, pageCount\)/);
+    assert.match(preloadSource, /invoke\('app:printPdf', \{ bytes, name, pages \}\)/);
+    assert.match(ipcSource, /pdfPrinter\.print\(bytes, \{/);
   });
 
   /**
@@ -42,5 +42,15 @@ describe('printing wiring', () => {
 
   it('tells the user when printing failed instead of doing nothing', () => {
     assert.match(viewerSource, /viewerPrintFailed/);
+  });
+
+  /**
+   * Waiting for the window to go quiet was a timing assumption, and on a busy
+   * machine it was wrong: a sixty-page document printed as one blank page. The
+   * count the viewer already knows turns that assumption into a check.
+   */
+  it('waits until the window has rendered every page, not just until it is quiet', () => {
+    assert.match(ipcSource, /whenDocumentRendered/);
+    assert.match(ipcSource, /expectedPages/);
   });
 });

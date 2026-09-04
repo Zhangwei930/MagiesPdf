@@ -729,13 +729,13 @@ export function Viewer({
   const print = useCallback(async () => {
     setEditError('');
     try {
-      await bridge().printPdf(bytes, name);
+      await bridge().printPdf(bytes, name, pageCount);
     } catch (cause) {
       setEditError(
         `${t('viewerPrintFailed', locale)} — ${cause instanceof Error ? cause.message : String(cause)}`,
       );
     }
-  }, [bytes, locale, name]);
+  }, [bytes, locale, name, pageCount]);
 
   /**
    * The document's own shortcuts. The shell owns the ones that are not about a
