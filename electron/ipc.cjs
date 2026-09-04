@@ -908,13 +908,14 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   const { getApiStatus } = require('./api/server.cjs');
   handle('api:status', () => getApiStatus());
   const mcpClientConfig = () => {
-    const packedServerPath = path.join(__dirname, 'mcp', 'magies-office-mcp-server.cjs');
-    const serverPath = app.isPackaged
-      ? packedServerPath.replace(
-          `${path.sep}app.asar${path.sep}`,
-          `${path.sep}app.asar.unpacked${path.sep}`,
-        )
-      : packedServerPath;
+    // Inside the asar, deliberately. `electron/mcp/**` is unpacked so the SDK
+    // and its dependencies can be loaded, but the entry also requires
+    // `../ai/toolCatalog.cjs` and the root `package.json`, which are not —
+    // so the unpacked copy died at require time and every packaged install
+    // wrote a broken MCP entry into every CLI it was added to. Electron reads
+    // the archive transparently under ELECTRON_RUN_AS_NODE, and maps the
+    // unpacked dependencies back on its own.
+    const serverPath = path.join(__dirname, 'mcp', 'magies-office-mcp-server.cjs');
     return buildMcpClientConfig({
       execPath: process.execPath,
       serverPath,
