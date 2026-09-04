@@ -23,4 +23,21 @@ describe('pdf ribbon catalogue', () => {
       assert.ok(tab.items.length > 0, `empty tab ${tab.id}`);
     }
   });
+
+  /**
+   * Freehand draw drew a red line that vanished on mouse-up: the Viewer never
+   * passed `onAddInkAnnotation`, so nothing was ever recorded, the document
+   * never became dirty, and closing the tab asked nothing. An entry point for
+   * an annotation that is silently thrown away is worse than no entry point,
+   * because the user believes they have marked the document up.
+   *
+   * The drawing machinery is still here; what is gone is the way in. It comes
+   * back when the annotation actually reaches the file — see issue #26.
+   */
+  it('offers no way into an annotation mode that cannot keep what it draws', () => {
+    const actions = PDF_RIBBON_TABS.flatMap((tab) =>
+      tab.items.filter((item) => item.kind === 'action').map((item) => item.action),
+    );
+    assert.equal(actions.includes('modeDraw' as (typeof actions)[number]), false);
+  });
 });

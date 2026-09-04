@@ -283,9 +283,6 @@ function ActionChip({
       case 'modeRedact':
         props.onMode('redact');
         break;
-      case 'modeDraw':
-        props.onMode('draw');
-        break;
       case 'chooseTool':
         props.onChooseTool();
         break;
@@ -404,16 +401,6 @@ function ActionChip({
       ),
       active: mode === 'redact',
       tone: 'danger',
-    },
-    modeDraw: {
-      label: locale === 'zh' ? '自由画笔' : 'Freehand Draw',
-      icon: (
-        <>
-          <PenLine size={15} />
-          <span className="ml-1 text-[11px]">{locale === 'zh' ? '自由画笔' : 'Draw'}</span>
-        </>
-      ),
-      active: mode === 'draw',
     },
     chooseTool: {
       label: t('viewerChooseTool', locale),
