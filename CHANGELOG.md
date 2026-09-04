@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.2.1 — 2026-09-04
+
+### AI assistant: the CLI agents work again
+
+- **Codex, Gemini and Grok turns failed outright.** Each was launched with an option its CLI no longer accepts — or never did — so the turn ended with an error about arguments instead of doing anything. Every option is now the one the installed program documents.
+- Grok keeps its conversations per folder, and asking it to continue one that is not there ended the turn. It starts a new conversation instead.
+- All six agents offer their model tiers. The list shipped for Cursor had drifted badly — five of the seven models it offered no longer exist — and is now the one its CLI answers with; Antigravity gained the reasoning levels it has always accepted.
+
+### Printing
+
+- **A long document could print as a single blank page**, on a machine busy enough that the preview had not finished rendering when the job was sent. The wait is no longer a guess about how long that takes: printing starts once every page is actually there.
+
 ## 3.2.0 — 2026-09-04
 
 ### Security
