@@ -238,7 +238,7 @@ const api = {
     ipcRenderer.invoke('files:pickFolderFiles', { accept, recursive }),
 
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', { url }),
-  printPdf: () => ipcRenderer.invoke('app:printPdf'),
+  printPdf: (bytes, name) => ipcRenderer.invoke('app:printPdf', { bytes, name }),
 };
 
 contextBridge.exposeInMainWorld('magiesPdf', api);

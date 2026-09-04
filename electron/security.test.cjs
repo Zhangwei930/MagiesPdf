@@ -5,6 +5,7 @@ const { pathToFileURL } = require('node:url');
 
 const {
   MAIN_WINDOW_WEB_PREFERENCES,
+  PRINT_WINDOW_WEB_PREFERENCES,
   constantTimeTokenEqual,
   isExternalUrlAllowed,
   isTrustedIpcSender,
@@ -17,6 +18,19 @@ describe('Electron security boundary', () => {
     assert.equal(MAIN_WINDOW_WEB_PREFERENCES.sandbox, true);
     assert.equal(MAIN_WINDOW_WEB_PREFERENCES.contextIsolation, true);
     assert.equal(MAIN_WINDOW_WEB_PREFERENCES.nodeIntegration, false);
+  });
+
+  /**
+   * The print window opens a temp copy of the user's own document off disk and
+   * is never shown. It needs Chromium's PDF viewer to render it — and nothing
+   * else, least of all a preload or node.
+   */
+  it('keeps the hidden print window sandboxed too, with only the PDF viewer', () => {
+    assert.equal(PRINT_WINDOW_WEB_PREFERENCES.sandbox, true);
+    assert.equal(PRINT_WINDOW_WEB_PREFERENCES.contextIsolation, true);
+    assert.equal(PRINT_WINDOW_WEB_PREFERENCES.nodeIntegration, false);
+    assert.equal(PRINT_WINDOW_WEB_PREFERENCES.plugins, true);
+    assert.equal('preload' in PRINT_WINDOW_WEB_PREFERENCES, false);
   });
 
   it('accepts only the configured renderer origin in development', () => {

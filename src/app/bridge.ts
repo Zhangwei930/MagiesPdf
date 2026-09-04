@@ -610,7 +610,14 @@ export interface MagiesPdfBridge {
     recursive: boolean,
   ): Promise<{ directory: string; files: PickedFile[]; truncated: boolean }>;
   openExternal(url: string): Promise<boolean>;
-  printPdf(): Promise<boolean>;
+  /**
+   * Prints a document's bytes, not the window. Resolves `printed: false` with
+   * `reason: 'cancelled'` when the user dismisses the print dialog.
+   */
+  printPdf(
+    bytes: Uint8Array,
+    name: string,
+  ): Promise<{ printed: boolean; reason?: string }>;
 }
 
 declare global {

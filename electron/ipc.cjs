@@ -1,7 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { app, dialog, ipcMain, protocol, shell } = require('electron');
+const { BrowserWindow, app, dialog, ipcMain, protocol, shell } = require('electron');
 const settings = require('./settings.cjs');
 const mainRunner = require('./jobs/mainRunner.cjs');
 const { createJobExecutor } = require('./jobs/executor.cjs');
@@ -12,7 +12,13 @@ const writableTargets = require('./files/writableTargets.cjs');
 const readableTargets = require('./files/readableTargets.cjs');
 const { executableProblem } = require('./files/executable.cjs');
 const updater = require('./updater/index.cjs');
-const { isExternalUrlAllowed, isTrustedIpcSender, safeFileName } = require('./security.cjs');
+const {
+  PRINT_WINDOW_WEB_PREFERENCES,
+  isExternalUrlAllowed,
+  isTrustedIpcSender,
+  safeFileName,
+} = require('./security.cjs');
+const { createPdfPrinter, whenDocumentSettles } = require('./print.cjs');
 const { createOfficeService } = require('./office/service.cjs');
 const { createOfficeSessions } = require('./office/session.cjs');
 const { createEditorService } = require('./office/editorService.cjs');
@@ -596,10 +602,55 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     await shell.openExternal(url);
     return true;
   });
-  handle('app:printPdf', async (event) => {
-    event.sender.print();
-    return true;
+  /**
+   * Prints the document, not the window.
+   *
+   * Printing used to go through the renderer's own web contents, which printed
+   * the application: chrome, panels, and only the pages the viewer had
+   * mounted. The bytes now go to a temp file that Chromium's own PDF viewer
+   * opens in a window nobody sees, and that is what is printed (issue #27).
+   * Bytes rather than a path, so what comes out is what the tab is showing,
+   * unsaved edits included. See print.cjs.
+   */
+  const pdfPrinter = createPdfPrinter({
+    writeTemp: async (bytes, fileName) => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'magies-print-'));
+      const target = path.join(directory, fileName);
+      await fs.writeFile(target, Buffer.from(bytes.buffer ?? bytes, bytes.byteOffset ?? 0, bytes.byteLength));
+      return { path: target, directory };
+    },
+    removeTemp: (directory) => fs.rm(directory, { recursive: true, force: true }),
+    openWindow: async (filePath) => {
+      const window = new BrowserWindow({
+        show: false,
+        webPreferences: { ...PRINT_WINDOW_WEB_PREFERENCES },
+      });
+      try {
+        await window.loadFile(filePath);
+        // Loading is not the same as having the document: the viewer loads
+        // again on its own, and printing before it settles produces a single
+        // blank page. See whenDocumentSettles.
+        await whenDocumentSettles(window.webContents);
+      } catch (cause) {
+        window.destroy();
+        throw cause;
+      }
+      return {
+        print: (options) => new Promise((resolve, reject) => {
+          window.webContents.print(options, (printed, reason) => {
+            // "cancelled" is the user closing the dialog, which is an answer,
+            // not a failure — the only reason that is not an error.
+            if (printed || reason === 'cancelled') resolve({ printed, reason });
+            else reject(new Error(reason || 'The document could not be printed'));
+          });
+        }),
+        destroy: () => {
+          if (!window.isDestroyed()) window.destroy();
+        },
+      };
+    },
   });
+  handle('app:printPdf', (_event, { bytes, name } = {}) => pdfPrinter.print(bytes, { name }));
 
   const hostBridge = createHostBridge();
   const secretStore = getSecretStore();

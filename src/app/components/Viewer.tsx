@@ -719,6 +719,28 @@ export function Viewer({
   }, [documentId, locale, saveDocumentAs]);
 
   /**
+   * Prints the document, not the window.
+   *
+   * The main process opens these bytes in Chromium's PDF viewer and prints
+   * that, which is why every page comes out and none of this application does
+   * — the viewer only ever mounts the pages near the one being read (#27).
+   * The bytes as the tab has them, so an unsaved rotation prints rotated.
+   *
+   * One function behind all three entry points: the shortcut, the toolbar and
+   * the file menu, which used to be two different things and a `window.print`.
+   */
+  const print = useCallback(async () => {
+    setEditError('');
+    try {
+      await bridge().printPdf(bytes, name);
+    } catch (cause) {
+      setEditError(
+        `${t('viewerPrintFailed', locale)} — ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
+  }, [bytes, locale, name]);
+
+  /**
    * The document's own shortcuts. The shell owns the ones that are not about a
    * document (⌘O, ⌘W, ⌘K); the two sets do not overlap, so both listeners can
    * sit on the window and ignore what is not theirs.
@@ -766,7 +788,7 @@ export function Viewer({
           setFit('page');
           break;
         case 'print':
-          void bridge().printPdf();
+          void print();
           break;
         case 'nextPage':
           goToPage(page + 1);
@@ -870,7 +892,7 @@ export function Viewer({
         onFitWidth={() => setFit('width')}
         onFitPage={() => setFit('page')}
         onToggleNightMode={() => setNightMode((v) => !v)}
-        onPrint={() => void bridge().printPdf()}
+        onPrint={() => void print()}
         onPrevPage={() => goToPage(page - 1)}
         onNextPage={() => goToPage(page + 1)}
         onRotatePage={() => rotatePage(page)}
@@ -901,7 +923,7 @@ export function Viewer({
         onOpen={() => onOpenDocument?.()}
         onSave={() => void save()}
         onSaveAs={() => void saveAs()}
-        onPrint={() => window.print()}
+        onPrint={() => void print()}
         onSettings={() => onOpenSettings?.()}
         onRunTool={(toolId) => onRunTool?.(toolId)}
         onOpenRecent={(path) => onOpenRecent?.(path)}
