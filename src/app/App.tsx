@@ -202,6 +202,34 @@ export function App() {
     return bridge().onEditorSaved((payload) => engineSaved(payload));
   }, [engineSaved]);
 
+  // The window guards its own close, and `close` is synchronous — it cannot ask
+  // the renderer anything at that moment. So the list is pushed up whenever it
+  // changes, and the main process already has it when the moment comes.
+  useEffect(() => {
+    if (!hasBridge()) return;
+    void bridge().reportUnsaved(documents.filter(isDirty).map((d) => d.name));
+  }, [documents]);
+
+  // Chosen "save all" at the close prompt: write every unsaved document and
+  // report whether that worked. A failure keeps the window open.
+  useEffect(() => {
+    if (!hasBridge()) return undefined;
+    return bridge().onSaveAllRequested(async () => {
+      const unsaved = useApp.getState().documents.filter(isDirty);
+      for (const document of unsaved) {
+        try {
+          await useApp.getState().saveDocument(document.id);
+        } catch (cause) {
+          return { saved: false, message: cause instanceof Error ? cause.message : String(cause) };
+        }
+      }
+      // A document that still reads dirty was never written — a Save As the
+      // user cancelled, for one. Closing then would drop it.
+      const remaining = useApp.getState().documents.filter(isDirty);
+      return { saved: remaining.length === 0 };
+    });
+  }, []);
+
   // A save that could not be written has to reach the user: the tab still shows
   // unsaved changes, and the disk still holds the older document.
   useEffect(() => {

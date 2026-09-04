@@ -47,6 +47,22 @@ const api = {
     ipcRenderer.invoke('office:editorSaveExport', { sessionId, name }),
   closeEditor: (sessionId) => ipcRenderer.invoke('office:editorClose', { sessionId }),
   /** Mirrors the tab's unsaved state so an AI write can refuse to clobber it. */
+  /** Names of documents with unsaved changes, so the window can guard its close. */
+  reportUnsaved: (names) => ipcRenderer.invoke('app:reportUnsaved', { names }),
+  /** The window is closing and asked for everything to be written first. */
+  onSaveAllRequested: (handler) => {
+    const listener = (_event, payload) => {
+      void Promise.resolve(handler())
+        .then((result) => ipcRenderer.send('app:saveAllResult', { id: payload.id, ...result }))
+        .catch((cause) => ipcRenderer.send('app:saveAllResult', {
+          id: payload.id,
+          saved: false,
+          message: cause instanceof Error ? cause.message : String(cause),
+        }));
+    };
+    ipcRenderer.on('app:saveAllRequested', listener);
+    return () => ipcRenderer.off('app:saveAllRequested', listener);
+  },
   setEditorModified: (sessionId, modified) =>
     ipcRenderer.invoke('office:editorModified', { sessionId, modified }),
   onEditorSaved: (handler) => {

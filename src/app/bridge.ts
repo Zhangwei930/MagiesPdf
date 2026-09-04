@@ -498,6 +498,12 @@ export interface MagiesPdfBridge {
    * Mirrors this tab's unsaved state into the main process, where an AI write
    * uses it to refuse a document the user is still editing.
    */
+  /** Tells the main process which documents are unsaved, for the close guard. */
+  reportUnsaved(names: string[]): Promise<unknown>;
+  /** Called when the window is closing and everything must be written first. */
+  onSaveAllRequested(
+    handler: () => Promise<{ saved: boolean; message?: string }>,
+  ): () => void;
   setEditorModified(sessionId: string, modified: boolean): Promise<unknown>;
   /** Fires once the engine's document has been written back to disk. */
   onEditorSaved(
