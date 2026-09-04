@@ -20,6 +20,7 @@ async function withUpdaterMocks(
     appLocale = 'en-US',
     platform = 'darwin',
     isPackaged = true,
+    autoUpdate = true,
   } = {},
   fn,
 ) {
@@ -74,6 +75,12 @@ async function withUpdaterMocks(
             quitCalls += 1;
           },
         },
+      };
+    }
+    if (request === '../settings.cjs' && parent?.filename === INDEX_PATH) {
+      return {
+        read: () => ({ autoUpdate }),
+        update: () => ({ autoUpdate }),
       };
     }
     if (
@@ -275,5 +282,71 @@ describe('macOS client rename during update', () => {
 describe('releaseChannel module path', () => {
   it('lives beside index', () => {
     assert.equal(path.dirname(CHANNEL_PATH), path.dirname(INDEX_PATH));
+  });
+});
+
+/**
+ * The six-hour recheck was created only inside the `startUpdater` branch that
+ * runs when auto-update is already on. Turning it on later checked once and
+ * then never again for the rest of the run. See issue #32.
+ */
+describe('auto-update preference and the recheck timer', () => {
+  function withIntervalSpy(fn) {
+    const realSet = global.setInterval;
+    const realClear = global.clearInterval;
+    const live = new Set();
+    global.setInterval = () => {
+      const handle = { unref: () => handle };
+      live.add(handle);
+      return handle;
+    };
+    global.clearInterval = (handle) => {
+      live.delete(handle);
+    };
+    try {
+      return fn(() => live.size);
+    } finally {
+      global.setInterval = realSet;
+      global.clearInterval = realClear;
+    }
+  }
+
+  it('starts the recheck when the preference is turned on during a run', async () => {
+    await withUpdaterMocks({ autoUpdate: false }, async ({ updater }) => {
+      await withIntervalSpy(async (liveTimers) => {
+        updater.startUpdater(() => {});
+        assert.equal(liveTimers(), 0, 'nothing periodic while the preference is off');
+
+        updater.onAutoUpdatePreferenceChanged(true);
+        assert.equal(liveTimers(), 1, 'turning it on starts the recheck');
+      });
+    });
+  });
+
+  it('stops the recheck when the preference is turned off', async () => {
+    await withUpdaterMocks({ autoUpdate: true }, async ({ updater }) => {
+      await withIntervalSpy(async (liveTimers) => {
+        updater.startUpdater(() => {});
+        assert.equal(liveTimers(), 1);
+
+        updater.onAutoUpdatePreferenceChanged(false);
+        assert.equal(liveTimers(), 0);
+      });
+    });
+  });
+
+  it('does not stack timers when the same preference is set twice', async () => {
+    await withUpdaterMocks({ autoUpdate: false }, async ({ updater }) => {
+      await withIntervalSpy(async (liveTimers) => {
+        updater.startUpdater(() => {});
+        updater.onAutoUpdatePreferenceChanged(true);
+        updater.onAutoUpdatePreferenceChanged(true);
+        assert.equal(liveTimers(), 1);
+
+        updater.onAutoUpdatePreferenceChanged(false);
+        updater.onAutoUpdatePreferenceChanged(false);
+        assert.equal(liveTimers(), 0);
+      });
+    });
   });
 });
