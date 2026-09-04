@@ -29,7 +29,12 @@ import {
  * itself never leaves the machine. Once cached, OCR runs fully offline.
  */
 
-const LANGUAGE_CACHE = path.join(os.homedir(), '.magiespdf', 'tessdata');
+/**
+ * Where a downloaded language model is kept. Exported so a caller can tell a
+ * run that will use the network apart from one that will not — the first is
+ * subject to whatever the network is doing, and the second is not.
+ */
+export const LANGUAGE_CACHE = path.join(os.homedir(), '.magiespdf', 'tessdata');
 
 export const OCR_LANGUAGES = [
   { value: 'chi_sim', label: { zh: '简体中文', en: 'Chinese (Simplified)' } },

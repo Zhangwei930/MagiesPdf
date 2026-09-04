@@ -111,8 +111,18 @@ function whenDocumentSettles(contents, options = {}) {
   });
 }
 
-/** How often the window is asked whether it has the document yet. */
-const RENDER_PROBE_MS = 150;
+/**
+ * How often the window is asked whether it has the document yet, and how many
+ * times at most.
+ *
+ * Each probe is a real render, so this is not free. Asking every 150ms for ten
+ * seconds — sixty-six renders — made Chromium's print subsystem itself fail
+ * ("Failed to generate PDF: Printing failed") on a machine under load, which
+ * traded a blank page for no page at all. A handful of probes, spaced out, is
+ * enough: the gap being waited for is a few hundred milliseconds.
+ */
+const RENDER_PROBE_MS = 500;
+const MAX_RENDER_PROBES = 8;
 
 /**
  * The page count of a PDF this code produced — never of the user's document.
@@ -165,12 +175,14 @@ async function whenDocumentRendered(contents, options = {}) {
     expired = true;
   });
 
-  while (!expired) {
+  for (let probe = 0; probe < MAX_RENDER_PROBES && !expired; probe += 1) {
     let rendered = 0;
     try {
       rendered = renderedPageCount(await contents.printToPDF({}));
     } catch {
-      // The window cannot answer; let the print attempt speak for itself.
+      // The window cannot answer — under load the print subsystem itself can
+      // refuse. Asking again would only add to what it is already struggling
+      // with, so stop and let the print attempt speak for itself.
       return;
     }
     if (rendered >= expectedPages) return;
