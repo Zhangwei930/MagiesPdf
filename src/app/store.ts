@@ -291,9 +291,15 @@ export const useApp = create<AppState>((set, get) => ({
         await get().requestEngineSave(id);
         return;
 
-      default:
-        await bridge().writeToPath(document.path, document.bytes);
-        set((state) => ({ documents: mapDocument(state.documents, id, (d) => docs.markSaved(d, '')) }));
+      default: {
+        // The bytes handed to the write are what will be on disk. An edit made
+        // while it is in flight is not, so it must stay unsaved.
+        const written = document.bytes;
+        await bridge().writeToPath(document.path, written);
+        set((state) => ({
+          documents: mapDocument(state.documents, id, (d) => docs.markSaved(d, '', written)),
+        }));
+      }
     }
   },
 
@@ -322,17 +328,22 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   engineSaveFailed(payload) {
-    // Only the outstanding request is cleared. `engineModified` is deliberately
+    // Only that document's request is cleared. `engineModified` is deliberately
     // left alone: nothing reached the disk, so the document is still dirty.
-    const request = get().engineSaveRequest;
     const document = get().documents.find((d) => d.editor?.sessionId === payload.sessionId);
-    if (request && document && request.id !== document.id) return;
-    set({ engineSaveRequest: null });
-    engineSaves.failed(payload.message);
+    if (!document) return;
+    set((state) => ({
+      engineSaveRequest: state.engineSaveRequest?.id === document.id ? null : state.engineSaveRequest,
+    }));
+    engineSaves.failed(document.id, payload.message);
   },
 
   engineSaved(payload) {
     const sessionId = payload.sessionId;
+    // Which document this answer is about. Settling "the outstanding request"
+    // let a late answer for one document end another document's save — and
+    // that document's tab then closed believing it had reached the disk.
+    const document = get().documents.find((d) => d.editor?.sessionId === sessionId);
     set((state) => ({
       documents: state.documents.map((d) =>
         d.editor?.sessionId === sessionId
@@ -343,9 +354,10 @@ export const useApp = create<AppState>((set, get) => ({
             })
           : d,
       ),
-      engineSaveRequest: null,
+      engineSaveRequest:
+        document && state.engineSaveRequest?.id === document.id ? null : state.engineSaveRequest,
     }));
-    engineSaves.saved();
+    if (document) engineSaves.saved(document.id);
   },
 
   async saveDocumentAs(id) {
@@ -361,17 +373,20 @@ export const useApp = create<AppState>((set, get) => ({
       return;
     }
 
+    // Captured before the dialog opens: the user can keep editing behind it,
+    // and what lands in the file is what was handed over here.
+    const sent = document.bytes;
     const result = await bridge().saveOutputAs({
       name: docs.saveAsName(document),
-      bytes: document.bytes,
+      bytes: sent,
       mime: 'application/pdf',
     });
     if (!result) return;
 
     // The chosen destination becomes where ⌘S writes from now on.
-    const written = result.written[0] ?? '';
+    const writtenPath = result.written[0] ?? '';
     set((state) => ({
-      documents: mapDocument(state.documents, id, (d) => docs.markSaved(d, written)),
+      documents: mapDocument(state.documents, id, (d) => docs.markSaved(d, writtenPath, sent)),
     }));
   },
 

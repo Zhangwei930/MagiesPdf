@@ -8,6 +8,15 @@
  * waits on a save — closing a tab, quitting — needs a promise that settles at
  * the *end*, not at the asking.
  *
+ * Requests are kept per document. One outstanding request for the whole app
+ * meant two documents saving at once — which is what "save all" on quit is —
+ * superseded each other, and whichever answer arrived first settled whoever
+ * happened to be waiting: save A, save B, and A's late answer resolved B, so
+ * B's tab closed believing it had reached the disk.
+ *
+ * Two saves of *the same* document are the case a document id cannot tell
+ * apart, so they are not allowed to coexist: the second joins the first.
+ *
  * The clock is injected so the timeout can be tested without waiting for it.
  */
 
@@ -19,18 +28,18 @@ export interface Clock {
 export interface EngineSaveTracker {
   /** Starts a request. The promise settles when the engine answers. */
   begin(id: string, timeoutMs: number): Promise<void>;
-  /** The engine wrote the document. */
-  saved(): void;
-  /** The engine could not write it. */
-  failed(message: string): void;
-  /** Whether a request is outstanding. */
+  /** The engine wrote that document. */
+  saved(id: string): void;
+  /** The engine could not write that document. */
+  failed(id: string, message: string): void;
+  /** Whether any request is outstanding. */
   pending(): boolean;
-  /** The document a request is outstanding for, or null. */
-  waitingFor(): string | null;
+  /** The documents requests are outstanding for. */
+  waitingFor(): string[];
 }
 
 interface Outstanding {
-  id: string;
+  promise: Promise<void>;
   resolve: () => void;
   reject: (cause: Error) => void;
   timer: number;
@@ -42,46 +51,54 @@ const defaultClock: Clock = {
 };
 
 export function createEngineSaveTracker(clock: Clock = defaultClock): EngineSaveTracker {
-  let outstanding: Outstanding | null = null;
+  const outstanding = new Map<string, Outstanding>();
 
-  /** Takes the outstanding request, cancelling its timeout. */
-  function take(): Outstanding | null {
-    if (!outstanding) return null;
-    const held = outstanding;
-    outstanding = null;
+  /** Takes one document's request, cancelling its timeout. */
+  function take(id: string): Outstanding | null {
+    const held = outstanding.get(id);
+    if (!held) return null;
+    outstanding.delete(id);
     clock.clearTimeout(held.timer);
     return held;
   }
 
   return {
     begin(id, timeoutMs) {
-      // A second request while one is in flight: the first will never be
-      // answered now, and leaving it pending would hang whatever waits on it.
-      take()?.reject(new Error('The save was superseded by a later one'));
+      // A second save of the same document joins the first rather than
+      // replacing it: the engine answers per session, so two requests for one
+      // document could not be told apart, and replacing left the earlier
+      // caller waiting on something nothing would ever settle.
+      const already = outstanding.get(id);
+      if (already) return already.promise;
 
-      return new Promise<void>((resolve, reject) => {
-        const timer = clock.setTimeout(() => {
-          outstanding = null;
-          reject(new Error('The editor did not answer the save in time'));
-        }, timeoutMs);
-        outstanding = { id, resolve, reject, timer };
+      let resolve!: () => void;
+      let reject!: (cause: Error) => void;
+      const promise = new Promise<void>((res, rej) => {
+        resolve = res;
+        reject = rej;
       });
+      const timer = clock.setTimeout(() => {
+        outstanding.delete(id);
+        reject(new Error('The editor did not answer the save in time'));
+      }, timeoutMs);
+      outstanding.set(id, { promise, resolve, reject, timer });
+      return promise;
     },
 
-    saved() {
-      take()?.resolve();
+    saved(id) {
+      take(id)?.resolve();
     },
 
-    failed(message) {
-      take()?.reject(new Error(message));
+    failed(id, message) {
+      take(id)?.reject(new Error(message));
     },
 
     pending() {
-      return outstanding !== null;
+      return outstanding.size > 0;
     },
 
     waitingFor() {
-      return outstanding?.id ?? null;
+      return [...outstanding.keys()];
     },
   };
 }

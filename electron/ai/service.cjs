@@ -115,6 +115,11 @@ function createAiService({
       requestApproval: deps.requestApproval,
       externalToolProvider: deps.externalToolProvider,
       officeToolProvider: deps.officeToolProvider,
+      // Every dependency worked out below has to arrive here. Web search was
+      // computed, handed to this factory, and then dropped — so it could be
+      // configured in Settings and register no tool at all, while the injected
+      // factory these tests used passed it on and looked fine.
+      webSearchProvider: deps.webSearchProvider,
     }));
     const runtime = createRuntime({
       requestApproval,

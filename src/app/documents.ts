@@ -281,11 +281,25 @@ export function redo(doc: DocumentState): DocumentState {
  * Saving a rendering writes a PDF the user chose the location of, so from then
  * on it is that PDF and not a view of the Office file it started as.
  */
-export function markSaved(doc: DocumentState, path: string): DocumentState {
+/**
+ * Records what reached the disk.
+ *
+ * `written` is the array the save was handed, not the document's current
+ * bytes: a write finishes later, and an edit made while it was in flight is
+ * not on disk. Recording "whatever the document is now" marked that edit saved
+ * — the tab showed no changes, closing it asked nothing, and the edit was
+ * gone. The parameter is required so the distinction cannot be lost again by
+ * someone reading the shorter call as equivalent.
+ */
+export function markSaved(
+  doc: DocumentState,
+  path: string,
+  written: Uint8Array,
+): DocumentState {
   return {
     ...doc,
     path: path === '' ? doc.path : path,
-    savedBytes: doc.bytes,
+    savedBytes: written,
     origin: path === '' ? doc.origin : null,
   };
 }

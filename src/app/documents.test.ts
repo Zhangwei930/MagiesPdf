@@ -108,7 +108,8 @@ describe('applyEdit / undo / redo', () => {
   });
 
   it('keeps the document clean-looking again if you undo back to the saved state', () => {
-    const saved = markSaved(applyEdit(start, bytes(2)), '/docs/a.pdf');
+    const edited = applyEdit(start, bytes(2));
+    const saved = markSaved(edited, '/docs/a.pdf', edited.bytes);
     assert.equal(isDirty(saved), false);
 
     const changed = applyEdit(saved, bytes(3));
@@ -219,7 +220,7 @@ describe('saved state across undo and redo', () => {
   it('is clean again after undoing an edit made on top of a save', () => {
     const opened = createDocument(picked('a.pdf', '/docs/a.pdf'));
     const editedOnce = applyEdit(opened, bytes(2));
-    const saved = markSaved(editedOnce, '/docs/a.pdf');
+    const saved = markSaved(editedOnce, '/docs/a.pdf', editedOnce.bytes);
     const editedTwice = applyEdit(saved, bytes(3));
 
     assert.equal(isDirty(editedTwice), true);
@@ -228,7 +229,8 @@ describe('saved state across undo and redo', () => {
 
   it('is clean again after undoing past the save and redoing back to it', () => {
     const opened = createDocument(picked('a.pdf', '/docs/a.pdf'));
-    const saved = markSaved(applyEdit(opened, bytes(2)), '/docs/a.pdf');
+    const editedOnce2 = applyEdit(opened, bytes(2));
+    const saved = markSaved(editedOnce2, '/docs/a.pdf', editedOnce2.bytes);
 
     const back = undo(saved);
     assert.equal(isDirty(back), true, 'the state before the save is not on disk');
@@ -237,7 +239,8 @@ describe('saved state across undo and redo', () => {
 
   it('stays dirty on a state that was never written', () => {
     const opened = createDocument(picked('a.pdf', '/docs/a.pdf'));
-    const saved = markSaved(applyEdit(opened, bytes(2)), '/docs/a.pdf');
+    const editedOnce2 = applyEdit(opened, bytes(2));
+    const saved = markSaved(editedOnce2, '/docs/a.pdf', editedOnce2.bytes);
     const further = applyEdit(applyEdit(saved, bytes(3)), bytes(4));
 
     assert.equal(isDirty(further), true);
@@ -247,8 +250,10 @@ describe('saved state across undo and redo', () => {
 
   it('follows the newer save when the document is written twice', () => {
     const opened = createDocument(picked('a.pdf', '/docs/a.pdf'));
-    const first = markSaved(applyEdit(opened, bytes(2)), '/docs/a.pdf');
-    const second = markSaved(applyEdit(first, bytes(3)), '/docs/a.pdf');
+    const firstEdit = applyEdit(opened, bytes(2));
+    const first = markSaved(firstEdit, '/docs/a.pdf', firstEdit.bytes);
+    const secondEdit = applyEdit(first, bytes(3));
+    const second = markSaved(secondEdit, '/docs/a.pdf', secondEdit.bytes);
 
     assert.equal(isDirty(second), false);
     assert.equal(isDirty(undo(second)), true, 'the earlier save is no longer what is on disk');
@@ -263,18 +268,20 @@ describe('saved state across undo and redo', () => {
 
 describe('markSaved', () => {
   it('marks the current bytes as being on disk', () => {
-    const doc = markSaved(applyEdit(createDocument(picked('a.pdf', '/docs/a.pdf')), bytes(2)), '');
+    const editedDoc = applyEdit(createDocument(picked('a.pdf', '/docs/a.pdf')), bytes(2));
+    const doc = markSaved(editedDoc, '', editedDoc.bytes);
     assert.equal(isDirty(doc), false);
   });
 
   it('adopts the new path after a save-as, so ⌘S has somewhere to go', () => {
     const untitled = createDocument(picked('result.pdf', ''));
-    const doc = markSaved(untitled, '/docs/result.pdf');
+    const doc = markSaved(untitled, '/docs/result.pdf', untitled.bytes);
     assert.equal(doc.path, '/docs/result.pdf');
   });
 
   it('leaves the path alone when none is given', () => {
-    const doc = markSaved(createDocument(picked('a.pdf', '/docs/a.pdf')), '');
+    const fresh = createDocument(picked('a.pdf', '/docs/a.pdf'));
+    const doc = markSaved(fresh, '', fresh.bytes);
     assert.equal(doc.path, '/docs/a.pdf');
   });
 });
@@ -301,6 +308,58 @@ describe('openDocument', () => {
     const two = createDocument(picked('result.pdf', ''));
     const { documents } = openDocument([one], two);
     assert.equal(documents.length, 2, 'in-memory results are not the same document');
+  });
+});
+
+/**
+ * A save writes the bytes it was handed, and finishes later. If the document
+ * changed while the write was in flight, recording "what the document is now"
+ * as what is on disk marks an edit saved that never reached the file — and the
+ * tab then closes without asking, taking the edit with it.
+ *
+ * What is on disk is what was written. That is the only thing markSaved may
+ * record.
+ */
+describe('markSaved records what was written, not what is current', () => {
+  const started = bytes(1);
+  const edited = bytes(2);
+
+  it('keeps the document dirty when it changed during the write', () => {
+    const opened = createDocument(picked('a.pdf', '/docs/a.pdf'));
+    const withStarted = { ...opened, bytes: started };
+    const duringWrite = applyEdit(withStarted, edited);
+
+    const saved = markSaved(duringWrite, '', started);
+
+    assert.equal(isDirty(saved), true, 'the edit is not on disk, so it is unsaved');
+    assert.equal(saved.savedBytes, started, 'what is on disk is what was written');
+  });
+
+  it('marks it clean when nothing changed during the write', () => {
+    const opened = createDocument(picked('a.pdf', '/docs/a.pdf'));
+    const withStarted = { ...opened, bytes: started };
+
+    assert.equal(isDirty(markSaved(withStarted, '', started)), false);
+  });
+
+  /**
+   * Undo during the write is the same problem wearing different clothes: the
+   * document is back at a version that is not the one on disk.
+   */
+  it('keeps a document that was undone during the write dirty', () => {
+    const opened = createDocument(picked('a.pdf', '/docs/a.pdf'));
+    const withStarted = { ...opened, bytes: started };
+    const edited2 = applyEdit(withStarted, edited);
+
+    const saved = markSaved(undo(edited2), '', edited);
+    assert.equal(isDirty(saved), true);
+  });
+
+  it('still takes the new path on save-as', () => {
+    const opened = createDocument(picked('a.pdf', ''));
+    const saved = markSaved({ ...opened, bytes: started }, '/docs/copy.pdf', started);
+    assert.equal(saved.path, '/docs/copy.pdf');
+    assert.equal(isDirty(saved), false);
   });
 });
 
@@ -442,7 +501,8 @@ describe('documents rendered from an Office file', () => {
 
   /** Saving elsewhere produces a normal PDF, no longer tied to the source. */
   it('stops being a rendering once it is saved somewhere of its own', () => {
-    const saved = markSaved(createDocument(preview()), '/docs/报告.pdf');
+    const rendering = createDocument(preview());
+    const saved = markSaved(rendering, '/docs/报告.pdf', rendering.bytes);
     assert.equal(saved.path, '/docs/报告.pdf');
     assert.equal(saved.origin, null);
   });
