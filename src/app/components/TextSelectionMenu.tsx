@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { clsx } from 'clsx';
 import { Bot, Sparkles, Languages, PenLine } from '../icons.ts';
 import type { Locale } from '../i18n.ts';
+import { selectionMenuPosition } from '../pdf/selectionMenu.ts';
 
 export interface TextSelectionMenuProps {
   locale: Locale;
@@ -39,30 +40,26 @@ export function TextSelectionMenu({
       const range = selection.getRangeAt(0);
       const rect = range.getBoundingClientRect();
       const container = containerRef.current;
+      const containerRect = container?.getBoundingClientRect() ?? null;
 
-      if (!container) {
-        setPosition({
-          x: rect.left + rect.width / 2,
-          y: rect.top - 12,
-        });
-      } else {
-        const containerRect = container.getBoundingClientRect();
-        // Check if selection is within container
-        if (
-          rect.bottom < containerRect.top ||
-          rect.top > containerRect.bottom ||
-          rect.right < containerRect.left ||
-          rect.left > containerRect.right
-        ) {
-          setPosition(null);
-          return;
-        }
-
-        setPosition({
-          x: Math.max(120, Math.min(rect.left + rect.width / 2 - containerRect.left, containerRect.width - 120)),
-          y: Math.max(40, rect.top - containerRect.top - 44),
-        });
-      }
+      // The menu is absolutely positioned inside the scrolled content, so its
+      // coordinate includes the scroll offset. `selectionMenuPosition` owns
+      // that conversion; keep it there, where it can be tested without a DOM.
+      setPosition(
+        selectionMenuPosition({
+          selection: rect,
+          container: containerRect && {
+            left: containerRect.left,
+            top: containerRect.top,
+            width: containerRect.width,
+            height: containerRect.height,
+          },
+          scroll: {
+            left: container?.scrollLeft ?? 0,
+            top: container?.scrollTop ?? 0,
+          },
+        }),
+      );
 
       setSelectedText(text);
     };
