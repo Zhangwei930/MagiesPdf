@@ -3,6 +3,7 @@ const { pathToFileURL } = require('node:url');
 const { BrowserWindow, app, dialog, ipcMain, nativeTheme, shell } = require('electron');
 const { JobPool } = require('./jobs/pool.cjs');
 const { documentPathsFromArgv, openableDocumentPath } = require('./files/openPaths.cjs');
+const readableTargets = require('./files/readableTargets.cjs');
 const { registerIpc } = require('./ipc.cjs');
 const settings = require('./settings.cjs');
 const { startUpdater } = require('./updater/index.cjs');
@@ -77,6 +78,9 @@ let rendererReady = false;
 /** Hands paths to the renderer, or holds them until there is one. */
 function requestOpen(paths) {
   if (paths.length === 0) return;
+  // The OS handed these over — argv, "Open With", a drop on the dock icon. The
+  // renderer will ask to read them next, and this is what lets it.
+  readableTargets.grantAll(paths);
   if (!rendererReady || !mainWindow || mainWindow.isDestroyed()) {
     for (const target of paths) {
       if (!pendingOpenPaths.includes(target)) pendingOpenPaths.push(target);

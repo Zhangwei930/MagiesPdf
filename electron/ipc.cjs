@@ -9,6 +9,8 @@ const { createHostBridge } = require('./host.cjs');
 const { collectFilePaths } = require('./files/walk.cjs');
 const { InputBudget } = require('./files/inputBudget.cjs');
 const writableTargets = require('./files/writableTargets.cjs');
+const readableTargets = require('./files/readableTargets.cjs');
+const { executableProblem } = require('./files/executable.cjs');
 const updater = require('./updater/index.cjs');
 const { isExternalUrlAllowed, isTrustedIpcSender, safeFileName } = require('./security.cjs');
 const { createOfficeService } = require('./office/service.cjs');
@@ -399,7 +401,15 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     }
   });
 
-  handle('office:listRecent', () => office.listRecent());
+  handle('office:listRecent', () => {
+    const recent = office.listRecent();
+    // Offered back to the user as their own history; opening one from the list
+    // is the same act as opening it the first time.
+    readableTargets.grantAll(
+      (Array.isArray(recent) ? recent : []).map((entry) => entry?.path).filter(Boolean),
+    );
+    return recent;
+  });
   handle('office:renameRecent', (_event, { path: target, name }) =>
     office.renameRecent(target, name),
   );
@@ -417,6 +427,8 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     });
 
     if (result.canceled) return [];
+    // Chosen by the user in a dialog this process opened: that is the grant.
+    readableTargets.grantAll(result.filePaths);
     return readMany(result.filePaths);
   });
 
@@ -426,15 +438,64 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
       properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'],
       filters: [{ name: 'Documents', extensions }],
     });
-    return result.canceled ? [] : result.filePaths;
+    if (result.canceled) return [];
+    readableTargets.grantAll(result.filePaths);
+    return result.filePaths;
+  });
+
+  // A drop is a user action the renderer cannot fabricate: `webUtils` resolves
+  // a real `File` and nothing else. Sent rather than invoked because the
+  // renderer has no use for an answer.
+  ipcMain.on('files:grantDropped', (event, payload) => {
+    if (!isTrustedIpcSender(event, getWindow(), trustedRendererUrl)) return;
+    if (typeof payload?.path === 'string') readableTargets.grant(payload.path);
   });
 
   handle('files:read', async (_event, { paths }) => {
     if (!Array.isArray(paths)) return [];
     const targets = paths.filter((p) => typeof p === 'string' && p !== '');
+    // Naming a path is not permission to read it. Every path here came from a
+    // dialog, a drop, the recent list or argv — the four places the main
+    // process grants — so anything else is a renderer asking for something no
+    // user action asked for.
+    const denied = targets.filter((target) => !readableTargets.isReadable(target));
+    if (denied.length > 0) {
+      throw new Error(`Not authorised to read: ${denied.map((p) => path.basename(p)).join(', ')}`);
+    }
     const files = await readMany(targets);
     office.rememberRecent(targets);
     return files;
+  });
+
+  /**
+   * Picking the external converter needs its path and nothing else.
+   *
+   * `files:pick` would read the whole binary into memory, ship it over IPC,
+   * refuse anything past the 512 MiB input cap, and hand the renderer the
+   * right to overwrite it. None of that serves choosing a program to run, so
+   * this returns the path and checks that it is one that can be run.
+   */
+  handle('files:pickExecutable', async () => {
+    const result = await dialog.showOpenDialog(getWindow(), {
+      properties: ['openFile'],
+      filters:
+        process.platform === 'win32'
+          ? [{ name: 'Programs', extensions: ['exe', 'bat', 'cmd', 'com'] }]
+          : [{ name: 'All files', extensions: ['*'] }],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+
+    const target = result.filePaths[0];
+    let stat = null;
+    try {
+      stat = await fs.stat(target);
+    } catch {
+      stat = null;
+    }
+    const problem = executableProblem({ stat, path: target });
+    // Deliberately no grant: the converter is run, never read or written by
+    // the renderer.
+    return problem ? { path: '', problem } : { path: target };
   });
 
   handle('files:pickDirectory', async () => {
@@ -463,6 +524,7 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     // maxFiles is a hard stop inside the walker; if we hit exactly 200 there
     // may be more on disk — surface that so the UI can warn.
     const truncated = paths.length >= 200;
+    readableTargets.grantAll(paths);
     const files = await readMany(paths);
     return { directory, files, truncated };
   });

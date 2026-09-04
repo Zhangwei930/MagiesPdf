@@ -527,6 +527,11 @@ export interface MagiesPdfBridge {
   /** Picks supported documents without copying their contents through IPC. */
   pickDocumentPaths(multiple: boolean): Promise<string[]>;
   readFiles(paths: string[]): Promise<PickedFile[]>;
+  /**
+   * Picks a program to run, by path. Nothing is read, and the path gains no
+   * read or write rights — it is passed to the converter, not opened here.
+   */
+  pickExecutable(): Promise<{ path: string; problem?: string } | null>;
   pathForFile(file: File): string;
   saveOutputs(
     files: ToolOutputFile[],

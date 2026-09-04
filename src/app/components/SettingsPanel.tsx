@@ -409,8 +409,9 @@ export function SettingsPanel({ onBack }: { onBack(): void }) {
                     size="sm"
                     onClick={async () => {
                       if (!hasBridge()) return;
-                      const files = await bridge().pickFiles(['*'], false);
-                      const picked = files[0];
+                      // Only the path is wanted; reading the binary would
+                      // cost memory, hit the input cap and grant write rights.
+                      const picked = await bridge().pickExecutable();
                       if (picked?.path) {
                         await update({
                           externalConverter: {
