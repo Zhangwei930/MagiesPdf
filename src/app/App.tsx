@@ -18,8 +18,10 @@ import {
   normalizeDocumentPath,
   officeCreateKind,
   partitionOpenPaths,
+  setPathCaseSensitivity,
   type DocumentState,
 } from './documents.ts';
+import { createOpenGuard } from './openGuard.ts';
 import {
   canApplyInstantly,
   canOpenFromDocument,
@@ -28,6 +30,20 @@ import {
 } from './toolApply.ts';
 import { officeUiThemeFor, partitionDocumentPaths } from './office.ts';
 import { createReloadQueue } from './officeReload.ts';
+
+/**
+ * Whether two spellings of a path name one file is a property of the machine,
+ * not of a document, so it is answered once. Linux keeps them apart; the
+ * default folds, which is what Windows and macOS do.
+ */
+if (hasBridge()) setPathCaseSensitivity(bridge().platform);
+
+/**
+ * One at a time per file, across every route into opening: a tab exists too
+ * late to deduplicate against, so two overlapping requests for one document
+ * would each create an engine session and only one would ever be closed.
+ */
+const openGuard = createOpenGuard();
 import {
   EMPTY_APPROVAL_STATE,
   withDecision,
@@ -414,18 +430,24 @@ export function App() {
           setActiveDocument(held.id);
           setMain({ name: 'document' });
         }
-        if (fresh.length > 0) {
-          setOpening(fresh);
+        // A tab appears only once opening has finished, so the check above
+        // cannot see a request that is still in flight. Without this, two
+        // overlapping opens of one file each create a session and only one is
+        // ever closed.
+        const claimed = openGuard.claim(fresh);
+        if (claimed.length > 0) {
+          setOpening(claimed);
           try {
             // Word, Sheet and Slide documents open in the engine, where they can
             // be edited. PDFs stay with the viewer below. uiTheme keeps the
             // engine chrome in step with Magies / the OS — without it a dark
             // loadmask can sit over a light document.
             const uiTheme = officeUiThemeFor(settings.theme, darkMode);
-            for (const file of await bridge().openInEditor(fresh, { uiTheme })) {
+            for (const file of await bridge().openInEditor(claimed, { uiTheme })) {
               showDocument(file);
             }
           } finally {
+            openGuard.release(claimed);
             setOpening([]);
           }
         }

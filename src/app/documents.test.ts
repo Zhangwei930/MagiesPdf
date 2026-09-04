@@ -14,6 +14,7 @@ import {
   nextActiveId,
   officeCreateKind,
   normalizeDocumentPath,
+  setPathCaseSensitivity,
   openDocument,
   partitionOpenPaths,
   redo,
@@ -352,12 +353,39 @@ describe('partitionOpenPaths', () => {
 });
 
 describe('normalizeDocumentPath', () => {
-  it('makes the separators and the case agree', () => {
+  it('makes the separators and the case agree where the filesystem does', () => {
+    setPathCaseSensitivity('darwin');
+    assert.equal(normalizeDocumentPath('C:\\Docs\\Report.docx'), 'c:/docs/report.docx');
+    assert.equal(normalizeDocumentPath('/docs/Report.docx'), '/docs/report.docx');
+    setPathCaseSensitivity('win32');
     assert.equal(normalizeDocumentPath('C:\\Docs\\Report.docx'), 'c:/docs/report.docx');
   });
 
-  it('leaves a posix path alone apart from its case', () => {
-    assert.equal(normalizeDocumentPath('/docs/Report.docx'), '/docs/report.docx');
+  /**
+   * Linux does distinguish them, and this app ships an AppImage and a .deb.
+   * Folding the case there made two different documents share one tab —
+   * opening the second silently focused the first.
+   */
+  it('keeps two files apart on a filesystem that keeps them apart', () => {
+    setPathCaseSensitivity('linux');
+    assert.notEqual(normalizeDocumentPath('/docs/A.docx'), normalizeDocumentPath('/docs/a.docx'));
+    assert.equal(normalizeDocumentPath('/docs/Report.docx'), '/docs/Report.docx');
+  });
+
+  /**
+   * A backslash is a legal character in a Linux filename, so rewriting it as a
+   * separator would merge `/docs/a\b.pdf` with `/docs/a/b.pdf`.
+   */
+  it('leaves a backslash alone where it is part of the name', () => {
+    setPathCaseSensitivity('linux');
+    assert.equal(normalizeDocumentPath('/docs/a\\b.pdf'), '/docs/a\\b.pdf');
+    setPathCaseSensitivity('win32');
+    assert.equal(normalizeDocumentPath('/docs/a\\b.pdf'), '/docs/a/b.pdf');
+  });
+
+  it('folds case by default, which is what Windows and macOS do', () => {
+    setPathCaseSensitivity('darwin');
+    assert.equal(normalizeDocumentPath('/Docs/A.PDF'), '/docs/a.pdf');
   });
 });
 

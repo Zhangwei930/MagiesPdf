@@ -132,7 +132,26 @@ describe('AI workspace wiring', () => {
    */
   it('deduplicates a document before the engine is asked to open it', () => {
     assert.match(appSource, /partitionOpenPaths/);
-    assert.match(appSource, /openInEditor\(fresh/);
+  });
+
+  /**
+   * A tab exists only once opening has finished, so deduplicating against the
+   * tab list cannot see a request still in flight. Two overlapping opens of
+   * one file each created a session, and only one was ever closed — the half
+   * of #29 that a tab-based check could never cover.
+   */
+  it('holds one claim per file while it is being opened', () => {
+    assert.match(appSource, /openGuard\.claim\(fresh\)/);
+    assert.match(appSource, /openInEditor\(claimed/);
+    assert.match(appSource, /openGuard\.release\(claimed\)/);
+  });
+
+  /**
+   * Linux distinguishes `/docs/A.docx` from `/docs/a.docx`, and this app ships
+   * an AppImage and a .deb. The comparison is answered once, from the platform.
+   */
+  it('asks the platform whether two spellings are one file', () => {
+    assert.match(appSource, /setPathCaseSensitivity\(bridge\(\)\.platform\)/);
   });
 
   it('deletes a single task from the history as well as clearing all of it', () => {
