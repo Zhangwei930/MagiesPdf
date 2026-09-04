@@ -313,7 +313,7 @@
 
 .magies-terminal-hud-badge {
   display: inline-flex;
-  items-center: center;
+  align-items: center;
   gap: 0.375rem;
   padding: 0.25rem 0.625rem;
   border-radius: 9999px;
