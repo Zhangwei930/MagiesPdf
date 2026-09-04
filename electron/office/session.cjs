@@ -161,7 +161,9 @@ function createOfficeSessions(deps) {
       // next ⌘S trying to round-trip through a format the suite cannot open.
       if (isPdfPath(targetPath)) {
         await renderPdf(session, session.binPath, targetPath);
-        return describe(session);
+        // Named so the renderer can tell this apart from a save: the document
+        // itself was not written, so its unsaved state has to survive.
+        return { ...describe(session), exportedTo: targetPath };
       }
       return restoreTo(session, targetPath);
     },

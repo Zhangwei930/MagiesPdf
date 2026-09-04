@@ -13,7 +13,7 @@ import { localized, t } from './i18n.ts';
 import { AlertCircle, Bot, Check, Eye, Loader2, Save, Settings, ToolIcon, X } from './icons.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
 import { useApp } from './store.ts';
-import { isDirty, officeCreateKind, saveAsName, type DocumentState } from './documents.ts';
+import { isDirty, officeCreateKind, type DocumentState } from './documents.ts';
 import {
   canApplyInstantly,
   canOpenFromDocument,
@@ -681,10 +681,12 @@ export function App() {
     // Where it goes is settled first; the save that follows lands there
     // rather than over the original. PDF uses a .pdf default so the filter
     // and LibreOffice path kick in without an engine format gallery.
-    const suggested = what === 'exportPdf' ? saveAsName(document) : document.name;
+    // The name is the main process's to derive: it owns `pdfExportName`, and
+    // the extension it settles on is what narrows the dialog's type dropdown.
     const target = await bridge().pickEditorSaveAsTarget(
       document.editor?.sessionId ?? '',
-      suggested,
+      document.name,
+      what === 'exportPdf' ? 'pdf' : undefined,
     );
     if (target) await useApp.getState().requestEngineSave(document.id);
     return undefined;

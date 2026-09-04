@@ -81,7 +81,7 @@ interface AppState {
   requestEngineSave(id: string): Promise<void>;
   /** Set while a hosted document has been asked for; the frame watches it. */
   engineSaveRequest: { id: string; at: number } | null;
-  engineSaved(payload: { sessionId: string; path?: string; name?: string }): void;
+  engineSaved(payload: { sessionId: string; path?: string; name?: string; exportedTo?: string }): void;
   /**
    * The engine's document could not be written. The document keeps whatever
    * unsaved state it had — the disk still holds the older bytes.
@@ -336,7 +336,11 @@ export const useApp = create<AppState>((set, get) => ({
     set((state) => ({
       documents: state.documents.map((d) =>
         d.editor?.sessionId === sessionId
-          ? docs.applyEngineSaved(d, { path: payload.path, name: payload.name })
+          ? docs.applyEngineSaved(d, {
+              path: payload.path,
+              name: payload.name,
+              exportedTo: payload.exportedTo,
+            })
           : d,
       ),
       engineSaveRequest: null,

@@ -40,8 +40,8 @@ const api = {
   warmEditor: () => ipcRenderer.invoke('office:editorWarm'),
   focusEditor: (sessionId) => ipcRenderer.invoke('office:editorFocus', { sessionId }),
   saveEditor: (sessionId, bytes) => ipcRenderer.invoke('office:editorSave', { sessionId, bytes }),
-  pickEditorSaveAsTarget: (sessionId, name) =>
-    ipcRenderer.invoke('office:editorSaveAsTarget', { sessionId, name }),
+  pickEditorSaveAsTarget: (sessionId, name, kind) =>
+    ipcRenderer.invoke('office:editorSaveAsTarget', { sessionId, name, kind }),
   /** Writes the file the engine already produced for "Save copy as". */
   saveEditorExport: (sessionId, name) =>
     ipcRenderer.invoke('office:editorSaveExport', { sessionId, name }),

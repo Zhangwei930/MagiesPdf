@@ -22,7 +22,7 @@ const {
   officeRuntimeRoot,
   resolveLibreOfficeExecutable,
 } = require('./office/libreOffice.cjs');
-const { DOCUMENT_EXTENSIONS, officeSaveAsDialogOptions } = require('./office/formats.cjs');
+const { DOCUMENT_EXTENSIONS, officeSaveAsDialogOptions, pdfExportName } = require('./office/formats.cjs');
 const { createOfficeAutomationProvider } = require('./office/automationProvider.cjs');
 const {
   IMAGE_PROVIDER_PRESETS,
@@ -346,8 +346,12 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
    * over the original. Filters cover the common formats; the extension
    * decides conversion (PDF through LibreOffice for correct CJK).
    */
-  handle('office:editorSaveAsTarget', async (_event, { sessionId, name }) => {
-    const suggested = safeFileName(String(name || ''));
+  handle('office:editorSaveAsTarget', async (_event, { sessionId, name, kind }) => {
+    // "输出为 PDF" proposes a .pdf, which also narrows the type dropdown to
+    // PDF alone — otherwise confirming the default turns an export into an
+    // ordinary Save As over the original document.
+    const proposed = kind === 'pdf' ? pdfExportName(String(name || '')) : String(name || '');
+    const suggested = safeFileName(proposed);
     const result = await dialog.showSaveDialog(
       getWindow(),
       officeSaveAsDialogOptions(suggested),

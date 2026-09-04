@@ -44,6 +44,9 @@ function createDocumentSavedHandler({
       sessionId,
       path: saved?.path,
       name: saved?.name,
+      // Only present when a PDF snapshot was written instead of the document,
+      // so an ordinary save carries exactly what it always did.
+      ...(saved?.exportedTo ? { exportedTo: saved.exportedTo } : {}),
     });
   };
 }
