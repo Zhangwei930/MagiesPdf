@@ -205,10 +205,24 @@ function createOfficeSessions(deps) {
       return { closed: id };
     },
 
+    /**
+     * Every open session, on the way out.
+     *
+     * allSettled rather than all: this is the last chance to remove these
+     * directories, and one that is busy or unreadable must not leave the rest
+     * of the user's documents sitting in temp beside it.
+     */
     async closeAll() {
       const open = [...sessions.values()];
       sessions.clear();
-      await Promise.all(open.map((session) => x2t.discard(session.workDir)));
+      const outcomes = await Promise.allSettled(
+        open.map((session) => x2t.discard(session.workDir)),
+      );
+      for (const outcome of outcomes) {
+        if (outcome.status === 'rejected') {
+          console.warn('[office] failed to discard a work directory:', outcome.reason);
+        }
+      }
       return { closed: open.length };
     },
   };

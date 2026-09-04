@@ -21,37 +21,70 @@ function createEditorService(deps) {
      * `uiTheme` is an ONLYOFFICE id (`theme-system` / `theme-white` / `theme-night`).
      */
     async open(paths, { uiTheme = 'theme-white' } = {}) {
+      // Everything this call brought into existence, so a failure half way can
+      // be undone. A session nobody references is a copy of the user's document
+      // left in the temp directory with nothing able to remove it — and, once
+      // published, still served over loopback (issue #29).
+      const created = [];
+      const published = [];
+      const rollback = async () => {
+        for (const id of published) host.withdraw(id);
+        // allSettled: one directory that cannot be removed must not stop the
+        // others, and must not replace the failure that is being reported.
+        const outcomes = await Promise.allSettled(
+          created.map((session) => sessions.close(session.id)),
+        );
+        for (const outcome of outcomes) {
+          if (outcome.status === 'rejected') {
+            console.warn('[office] failed to roll back a session:', outcome.reason);
+          }
+        }
+      };
+
       // Convert every path first (x2t is independent per work dir), then
       // publish. Parallel conversion is why opening two files is not 2× one.
-      const prepared = await Promise.all(
+      const settled = await Promise.allSettled(
         paths.map(async (sourcePath) => {
           const session = await sessions.open(sourcePath);
+          created.push(session);
           const media = await listMedia(session.workDir);
           return { session, media };
         }),
       );
+      const failed = settled.find((outcome) => outcome.status === 'rejected');
+      if (failed) {
+        await rollback();
+        throw failed.reason;
+      }
+      const prepared = settled.map((outcome) => outcome.value);
 
       const opened = [];
-      for (const { session, media } of prepared) {
-        const { url } = await host.publish({
-          id: session.id,
-          workDir: session.workDir,
-          media,
-          title: session.name,
-          documentType: session.editorType,
-          fileType: (session.name.split('.').pop() ?? 'docx').toLowerCase(),
-          uiTheme,
-        });
-        opened.push({
-          name: session.name,
-          path: session.path,
-          size: 0,
-          mime: 'application/octet-stream',
-          bytes: new Uint8Array(0),
-          // editorType lets the shell create "the same kind" when the engine
-          // asks for New — without it every new document would be Word.
-          editor: { sessionId: session.id, url, editorType: session.editorType },
-        });
+      try {
+        for (const { session, media } of prepared) {
+          const { url } = await host.publish({
+            id: session.id,
+            workDir: session.workDir,
+            media,
+            title: session.name,
+            documentType: session.editorType,
+            fileType: (session.name.split('.').pop() ?? 'docx').toLowerCase(),
+            uiTheme,
+          });
+          published.push(session.id);
+          opened.push({
+            name: session.name,
+            path: session.path,
+            size: 0,
+            mime: 'application/octet-stream',
+            bytes: new Uint8Array(0),
+            // editorType lets the shell create "the same kind" when the engine
+            // asks for New — without it every new document would be Word.
+            editor: { sessionId: session.id, url, editorType: session.editorType },
+          });
+        }
+      } catch (cause) {
+        await rollback();
+        throw cause;
       }
       // Recent documents used to be written only by the PDF-preview open path.
       // Opening in the editor is the real path now, so it has to remember too.
@@ -105,6 +138,25 @@ function createEditorService(deps) {
       host.withdraw(sessionId);
       await sessions.close(sessionId);
       return { closed: sessionId };
+    },
+
+    /**
+     * Everything, on the way out.
+     *
+     * The work directories hold copies of the user's documents and the host
+     * holds a loopback port, so quitting without this leaves both behind — and
+     * quitting is the last chance to remove them. The host is stopped whatever
+     * the directories did, or a failed discard would leave the server running.
+     */
+    async closeAll() {
+      let closed = 0;
+      try {
+        ({ closed } = await sessions.closeAll());
+      } catch (cause) {
+        console.warn('[office] failed to discard Office sessions on quit:', cause);
+      }
+      if (typeof host.close === 'function') await host.close();
+      return { closed };
     },
 
     /**

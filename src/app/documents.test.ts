@@ -13,7 +13,9 @@ import {
   markSaved,
   nextActiveId,
   officeCreateKind,
+  normalizeDocumentPath,
   openDocument,
+  partitionOpenPaths,
   redo,
   replaceDocument,
   saveAsName,
@@ -298,6 +300,64 @@ describe('openDocument', () => {
     const two = createDocument(picked('result.pdf', ''));
     const { documents } = openDocument([one], two);
     assert.equal(documents.length, 2, 'in-memory results are not the same document');
+  });
+});
+
+describe('partitionOpenPaths', () => {
+  const a = createDocument(picked('a.docx', '/docs/a.docx'));
+  const b = createDocument(picked('b.xlsx', '/docs/b.xlsx'));
+
+  it('sends a path nothing holds to be opened', () => {
+    const { open, fresh } = partitionOpenPaths([a], ['/docs/b.xlsx']);
+    assert.deepEqual(open, []);
+    assert.deepEqual(fresh, ['/docs/b.xlsx']);
+  });
+
+  /**
+   * Issue #29: the engine session was created first and the tab deduplicated
+   * afterwards, so opening a file that was already open left a session nothing
+   * referenced — with the user's document copied into its work directory, and
+   * nothing left to close it.
+   */
+  it('answers with the tab already holding a file rather than opening it again', () => {
+    const { open, fresh } = partitionOpenPaths([a, b], ['/docs/a.docx']);
+    assert.deepEqual(open.map((doc) => doc.id), [a.id]);
+    assert.deepEqual(fresh, [], 'nothing to open, so no session to create');
+  });
+
+  it('splits a mixed batch', () => {
+    const { open, fresh } = partitionOpenPaths([a], ['/docs/a.docx', '/docs/new.pptx']);
+    assert.deepEqual(open.map((doc) => doc.id), [a.id]);
+    assert.deepEqual(fresh, ['/docs/new.pptx']);
+  });
+
+  it('recognises a path however it is spelled', () => {
+    const win = createDocument(picked('r.docx', 'C:/Docs/Report.docx'));
+    const { open, fresh } = partitionOpenPaths([win], ['C:\\Docs\\report.DOCX']);
+    assert.deepEqual(open.map((doc) => doc.id), [win.id]);
+    assert.deepEqual(fresh, []);
+  });
+
+  it('opens one session when the same file is named twice in one batch', () => {
+    const { fresh } = partitionOpenPaths([], ['/docs/new.pptx', '/docs/new.pptx']);
+    assert.deepEqual(fresh, ['/docs/new.pptx'], 'two sessions for one tab is the leak again');
+  });
+
+  it('ignores tabs with no file behind them', () => {
+    const result = createDocument(picked('result.pdf', ''));
+    const { open, fresh } = partitionOpenPaths([result], ['/docs/new.pptx']);
+    assert.deepEqual(open, []);
+    assert.deepEqual(fresh, ['/docs/new.pptx']);
+  });
+});
+
+describe('normalizeDocumentPath', () => {
+  it('makes the separators and the case agree', () => {
+    assert.equal(normalizeDocumentPath('C:\\Docs\\Report.docx'), 'c:/docs/report.docx');
+  });
+
+  it('leaves a posix path alone apart from its case', () => {
+    assert.equal(normalizeDocumentPath('/docs/Report.docx'), '/docs/report.docx');
   });
 });
 

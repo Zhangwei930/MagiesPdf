@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const http = require('node:http');
 const { describe, it } = require('node:test');
 const { cacheControlFor, listenLoopback } = require('./editorRuntime.cjs');
 
@@ -26,6 +27,51 @@ describe('editor HTTP cache', () => {
  * failed for an ordinary reason: a full disk, a read-only file, a converter
  * that quit. See issue #23.
  */
+/**
+ * Quitting now awaits the host (issue #29), which is only safe because
+ * `server.close()` hangs up idle keep-alive sockets instead of waiting for
+ * them — node has done that since 19, and the editor keeps such sockets open
+ * for as long as its frame is alive. This pins that assumption: if it ever
+ * stops holding, the symptom is a window that will not close, which is a
+ * miserable thing to diagnose from a bug report.
+ */
+describe('stopping the editor host', () => {
+  it('closes while a client is still holding a keep-alive connection', async () => {
+    const server = await listenLoopback(async (_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'text/plain' });
+      response.end('ok');
+    });
+    const agent = new http.Agent({ keepAlive: true });
+
+    await new Promise((resolve, reject) => {
+      const request = http.get(
+        { host: '127.0.0.1', port: server.port, path: '/anything', agent },
+        (response) => {
+          response.resume();
+          response.on('end', resolve);
+        },
+      );
+      request.on('error', reject);
+    });
+
+    let deadline;
+    try {
+      await Promise.race([
+        server.close(),
+        new Promise((_resolve, reject) => {
+          deadline = setTimeout(
+            () => reject(new Error('close() never returned — a kept-alive socket holds the port')),
+            2000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(deadline);
+      agent.destroy();
+    }
+  });
+});
+
 describe('editor host error handling', () => {
   async function withServer(handle, fn) {
     const server = await listenLoopback(handle);
