@@ -8,6 +8,23 @@ const MAIN_WINDOW_WEB_PREFERENCES = Object.freeze({
   spellcheck: false,
 });
 
+/**
+ * The window a document is printed from.
+ *
+ * It is never shown and holds only a temp copy of the user's own document,
+ * loaded off disk. `plugins` is what renders it: Chromium's built-in PDF
+ * viewer is the thing that gets the page size, orientation and page count
+ * right. Without it the window has nothing to print. Everything else stays as
+ * closed as the main window — there is no preload here at all.
+ */
+const PRINT_WINDOW_WEB_PREFERENCES = Object.freeze({
+  contextIsolation: true,
+  nodeIntegration: false,
+  sandbox: true,
+  spellcheck: false,
+  plugins: true,
+});
+
 function safeFileName(name) {
   if (
     typeof name !== 'string' ||
@@ -89,6 +106,7 @@ function constantTimeTokenEqual(provided, expected) {
 
 module.exports = {
   MAIN_WINDOW_WEB_PREFERENCES,
+  PRINT_WINDOW_WEB_PREFERENCES,
   constantTimeTokenEqual,
   isExternalUrlAllowed,
   isTrustedIpcSender,

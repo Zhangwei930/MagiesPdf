@@ -157,6 +157,7 @@ const UI = {
   viewerSaveAs: { zh: '另存为…', en: 'Save as…' },
   viewerSaved: { zh: '已保存', en: 'Saved' },
   viewerSaveFailed: { zh: '保存失败', en: 'Could not save' },
+  viewerPrintFailed: { zh: '打印失败', en: 'Could not print' },
   /** WPS-style PDF chrome */
   pdfTabHome: { zh: '开始', en: 'Home' },
   pdfTabInsert: { zh: '插入', en: 'Insert' },
