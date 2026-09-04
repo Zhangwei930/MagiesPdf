@@ -10,6 +10,7 @@ const { collectFilePaths } = require('./files/walk.cjs');
 const { InputBudget } = require('./files/inputBudget.cjs');
 const writableTargets = require('./files/writableTargets.cjs');
 const readableTargets = require('./files/readableTargets.cjs');
+const { executableProblem } = require('./files/executable.cjs');
 const updater = require('./updater/index.cjs');
 const { isExternalUrlAllowed, isTrustedIpcSender, safeFileName } = require('./security.cjs');
 const { createOfficeService } = require('./office/service.cjs');
@@ -464,6 +465,37 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     const files = await readMany(targets);
     office.rememberRecent(targets);
     return files;
+  });
+
+  /**
+   * Picking the external converter needs its path and nothing else.
+   *
+   * `files:pick` would read the whole binary into memory, ship it over IPC,
+   * refuse anything past the 512 MiB input cap, and hand the renderer the
+   * right to overwrite it. None of that serves choosing a program to run, so
+   * this returns the path and checks that it is one that can be run.
+   */
+  handle('files:pickExecutable', async () => {
+    const result = await dialog.showOpenDialog(getWindow(), {
+      properties: ['openFile'],
+      filters:
+        process.platform === 'win32'
+          ? [{ name: 'Programs', extensions: ['exe', 'bat', 'cmd', 'com'] }]
+          : [{ name: 'All files', extensions: ['*'] }],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+
+    const target = result.filePaths[0];
+    let stat = null;
+    try {
+      stat = await fs.stat(target);
+    } catch {
+      stat = null;
+    }
+    const problem = executableProblem({ stat, path: target });
+    // Deliberately no grant: the converter is run, never read or written by
+    // the renderer.
+    return problem ? { path: '', problem } : { path: target };
   });
 
   handle('files:pickDirectory', async () => {

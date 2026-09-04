@@ -101,6 +101,9 @@ const api = {
   /** Reads files the user dropped onto the window, by absolute path. */
   readFiles: (paths) => ipcRenderer.invoke('files:read', { paths }),
 
+  /** Picks a program to run. Returns its path only — nothing is read. */
+  pickExecutable: () => ipcRenderer.invoke('files:pickExecutable'),
+
   /**
    * Resolves the absolute path of a dropped `File`. `File.path` was removed in
    * Electron 32, and `webUtils` is the supported replacement — it only works in
