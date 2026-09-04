@@ -419,3 +419,47 @@ describe('checking the document is rendered rather than waiting for it', () => {
     assert.equal(r.probes(), 0, 'nothing to check against, so nothing is rendered twice');
   });
 });
+
+/**
+ * Each probe is a real render. Sixty-six of them under load made Chromium's
+ * print subsystem fail outright — "Failed to generate PDF: Printing failed" —
+ * which is a worse outcome than the blank page the probing exists to prevent.
+ */
+describe('how hard the render check is allowed to push', () => {
+  it('asks a handful of times, not until the deadline', async () => {
+    let probes = 0;
+    const timers = [];
+    await whenDocumentRendered({
+      printToPDF: async () => {
+        probes += 1;
+        return Buffer.from('%PDF-1.7 /Count 1');
+      },
+    }, {
+      expectedPages: 60,
+      probeIntervalMs: 500,
+      timeoutMs: 60_000,
+      clock: {
+        // Every wait returns at once, so only the probe cap can end this.
+        setTimeout: (run, ms) => {
+          if (ms === 500) queueMicrotask(run);
+          else timers.push(run);
+          return timers.length;
+        },
+        clearTimeout: () => {},
+      },
+    });
+    assert.ok(probes > 0, 'it does check');
+    assert.ok(probes <= 8, `probed ${probes} times; a render is not free`);
+  });
+
+  it('stops asking when the window says printing failed', async () => {
+    let probes = 0;
+    await whenDocumentRendered({
+      printToPDF: async () => {
+        probes += 1;
+        throw new Error('Failed to generate PDF: Printing failed');
+      },
+    }, { expectedPages: 60 });
+    assert.equal(probes, 1, 'asking again only adds to what it is struggling with');
+  });
+});

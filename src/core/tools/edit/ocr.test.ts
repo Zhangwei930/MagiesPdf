@@ -8,13 +8,65 @@ import { openDocument } from '../../pdf/document.ts';
 import { renderPage } from '../../pdf/render.ts';
 import { allPageText, asInput, samplePdf } from '../../testing/fixtures.ts';
 import { imageToPdfTool } from '../convert/imageToPdf.ts';
-import { assertOcrModelConsent, ocrTool } from './ocr.ts';
+import { LANGUAGE_CACHE, assertOcrModelConsent, ocrTool } from './ocr.ts';
 
 /**
  * OCR end-to-end. The first run downloads the English model (~5 MB, cached in
  * ~/.magiespdf/tessdata); when that download is impossible the tests skip
  * rather than fail, since offline correctness is exactly what the cache is for.
+ *
+ * Skipping used to cover only one of the two ways a download can fail. Offline,
+ * it fails at once and is caught. On a slow or filtered link it neither fails
+ * nor finishes, so the test sat there until the 120s timeout and went red — on
+ * 2026-09-04 that turned a 50-second suite into 3278 seconds and reported a
+ * failure that said nothing about this code. A run that has to fetch the model
+ * now gets its own, much shorter deadline, and misses it as a skip.
  */
+
+/** Whether every language is already on disk, so the run needs no network. */
+function modelsCached(languages: string[]): boolean {
+  return languages.every((language) => (
+    fs.existsSync(path.join(LANGUAGE_CACHE, `${language}.traineddata`))
+  ));
+}
+
+/**
+ * How long a run that must first download the model may take before it is
+ * treated as unreachable. Generous next to a working download of a few MB, and
+ * far below the test timeout, which is sized for recognition rather than for
+ * the network.
+ */
+const DOWNLOAD_DEADLINE_MS = 30_000;
+
+/**
+ * Runs `work`, giving up early when the model still has to be fetched.
+ *
+ * Resolves to `null` when it gave up, which the caller turns into a skip. A
+ * cached run is not raced at all: recognition legitimately takes a while, and
+ * putting a deadline on it would make this flaky in the other direction.
+ *
+ * The deadline ends the *test*, not the download — cancelling that would mean
+ * threading a signal through `executeTool` for a test's benefit. So on a slow
+ * link the suite still waits for the fetch to give up on its own before the
+ * process exits: measured at 212s where it used to be 3278s and red. Both
+ * tests skip; nothing is reported as broken.
+ */
+async function withDownloadDeadline<T>(
+  languages: string[],
+  work: () => Promise<T>,
+): Promise<T | null> {
+  if (modelsCached(languages)) return work();
+
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), DOWNLOAD_DEADLINE_MS);
+  });
+  try {
+    return await Promise.race([work(), expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** A "scan": a text PDF rasterised to PNG and wrapped back into a PDF, no text layer. */
 async function scannedPdf(): Promise<Uint8Array> {
@@ -68,7 +120,7 @@ describe('edit.ocr', () => {
 
     let result;
     try {
-      result = await executeTool(ocrTool, {
+      result = await withDownloadDeadline(['eng'], () => executeTool(ocrTool, {
         files: [scan],
         params: {
           languages: ['eng'],
@@ -76,11 +128,12 @@ describe('edit.ocr', () => {
           dpi: 300,
           allowModelDownload: true,
         },
-      });
+      }));
     } catch (error) {
       if (isOfflineFailure(error)) return t.skip('OCR model not cached and no network');
       throw error;
     }
+    if (!result) return t.skip('OCR model not cached and the download did not arrive in time');
 
     assert.equal(result.files[0]!.name, 'scan_ocr.pdf');
     const text = allPageText(result.files[0]!.bytes)[0] ?? '';
@@ -93,14 +146,15 @@ describe('edit.ocr', () => {
 
     let result;
     try {
-      result = await executeTool(ocrTool, {
+      result = await withDownloadDeadline(['eng'], () => executeTool(ocrTool, {
         files: [scan],
         params: { languages: ['eng'], output: 'text', allowModelDownload: true },
-      });
+      }));
     } catch (error) {
       if (isOfflineFailure(error)) return t.skip('OCR model not cached and no network');
       throw error;
     }
+    if (!result) return t.skip('OCR model not cached and the download did not arrive in time');
 
     assert.equal(result.files[0]!.name, 'scan.txt');
     const text = new TextDecoder().decode(result.files[0]!.bytes);
