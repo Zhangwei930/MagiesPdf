@@ -617,6 +617,8 @@ export interface MagiesPdfBridge {
   printPdf(
     bytes: Uint8Array,
     name: string,
+    /** How many pages the viewer laid out, so a blank render can be told apart. */
+    pages: number,
   ): Promise<{ printed: boolean; reason?: string }>;
 }
 

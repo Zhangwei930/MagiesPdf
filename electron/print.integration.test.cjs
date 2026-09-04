@@ -66,7 +66,7 @@ function blankPdf(pages) {
  */
 const PROBE = `
 const { app, BrowserWindow } = require('electron');
-const { whenDocumentSettles } = require(process.argv[2]);
+const { whenDocumentSettles, whenDocumentRendered } = require(process.argv[2]);
 const { PRINT_WINDOW_WEB_PREFERENCES } = require(process.argv[3]);
 
 app.whenReady().then(async () => {
@@ -77,6 +77,7 @@ app.whenReady().then(async () => {
   try {
     await window.loadFile(process.argv[4]);
     await whenDocumentSettles(window.webContents);
+    await whenDocumentRendered(window.webContents, { expectedPages: Number(process.argv[5]) });
     const printed = await window.webContents.printToPDF({});
     const count = /\\/Count (\\d+)/.exec(printed.toString('latin1'));
     console.log('PAGES=' + (count ? count[1] : '0'));
@@ -89,7 +90,7 @@ app.whenReady().then(async () => {
 });
 `;
 
-function printedPageCount(probePath, source) {
+function printedPageCount(probePath, source, expectedPages) {
   return new Promise((resolve, reject) => {
     execFile(
       ELECTRON,
@@ -98,6 +99,7 @@ function printedPageCount(probePath, source) {
         path.join(__dirname, 'print.cjs'),
         path.join(__dirname, 'security.cjs'),
         source,
+        String(expectedPages),
       ],
       { timeout: 60_000 },
       (error, stdout) => {
@@ -127,7 +129,7 @@ describe('what the print window puts on paper', { skip: AVAILABLE ? false : 'nee
   it('prints a one-page document as one page', async () => {
     const source = path.join(workDir, 'one.pdf');
     await fsp.writeFile(source, blankPdf(1));
-    assert.equal(await printedPageCount(probePath, source), 1);
+    assert.equal(await printedPageCount(probePath, source, 1), 1);
   });
 
   /**
@@ -138,6 +140,6 @@ describe('what the print window puts on paper', { skip: AVAILABLE ? false : 'nee
   it('prints every page of a document far longer than the viewer mounts', async () => {
     const source = path.join(workDir, 'sixty.pdf');
     await fsp.writeFile(source, blankPdf(60));
-    assert.equal(await printedPageCount(probePath, source), 60);
+    assert.equal(await printedPageCount(probePath, source, 60), 60);
   });
 });

@@ -42,13 +42,33 @@ describe('cliPolicy', () => {
     // rather than being handed the whole machine.
     const codex = permissionArgsFor('codex', 'auto', false).join(' ');
     assert.match(codex, /--sandbox workspace-write/);
-    assert.match(codex, /--ask-for-approval never/);
+    // `codex exec` dropped --ask-for-approval; passing it now exits with code
+    // 2 before the turn starts. The policy is a config override instead, which
+    // `codex doctor -c approval_policy="never"` reports back as Never.
+    assert.match(codex, /-c approval_policy="never"/);
+    assert.doesNotMatch(codex, /--ask-for-approval/);
 
     // The machine-wide bypass is never what a folder grant buys.
     for (const agent of ['claude', 'codex', 'gemini', 'antigravity', 'cursor']) {
       const args = permissionArgsFor(agent, 'auto', true).join(' ');
       assert.doesNotMatch(args, /dangerously|--yolo|danger-full-access/i, agent);
     }
+  });
+
+  /**
+   * Read off the installed binaries on 2026-09-04. `gemini --help` has no
+   * `--mode` at all — the flag is `--approval-mode`, and its values are
+   * `default | auto_edit | yolo | plan`. The old pair failed the turn outright
+   * whenever automatic mode was on.
+   */
+  it('speaks each CLI own permission vocabulary', () => {
+    const gemini = permissionArgsFor('gemini', 'auto', false).join(' ');
+    assert.match(gemini, /--approval-mode auto_edit/);
+    assert.doesNotMatch(gemini, /--mode accept-edits/);
+
+    // agy does spell it `--mode accept-edits`; the two are not interchangeable.
+    const agy = permissionArgsFor('antigravity', 'auto', false).join(' ');
+    assert.match(agy, /--mode accept-edits/);
   });
 
   it('never strips a CLI of its own tools', () => {

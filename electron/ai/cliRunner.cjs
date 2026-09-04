@@ -57,8 +57,10 @@ const COMMANDS = {
     args: ['-p', prompt, '--output-format', 'stream-json', ...(resume ? ['--continue'] : [])],
     stream: 'json',
   }),
+  // gemini has no --continue. Resuming is `-r, --resume`, and "latest" is how
+  // it names the most recent session.
   gemini: (prompt, resume) => ({
-    args: ['-p', prompt, ...(resume ? ['--continue'] : [])],
+    args: ['-p', prompt, ...(resume ? ['--resume', 'latest'] : [])],
     stream: 'text',
   }),
   // agy offers --output-format stream-json too, but its event schema is not
@@ -118,6 +120,33 @@ function contextPreamble({ cwd, openDocument, sessionMemory, permissionMode = 'c
  * baked into the templates because they are optional: leaving them off keeps
  * the CLI on whatever the user configured inside it.
  */
+/**
+ * Whether a failed turn was only a resume with nothing to resume.
+ *
+ * Sessions belong to the CLI, not to this app, and they are keyed by working
+ * directory: grok exits 1 with "No session found for current directory"
+ * whenever the granted folder has none — a folder that changed, a store that
+ * was cleaned — while the panel still believes the conversation is ongoing.
+ * That is bookkeeping, not a failure the user asked about, so the turn starts
+ * a fresh session instead of reporting it.
+ *
+ * Deliberately narrow: a real failure that happens to mention a session must
+ * still be reported as one.
+ */
+const MISSING_SESSION = [
+  /no session found/i,
+  /no (previous|prior) session/i,
+  /nothing to resume/i,
+  /no conversation to (continue|resume)/i,
+  /session .{0,40}(not found|does not exist)/i,
+];
+
+function isMissingSessionFailure(text) {
+  const message = String(text || '');
+  if (!message) return false;
+  return MISSING_SESSION.some((pattern) => pattern.test(message));
+}
+
 function buildAgentCommand(agentId, prompt, {
   model = '',
   effort = '',
@@ -287,153 +316,174 @@ function createCliRunner({ spawn = defaultSpawn, resolveAgent } = {}) {
         console.warn(`[magiespdf] prepareCliAgent(${agentId}) failed:`, cause?.message || cause);
       }
 
-      const { args } = buildAgentCommand(agentId, prompt, {
-        model,
-        effort,
-        cwd,
-        openDocument,
-        sessionMemory,
-        permissionMode,
-        unattended,
-        resume,
-      });
       /**
-       * What was actually run, with the prompt collapsed.
-       *
-       * When a turn ends with nothing to show, the first question is always
-       * whether the invocation differs from what works in a shell. Without
-       * this in the error and the log there is no way to tell.
+       * One process. Called again without `resume` when the CLI turns out
+       * to have no session to continue — see isMissingSessionFailure.
        */
-      const invocation = [
-        agent.path,
-        ...args.map((argument) => (
-          argument.length > 60 ? `${argument.slice(0, 57).replace(/\n/g, ' ')}…` : argument
-        )),
-      ].join(' ');
-      console.info(`[magiespdf] cli turn: ${invocation} (cwd ${cwd})`);
+      const attempt = async (resumeThisTurn) => {
+        const { args } = buildAgentCommand(agentId, prompt, {
+          model,
+          effort,
+          cwd,
+          openDocument,
+          sessionMemory,
+          permissionMode,
+          unattended,
+          resume: resumeThisTurn,
+        });
+        /**
+         * What was actually run, with the prompt collapsed.
+         *
+         * When a turn ends with nothing to show, the first question is always
+         * whether the invocation differs from what works in a shell. Without
+         * this in the error and the log there is no way to tell.
+         */
+        const invocation = [
+          agent.path,
+          ...args.map((argument) => (
+            argument.length > 60 ? `${argument.slice(0, 57).replace(/\n/g, ' ')}…` : argument
+          )),
+        ].join(' ');
+        console.info(`[magiespdf] cli turn: ${invocation} (cwd ${cwd})`);
 
-      const child = spawn(agent.path, args, { cwd, env: process.env });
+        const child = spawn(agent.path, args, { cwd, env: process.env });
 
-      let assistantText = '';
-      let finalText = '';
-      let stderr = '';
-      let buffer = '';
-      let failure = null;
+        let assistantText = '';
+        let finalText = '';
+        let stderr = '';
+        let buffer = '';
+        let failure = null;
 
-      const emit = (events) => {
-        for (const event of events) {
-          if (event.kind === 'text') {
-            assistantText += event.text;
-            onEvent({ type: 'assistant_delta', delta: event.text });
-          } else if (event.kind === 'final') {
-            finalText = event.text;
-          } else if (event.kind === 'error') {
-            failure = event.message;
-          } else if (event.kind === 'tool') {
-            // A CLI reports a call it has already decided to make, so the card
-            // opens and closes together: there is no approval to wait on.
-            const callId = randomUUID();
-            onEvent({
-              type: 'tool_start',
-              callId,
-              toolId: `cli.${event.name}`,
-              toolName: { zh: event.name, en: event.name },
-              inputFileNames: [],
-              details: event.detail,
-            });
-            onEvent({ type: 'tool_result', callId, ok: true, files: [] });
+        const emit = (events) => {
+          for (const event of events) {
+            if (event.kind === 'text') {
+              assistantText += event.text;
+              onEvent({ type: 'assistant_delta', delta: event.text });
+            } else if (event.kind === 'final') {
+              finalText = event.text;
+            } else if (event.kind === 'error') {
+              failure = event.message;
+            } else if (event.kind === 'tool') {
+              // A CLI reports a call it has already decided to make, so the card
+              // opens and closes together: there is no approval to wait on.
+              const callId = randomUUID();
+              onEvent({
+                type: 'tool_start',
+                callId,
+                toolId: `cli.${event.name}`,
+                toolName: { zh: event.name, en: event.name },
+                inputFileNames: [],
+                details: event.detail,
+              });
+              onEvent({ type: 'tool_result', callId, ok: true, files: [] });
+            }
           }
+        };
+
+        /**
+         * Decoding each chunk on its own splits multi-byte characters at the
+         * boundary and turns both halves into U+FFFD — which a CJK reply hits
+         * within a sentence or two. StringDecoder holds the incomplete tail until
+         * the rest of the character arrives.
+         */
+        const decoder = new StringDecoder('utf8');
+        const consume = (chunk) => {
+          buffer += decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+          for (const line of lines) emit(parseAgentLine(line));
+        };
+
+        child.stdout?.on('data', consume);
+        // Same reason as stdout: a failure message in Chinese would otherwise
+        // arrive with replacement characters in the middle of the explanation.
+        const errorDecoder = new StringDecoder('utf8');
+        child.stderr?.on('data', (chunk) => {
+          const text = errorDecoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+          stderr = `${stderr}${text}`.slice(-4000);
+        });
+
+        let cancelled = false;
+        const abort = () => {
+          cancelled = true;
+          try {
+            child.kill();
+          } catch {
+            // Already gone; the close handler still settles the promise.
+          }
+        };
+        if (signal) {
+          if (signal.aborted) abort();
+          else signal.addEventListener('abort', abort, { once: true });
         }
-      };
 
-      /**
-       * Decoding each chunk on its own splits multi-byte characters at the
-       * boundary and turns both halves into U+FFFD — which a CJK reply hits
-       * within a sentence or two. StringDecoder holds the incomplete tail until
-       * the rest of the character arrives.
-       */
-      const decoder = new StringDecoder('utf8');
-      const consume = (chunk) => {
-        buffer += decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) emit(parseAgentLine(line));
-      };
-
-      child.stdout?.on('data', consume);
-      // Same reason as stdout: a failure message in Chinese would otherwise
-      // arrive with replacement characters in the middle of the explanation.
-      const errorDecoder = new StringDecoder('utf8');
-      child.stderr?.on('data', (chunk) => {
-        const text = errorDecoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
-        stderr = `${stderr}${text}`.slice(-4000);
-      });
-
-      let cancelled = false;
-      const abort = () => {
-        cancelled = true;
         try {
-          child.kill();
-        } catch {
-          // Already gone; the close handler still settles the promise.
+          return await new Promise((resolve, reject) => {
+            child.on('error', (error) => {
+              console.error(`[magiespdf] cli turn could not start: ${error.message} — ${invocation}`);
+              reject(new Error(`${error.message}\n${invocation}`));
+            });
+            child.on('close', (code) => {
+              buffer += decoder.end();
+              stderr = `${stderr}${errorDecoder.end()}`.slice(-4000);
+              if (buffer.trim()) emit(parseAgentLine(buffer));
+
+              if (cancelled) {
+                const error = new Error('AI turn cancelled');
+                error.name = 'AbortError';
+                reject(error);
+                return;
+              }
+              if (failure) {
+                reject(new Error(failure));
+                return;
+              }
+              if (code !== 0) {
+                const detail = stderr.trim();
+                console.error(`[magiespdf] cli turn failed (${code}): ${detail || '(no stderr)'}`);
+                reject(new Error(
+                  `${agentId} exited with code ${code}${detail ? `: ${detail}` : ''}\n${invocation}`,
+                ));
+                return;
+              }
+
+              let message = finalText || assistantText;
+              if (!message.trim()) {
+                // Exit 0 with nothing on stdout is how a headless agent reports
+                // that it gave up — and it explains itself on stderr. Dropping
+                // that because the exit code was zero leaves the user with a
+                // blank reply and no way to know why.
+                console.warn(`[magiespdf] cli turn produced no output: ${invocation}`);
+                if (stderr.trim()) {
+                  console.warn(`[magiespdf] cli said: ${stderr.trim()}`);
+                  message = stderr.trim();
+                }
+              }
+              onEvent({ type: 'assistant_done', content: message });
+              resolve({ message, files: [] });
+            });
+          });
+        } finally {
+          signal?.removeEventListener?.('abort', abort);
         }
       };
-      if (signal) {
-        if (signal.aborted) abort();
-        else signal.addEventListener('abort', abort, { once: true });
-      }
 
       try {
-        return await new Promise((resolve, reject) => {
-          child.on('error', (error) => {
-            console.error(`[magiespdf] cli turn could not start: ${error.message} — ${invocation}`);
-            reject(new Error(`${error.message}\n${invocation}`));
-          });
-          child.on('close', (code) => {
-            buffer += decoder.end();
-            stderr = `${stderr}${errorDecoder.end()}`.slice(-4000);
-            if (buffer.trim()) emit(parseAgentLine(buffer));
-
-            if (cancelled) {
-              const error = new Error('AI turn cancelled');
-              error.name = 'AbortError';
-              reject(error);
-              return;
-            }
-            if (failure) {
-              reject(new Error(failure));
-              return;
-            }
-            if (code !== 0) {
-              const detail = stderr.trim();
-              console.error(`[magiespdf] cli turn failed (${code}): ${detail || '(no stderr)'}`);
-              reject(new Error(
-                `${agentId} exited with code ${code}${detail ? `: ${detail}` : ''}\n${invocation}`,
-              ));
-              return;
-            }
-
-            let message = finalText || assistantText;
-            if (!message.trim()) {
-              // Exit 0 with nothing on stdout is how a headless agent reports
-              // that it gave up — and it explains itself on stderr. Dropping
-              // that because the exit code was zero leaves the user with a
-              // blank reply and no way to know why.
-              console.warn(`[magiespdf] cli turn produced no output: ${invocation}`);
-              if (stderr.trim()) {
-                console.warn(`[magiespdf] cli said: ${stderr.trim()}`);
-                message = stderr.trim();
-              }
-            }
-            onEvent({ type: 'assistant_done', content: message });
-            resolve({ message, files: [] });
-          });
-        });
-      } finally {
-        signal?.removeEventListener?.('abort', abort);
+        return await attempt(resume);
+      } catch (cause) {
+        if (!resume || !isMissingSessionFailure(cause?.message)) throw cause;
+        console.warn(
+          `[magiespdf] ${agentId} had no session to continue; starting a fresh one`,
+        );
+        return attempt(false);
       }
     },
   };
 }
 
-module.exports = { buildAgentCommand, parseAgentLine, createCliRunner };
+module.exports = {
+  buildAgentCommand,
+  parseAgentLine,
+  isMissingSessionFailure,
+  createCliRunner,
+};
