@@ -818,6 +818,9 @@ export function Viewer({
     goToPage,
     page,
     pageCount,
+    // `print` closes over the document's current bytes, so a stale one would
+    // print the document as it was before the last edit.
+    print,
     redo,
     save,
     saveAs,
