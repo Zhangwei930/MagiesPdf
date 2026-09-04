@@ -271,8 +271,17 @@ function createHandler({
       const url = new URL(req.url || '/', 'http://127.0.0.1');
       pruneJobs();
 
+      // Liveness needs no credentials, but the answer to "are you there" is
+      // not the answer to "which build are you". With `allowLan` the server
+      // binds 0.0.0.0, so naming the version here handed it to anyone on the
+      // network — and this app bundles Electron, MuPDF, LibreOffice and
+      // ONLYOFFICE, each with advisories a version can be looked up against.
       if (url.pathname === '/v1/health' && req.method === 'GET') {
-        sendJson(res, 200, { ok: true, service: 'MagiesPdf', version: require('../../package.json').version });
+        sendJson(res, 200, {
+          ok: true,
+          service: 'MagiesPdf',
+          ...(authOk(req) ? { version: require('../../package.json').version } : {}),
+        });
         return;
       }
 

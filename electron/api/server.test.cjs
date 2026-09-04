@@ -183,6 +183,35 @@ describe('REST API handler', () => {
     assert.equal(body.ok, true);
   });
 
+  /**
+   * Health answers before the token is checked, which is right — liveness
+   * should not need credentials. What it answered *with* was the exact
+   * version, and with `allowLan` on the server binds 0.0.0.0, so one
+   * unauthenticated request over the network named the build. This app bundles
+   * Electron, MuPDF, LibreOffice and ONLYOFFICE, each with advisories a
+   * version can be looked up against. See issue #46.
+   */
+  it('does not name the version to an unauthenticated caller', async () => {
+    const { req, res, result } = mockReqRes({ method: 'GET', url: '/v1/health' });
+    await handler(req, res);
+    const { statusCode, body } = await result();
+    assert.equal(statusCode, 200);
+    assert.equal(body.ok, true, 'liveness still answers without a token');
+    assert.equal('version' in body, false);
+  });
+
+  it('names the version to a caller that holds the token', async () => {
+    const { req, res, result } = mockReqRes({
+      method: 'GET',
+      url: '/v1/health',
+      headers: { authorization: 'Bearer test-token' },
+    });
+    await handler(req, res);
+    const { statusCode, body } = await result();
+    assert.equal(statusCode, 200);
+    assert.match(String(body.version), /^\d+\.\d+\.\d+/);
+  });
+
   it('rejects tools list without a token', async () => {
     const { req, res, result } = mockReqRes({ method: 'GET', url: '/v1/tools' });
     await handler(req, res);
