@@ -108,7 +108,12 @@ const api = {
    */
   pathForFile: (file) => {
     try {
-      return webUtils.getPathForFile(file);
+      const resolved = webUtils.getPathForFile(file);
+      // Resolving a real dropped `File` is itself the user action that grants
+      // it: a fabricated File resolves to nothing, so a renderer cannot mint a
+      // path this way. Registering here is what lets `readFiles` accept it.
+      if (resolved) ipcRenderer.send('files:grantDropped', { path: resolved });
+      return resolved;
     } catch {
       return '';
     }
