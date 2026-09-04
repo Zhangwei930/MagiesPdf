@@ -36,7 +36,7 @@ import {
 import { classifyLoadError, type PdfLoadFailure } from '../pdf/loadError.ts';
 import { bumpEpochs, pagesFrom, type Invalidation } from '../pdf/invalidation.ts';
 import { findInItems, nextMatchIndex, type ItemRange } from '../pdf/textSearch.ts';
-import { canRedo, canUndo, type DocumentState } from '../documents.ts';
+import { canRedo, canUndo, isDirty, type DocumentState } from '../documents.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from '../shortcuts.ts';
 import { reorderedPages } from '../pdf/pageOrder.ts';
 import {
@@ -150,7 +150,8 @@ export function Viewer({
 
   const { id: documentId, name, bytes, password } = openDocument;
   const edited = canUndo(openDocument);
-  const saved = openDocument.saved;
+  // The badge says "saved" exactly when there is nothing to write.
+  const saved = !isDirty(openDocument);
 
   const [doc, setDoc] = useState<PdfDocumentHandle | null>(null);
   /** Unscaled page sizes, in PDF points — the input to the whole layout. */

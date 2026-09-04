@@ -229,14 +229,31 @@ function startUpdater(onStatus) {
     // Don't keep the process alive for the delayed first check alone.
     if (typeof initial.unref === 'function') initial.unref();
 
-    recheckTimer = setInterval(() => {
-      if (readAutoUpdateEnabled()) {
-        applyDownloadPreference(true);
-        void checkWithFallback();
-      }
-    }, RECHECK_INTERVAL_MS);
-    if (recheckTimer && typeof recheckTimer.unref === 'function') recheckTimer.unref();
+    startRecheckTimer();
   }
+}
+
+/**
+ * The periodic check, owned in one place because two things turn it on: a
+ * launch with the preference already set, and the user setting it during the
+ * run. Idempotent — setting the preference twice must not leave two timers
+ * checking on their own schedules.
+ */
+function startRecheckTimer() {
+  if (recheckTimer) return;
+  recheckTimer = setInterval(() => {
+    if (readAutoUpdateEnabled()) {
+      applyDownloadPreference(true);
+      void checkWithFallback();
+    }
+  }, RECHECK_INTERVAL_MS);
+  if (recheckTimer && typeof recheckTimer.unref === 'function') recheckTimer.unref();
+}
+
+function stopRecheckTimer() {
+  if (!recheckTimer) return;
+  clearInterval(recheckTimer);
+  recheckTimer = null;
 }
 
 function downloadUpdate() {
@@ -322,7 +339,12 @@ async function checkNow(onStatus) {
  */
 function onAutoUpdatePreferenceChanged(enabled) {
   applyDownloadPreference(enabled);
-  if (enabled && app.isPackaged && statusSink) {
+  if (!enabled) {
+    stopRecheckTimer();
+    return;
+  }
+  if (app.isPackaged && statusSink) {
+    startRecheckTimer();
     void checkWithFallback();
   }
 }
