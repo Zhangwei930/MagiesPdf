@@ -54,8 +54,6 @@ import { PdfStatusBar } from './PdfStatusBar.tsx';
 import { OutlinePanel } from './OutlinePanel.tsx';
 import { PageView } from './PageView.tsx';
 import { Thumbnail } from './Thumbnail.tsx';
-import { HighlightToolbar } from './HighlightToolbar.tsx';
-import type { HighlightColor } from '../pdf/highlights.ts';
 
 import { TextSelectionMenu } from './TextSelectionMenu.tsx';
 
@@ -201,7 +199,6 @@ export function Viewer({
   const [matches, setMatches] = useState<DocumentMatch[]>([]);
   const [matchIndex, setMatchIndex] = useState(0);
   const [searching, setSearching] = useState(false);
-  const [highlightColor, setHighlightColor] = useState<HighlightColor | null>('yellow');
 
   const scrollRef = useRef<HTMLDivElement>(null);
   /** A scroll position to apply once the new scale has been laid out. */
@@ -1097,15 +1094,10 @@ export function Viewer({
         )}
 
         {mode === 'text' && (
-          <div className="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-1.5 text-xs">
+          <div className="border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-1.5 text-xs">
             <span className="text-[var(--text-muted)]">
-              {locale === 'zh' ? '点击页面插入文本，或选择颜色应用高亮：' : 'Click page to insert text, or choose color to highlight:'}
+              {locale === 'zh' ? '点击页面插入文本。' : 'Click a page to insert text.'}
             </span>
-            <HighlightToolbar
-              locale={locale}
-              activeColor={highlightColor}
-              onChangeColor={(color) => setHighlightColor(color)}
-            />
           </div>
         )}
 

@@ -49,7 +49,6 @@ export type PdfRibbonViewerAction =
   | 'modeForm'
   | 'modeStamp'
   | 'modeRedact'
-  | 'modeDraw'
   | 'chooseTool';
 
 export interface PdfRibbonActionItem {
@@ -180,7 +179,6 @@ export const PDF_RIBBON_TABS: readonly PdfRibbonTab[] = [
       action('modeRedact'),
       action('modeStamp'),
       action('modeText'),
-      action('modeDraw'),
       sep(),
       tool('security.redact'),
       tool('security.add-signature'),
