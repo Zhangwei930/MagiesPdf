@@ -18,6 +18,7 @@ import {
   themeVariables,
 } from './theme/themes.ts';
 import * as docs from './documents.ts';
+import { createEngineSaveTracker } from './engineSave.ts';
 import type { DocumentState } from './documents.ts';
 import type { Locale } from './i18n.ts';
 import { classifyOutput } from './toolApply.ts';
@@ -187,6 +188,16 @@ function mapDocument(
   return documents.map((document) => (document.id === id ? change(document) : document));
 }
 
+/**
+ * One save can be in flight at a time — the shell asks the engine holding the
+ * active document, and waits. A large spreadsheet takes real seconds to
+ * serialise, convert and write, so the deadline is generous; its job is to
+ * stop a lost answer from hanging a close forever, not to police speed.
+ */
+const ENGINE_SAVE_TIMEOUT_MS = 60_000;
+const engineSaves = createEngineSaveTracker();
+
+
 export const useApp = create<AppState>((set, get) => ({
   ready: false,
   startupError: '',
@@ -296,7 +307,18 @@ export const useApp = create<AppState>((set, get) => ({
   async requestEngineSave(id) {
     const document = get().documents.find((d) => d.id === id);
     if (!document?.editor) return;
+    // Settles when the document is on disk, not when the request is posted.
+    // Anything that saves before closing depends on that difference.
+    const written = engineSaves.begin(id, ENGINE_SAVE_TIMEOUT_MS);
     set({ engineSaveRequest: { id, at: Date.now() } });
+    try {
+      await written;
+    } catch (cause) {
+      // A timeout settles inside the tracker, which knows nothing about the
+      // store; clearing here covers that path as well as an outright failure.
+      set({ engineSaveRequest: null });
+      throw cause;
+    }
   },
 
   engineSaveFailed(payload) {
@@ -306,6 +328,7 @@ export const useApp = create<AppState>((set, get) => ({
     const document = get().documents.find((d) => d.editor?.sessionId === payload.sessionId);
     if (request && document && request.id !== document.id) return;
     set({ engineSaveRequest: null });
+    engineSaves.failed(payload.message);
   },
 
   engineSaved(payload) {
@@ -318,6 +341,7 @@ export const useApp = create<AppState>((set, get) => ({
       ),
       engineSaveRequest: null,
     }));
+    engineSaves.saved();
   },
 
   async saveDocumentAs(id) {
