@@ -111,6 +111,30 @@ describe('AI workspace wiring', () => {
     assert.doesNotMatch(appSource, /onOfficeSessionsClosed[\s\S]{0,600}useApp\.setState/);
   });
 
+  /**
+   * Issue #30. Coalescing the reloads behind one timer meant a second file's
+   * write cancelled the first file's reload, and the first tab was left
+   * pointing at a session that had already been closed.
+   */
+  it('waits per file rather than behind one shared timer', () => {
+    assert.match(appSource, /createReloadQueue/);
+    assert.doesNotMatch(appSource, /pending = setTimeout/);
+    // Reloading is a per-tab state: replacing or emptying the list takes the
+    // badge off documents whose own reload is still in flight.
+    assert.doesNotMatch(appSource, /setReloadingIds\(\[\]\)/);
+    assert.match(appSource, /setReloadingIds\(\(current\) =>/);
+  });
+
+  /**
+   * Issue #29. Opening creates the engine session first and deduplicates the
+   * tab afterwards, so opening a file that is already open used to leave a
+   * session — and its copy of the document — with nothing referencing it.
+   */
+  it('deduplicates a document before the engine is asked to open it', () => {
+    assert.match(appSource, /partitionOpenPaths/);
+    assert.match(appSource, /openInEditor\(fresh/);
+  });
+
   it('deletes a single task from the history as well as clearing all of it', () => {
     assert.match(aiPanelSource, /removeAiHistoryEntry/);
     // The row disappears from the list it was removed from, not just on disk.

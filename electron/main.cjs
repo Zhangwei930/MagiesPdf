@@ -14,6 +14,7 @@ const {
   createQuitPrompt,
   createSaveAllRequester,
 } = require('./closeGuard.cjs');
+const { createQuitCleanup } = require('./quitCleanup.cjs');
 const {
   MAIN_WINDOW_WEB_PREFERENCES,
   isExternalUrlAllowed,
@@ -115,6 +116,20 @@ const closeGuard = createCloseGuard({
   unsavedDocuments: () => unsavedNames,
   ask: createQuitPrompt({ dialog, getWindow: () => mainWindow }),
   saveAll: () => saveAll.saveAll(),
+});
+
+/**
+ * `before-quit` cannot be awaited, so the first attempt is refused, the
+ * cleanup runs, and the quit is asked for again. Read lazily: quitting can
+ * happen before any of these exist.
+ */
+const quitCleanup = createQuitCleanup({
+  steps: [
+    () => stopApiServer(),
+    () => ipcServices?.close() ?? Promise.resolve(),
+    () => pool?.destroy() ?? Promise.resolve(),
+  ],
+  quit: () => app.quit(),
 });
 
 ipcMain.handle('app:reportUnsaved', (_event, payload) => {
@@ -287,9 +302,7 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== 'darwin') app.quit();
   });
 
-  app.on('before-quit', () => {
-    void stopApiServer();
-    void ipcServices?.close();
-    void pool?.destroy();
+  app.on('before-quit', (event) => {
+    if (quitCleanup.holdQuit()) event.preventDefault();
   });
 }

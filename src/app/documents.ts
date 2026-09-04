@@ -20,6 +20,20 @@ import type { PickedFile } from './bridge.ts';
  * view came from is what keeps the tab honest: it can say which document it is
  * showing, and it can refuse to save over it.
  */
+/**
+ * How two paths are compared when asking whether a file is already open.
+ *
+ * Windows accepts either separator and does not distinguish case, so the same
+ * document reaches us spelled several ways — from argv, from a drop, from the
+ * AI's own idea of where it wrote. Comparing the strings as they arrive opens a
+ * second tab on a file that is already open, and a second engine session with
+ * it. Not a real-path resolution: this is pure, and the answer is only ever
+ * used to reuse a tab.
+ */
+export function normalizeDocumentPath(candidate: string): string {
+  return candidate.replace(/\\/g, '/').toLowerCase();
+}
+
 export interface DocumentOrigin {
   path: string;
   kind: 'word' | 'sheet' | 'slide';
@@ -304,6 +318,39 @@ export function openDocument(
 
   if (existing) return { documents: [...documents], activeId: existing.id };
   return { documents: [...documents, incoming], activeId: incoming.id };
+}
+
+/**
+ * Splits paths into the tabs that already hold them and the ones left to open.
+ *
+ * `openDocument` deduplicates too, but it does it too late for an Office file:
+ * by the time the tab is being added, the engine has already converted the
+ * document into a work directory and published a session for it. Focusing the
+ * old tab then drops the new session on the floor, still holding a copy of the
+ * user's document (issue #29). Asking this first means the session is never
+ * created.
+ */
+export function partitionOpenPaths(
+  documents: readonly DocumentState[],
+  paths: readonly string[],
+): { open: DocumentState[]; fresh: string[] } {
+  const byPath = new Map<string, DocumentState>();
+  for (const document of documents) {
+    if (document.path !== '') byPath.set(normalizeDocumentPath(document.path), document);
+  }
+
+  const open: DocumentState[] = [];
+  const fresh: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of paths) {
+    const key = normalizeDocumentPath(candidate);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const held = byPath.get(key);
+    if (held) open.push(held);
+    else fresh.push(candidate);
+  }
+  return { open, fresh };
 }
 
 /**

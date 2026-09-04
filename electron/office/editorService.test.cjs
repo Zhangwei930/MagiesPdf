@@ -120,6 +120,157 @@ describe('opening a document in the editor', () => {
   });
 });
 
+/**
+ * A work directory holds a copy of the user's document. A session nobody
+ * references is that copy left in /tmp with nothing able to remove it, and the
+ * engine still serving it over loopback — which is what issue #29 is about.
+ */
+describe('an open that fails part way', () => {
+  function batch(overrides = {}) {
+    const calls = { opened: [], published: [], withdrawn: [], closed: [] };
+    const failOpen = overrides.failOpen ?? new Set();
+    const failPublish = overrides.failPublish ?? new Set();
+    const deps = {
+      sessions: {
+        open: async (sourcePath) => {
+          calls.opened.push(sourcePath);
+          if (failOpen.has(sourcePath)) throw new Error(`x2t failed on ${sourcePath}`);
+          return {
+            id: `s:${sourcePath}`,
+            path: sourcePath,
+            name: sourcePath.split('/').pop(),
+            editorType: 'word',
+            workDir: `/tmp/${sourcePath}`,
+          };
+        },
+        close: async (id) => {
+          calls.closed.push(id);
+          return { closed: id };
+        },
+        writeEditorBin: async () => undefined,
+      },
+      host: {
+        publish: async (session) => {
+          if (failPublish.has(session.id)) throw new Error(`publish failed for ${session.id}`);
+          calls.published.push(session.id);
+          return { url: `http://127.0.0.1:9/editor/${session.id}` };
+        },
+        withdraw: (id) => calls.withdrawn.push(id),
+        focus: () => {},
+      },
+      listMedia: async () => [],
+      ...overrides.deps,
+    };
+    return { calls, service: createEditorService(deps) };
+  }
+
+  it('closes the sessions it did create when a later conversion fails', async () => {
+    const { calls, service } = batch({ failOpen: new Set(['/docs/b.pptx']) });
+
+    await assert.rejects(
+      () => service.open(['/docs/a.docx', '/docs/b.pptx']),
+      /x2t failed on \/docs\/b.pptx/,
+    );
+
+    assert.deepEqual(calls.closed, ['s:/docs/a.docx'], "the first file's work directory is removed");
+    assert.deepEqual(calls.published, [], 'nothing is served for an open that failed');
+  });
+
+  it('rolls back the documents it had already published when publishing fails', async () => {
+    const { calls, service } = batch({ failPublish: new Set(['s:/docs/b.pptx']) });
+
+    await assert.rejects(() => service.open(['/docs/a.docx', '/docs/b.pptx']), /publish failed/);
+
+    assert.deepEqual(calls.withdrawn, ['s:/docs/a.docx'], 'stop serving what was published');
+    assert.deepEqual(
+      calls.closed.sort(),
+      ['s:/docs/a.docx', 's:/docs/b.pptx'],
+      'every session this call created is gone, published or not',
+    );
+  });
+
+  it('reports the failure that happened, not one from the cleanup', async () => {
+    const { service } = batch({
+      failOpen: new Set(['/docs/b.pptx']),
+      deps: {
+        sessions: {
+          open: async (sourcePath) => {
+            if (sourcePath === '/docs/b.pptx') throw new Error('x2t failed on /docs/b.pptx');
+            return { id: 's1', path: sourcePath, name: 'a.docx', editorType: 'word', workDir: '/tmp/w' };
+          },
+          close: async () => {
+            throw new Error('the work directory was already gone');
+          },
+          writeEditorBin: async () => undefined,
+        },
+      },
+    });
+
+    await assert.rejects(() => service.open(['/docs/a.docx', '/docs/b.pptx']), /x2t failed/);
+  });
+
+  it('remembers nothing when the open failed', async () => {
+    const remembered = [];
+    const { service } = batch({
+      failOpen: new Set(['/docs/b.pptx']),
+      deps: { rememberPaths: (paths) => remembered.push(...paths) },
+    });
+
+    await assert.rejects(() => service.open(['/docs/a.docx', '/docs/b.pptx']));
+    assert.deepEqual(remembered, [], 'a document that did not open is not a recent document');
+  });
+});
+
+describe('closing everything on the way out', () => {
+  function everything(overrides = {}) {
+    const calls = { hostClosed: 0 };
+    const service = createEditorService({
+      sessions: {
+        closeAll: overrides.closeAll ?? (async () => {
+          calls.sessionsClosed = 2;
+          return { closed: 2 };
+        }),
+        open: async () => ({ id: 's', workDir: '/tmp/w' }),
+        writeEditorBin: async () => undefined,
+      },
+      host: {
+        publish: async () => ({ url: '' }),
+        withdraw: () => {},
+        focus: () => {},
+        close: async () => {
+          calls.hostClosed += 1;
+        },
+      },
+      listMedia: async () => [],
+    });
+    return { calls, service };
+  }
+
+  it('discards every open session and then stops the host', async () => {
+    const { calls, service } = everything();
+
+    assert.deepEqual(await service.closeAll(), { closed: 2 });
+    assert.equal(calls.sessionsClosed, 2);
+    assert.equal(calls.hostClosed, 1);
+  });
+
+  /**
+   * Quitting is the last chance to remove these directories, and the host is
+   * holding a loopback port. A session that cannot be discarded must not leave
+   * the server running behind it.
+   */
+  it('stops the host even when discarding the sessions fails', async () => {
+    const { calls, service } = everything({
+      closeAll: async () => {
+        throw new Error('the work directory was already gone');
+      },
+    });
+
+    await service.closeAll();
+    assert.equal(calls.hostClosed, 1);
+  });
+});
+
 describe('closing a document', () => {
   it('withdraws it from the host and discards the work directory', async () => {
     const { calls, deps } = dependencies();

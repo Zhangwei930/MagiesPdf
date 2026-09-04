@@ -13,7 +13,13 @@ import { localized, t } from './i18n.ts';
 import { AlertCircle, Bot, Check, Eye, Loader2, Save, Settings, ToolIcon, X } from './icons.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
 import { useApp } from './store.ts';
-import { isDirty, officeCreateKind, type DocumentState } from './documents.ts';
+import {
+  isDirty,
+  normalizeDocumentPath,
+  officeCreateKind,
+  partitionOpenPaths,
+  type DocumentState,
+} from './documents.ts';
 import {
   canApplyInstantly,
   canOpenFromDocument,
@@ -21,6 +27,7 @@ import {
   classifyOutput,
 } from './toolApply.ts';
 import { officeUiThemeFor, partitionDocumentPaths } from './office.ts';
+import { createReloadQueue } from './officeReload.ts';
 import {
   EMPTY_APPROVAL_STATE,
   withDecision,
@@ -394,24 +401,39 @@ export function App() {
       if (paths.length === 0) return;
       const partitioned = partitionDocumentPaths(paths);
       if (partitioned.office.length > 0) {
-        setOpening(partitioned.office);
-        try {
-          // Word, Sheet and Slide documents open in the engine, where they can
-          // be edited. PDFs stay with the viewer below. uiTheme keeps the
-          // engine chrome in step with Magies / the OS — without it a dark
-          // loadmask can sit over a light document.
-          const uiTheme = officeUiThemeFor(settings.theme, darkMode);
-          for (const file of await bridge().openInEditor(partitioned.office, { uiTheme })) {
-            showDocument(file);
+        // Deduplicate before the engine is asked for anything. Opening creates
+        // a session and copies the document into a work directory; the tab
+        // list deduplicates afterwards, so a file that was already open left
+        // that session with nothing referencing it and nothing able to close
+        // it (issue #29).
+        const { open, fresh } = partitionOpenPaths(
+          useApp.getState().documents,
+          partitioned.office,
+        );
+        for (const held of open) {
+          setActiveDocument(held.id);
+          setMain({ name: 'document' });
+        }
+        if (fresh.length > 0) {
+          setOpening(fresh);
+          try {
+            // Word, Sheet and Slide documents open in the engine, where they can
+            // be edited. PDFs stay with the viewer below. uiTheme keeps the
+            // engine chrome in step with Magies / the OS — without it a dark
+            // loadmask can sit over a light document.
+            const uiTheme = officeUiThemeFor(settings.theme, darkMode);
+            for (const file of await bridge().openInEditor(fresh, { uiTheme })) {
+              showDocument(file);
+            }
+          } finally {
+            setOpening([]);
           }
-        } finally {
-          setOpening([]);
         }
       }
       for (const file of await bridge().readFiles(partitioned.pdf)) showDocument(file);
       if (partitioned.unsupported.length > 0) throw new Error(t('dropNotDocument', locale));
     },
-    [darkMode, locale, settings.theme, showDocument],
+    [darkMode, locale, setActiveDocument, settings.theme, showDocument],
   );
 
   const openDocumentPicker = useCallback(async () => {
@@ -430,11 +452,12 @@ export function App() {
    */
   const reopenApplied = useCallback(
     async (absolutePath: string) => {
-      const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase();
-      const target = norm(absolutePath);
+      const target = normalizeDocumentPath(absolutePath);
       const held = useApp
         .getState()
-        .documents.find((doc) => doc.path && norm(doc.path) === target && doc.editor);
+        .documents.find(
+          (doc) => doc.path && normalizeDocumentPath(doc.path) === target && doc.editor,
+        );
       try {
         if (!held) {
           // Not open here — the AI wrote a file the user is not looking at.
@@ -447,7 +470,10 @@ export function App() {
       } catch (cause) {
         console.warn('[app] failed to reload AI-updated document:', cause);
       } finally {
-        setReloadingIds([]);
+        // This document stopped reloading; the others did not. Clearing the
+        // whole list took the badge off tabs whose own reload was still in
+        // flight, and left them looking ready when they were not (issue #30).
+        if (held) setReloadingIds((current) => current.filter((id) => id !== held.id));
       }
     },
     [darkMode, openPaths, settings.theme],
@@ -455,37 +481,34 @@ export function App() {
 
   useEffect(() => {
     if (!hasBridge()) return undefined;
-    /** Set while a write is in flight, so the reopen can be coalesced. */
-    let pending: ReturnType<typeof setTimeout> | null = null;
+    // One AI request often writes the same file several times over, and each
+    // reopen is a full engine boot — so a write waits for the writes to *that
+    // file* to stop. Per file: one shared timer meant writing B cancelled A's
+    // reload, and A's tab was left holding a session that no longer existed
+    // (issue #30).
+    const reloads = createReloadQueue({
+      settleMs: REOPEN_SETTLE_MS,
+      reload: (absolutePath) => void reopenApplied(absolutePath),
+    });
     const unsubClosed = bridge().onOfficeSessionsClosed(({ sessions }) => {
       const closedIds = new Set(sessions.map((session) => session.sessionId));
       if (closedIds.size === 0) return;
-      if (pending) {
-        clearTimeout(pending);
-        pending = null;
-      }
+      // A close means the AI is about to write this file. Anything still
+      // waiting on it would reopen the engine over bytes being replaced.
+      for (const session of sessions) reloads.cancel(session.path);
       // The tab stays; only its editor is replaced by a "reloading" panel,
       // because the frame behind it no longer has a session to talk to.
-      setReloadingIds(
-        useApp
-          .getState()
-          .documents.filter((doc) => doc.editor && closedIds.has(doc.editor.sessionId))
-          .map((doc) => doc.id),
-      );
+      const marked = useApp
+        .getState()
+        .documents.filter((doc) => doc.editor && closedIds.has(doc.editor.sessionId))
+        .map((doc) => doc.id);
+      setReloadingIds((current) => [...new Set([...current, ...marked])]);
     });
     const unsubApplied = bridge().onOfficeDocumentApplied(({ path: absolutePath }) => {
-      if (!absolutePath) return;
-      if (pending) clearTimeout(pending);
-      // One AI request often writes the same file several times over. Waiting
-      // for the writes to stop reopens the editor once instead of once per
-      // write — each reopen is a full engine boot.
-      pending = setTimeout(() => {
-        pending = null;
-        void reopenApplied(absolutePath);
-      }, REOPEN_SETTLE_MS);
+      reloads.schedule(absolutePath);
     });
     return () => {
-      if (pending) clearTimeout(pending);
+      reloads.cancelAll();
       unsubClosed();
       unsubApplied();
     };

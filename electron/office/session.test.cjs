@@ -203,4 +203,25 @@ describe('Office sessions', () => {
     assert.deepEqual(calls.discarded.sort(), [first.workDir, second.workDir].sort());
     assert.equal(sessions.list().length, 0);
   });
+
+  /**
+   * Shutdown is the last chance to remove these directories. One that cannot
+   * be removed — a file still open, a permission gone — must not keep the
+   * others on disk with it (issue #29).
+   */
+  it('discards the rest when one work directory refuses to go', async () => {
+    const attempted = [];
+    const { deps } = dependencies();
+    deps.x2t.discard = async (workDir) => {
+      attempted.push(workDir);
+      if (attempted.length === 1) throw new Error('EBUSY: resource busy or locked');
+    };
+    const sessions = createOfficeSessions(deps);
+    await sessions.open('/docs/a.docx');
+    await sessions.open('/docs/b.docx');
+
+    assert.deepEqual(await sessions.closeAll(), { closed: 2 });
+    assert.equal(attempted.length, 2, 'the second directory was still tried');
+    assert.equal(sessions.list().length, 0);
+  });
 });

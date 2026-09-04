@@ -955,10 +955,15 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     officeAutomation,
     /** How the REST/MCP approval gate puts its question in front of the user. */
     requestToolApproval: officeToolApprovals.prompt,
-    close: () => {
+    close: async () => {
       officeToolApprovals.clear();
       automationEngine.stop();
-      return externalMcpManager.close();
+      // Every open Office session holds a copy of the user's document in a
+      // work directory, and the host serving them holds a loopback port.
+      // Closing a tab removes both; quitting closes no tabs, so this is the
+      // only thing that ever removes the last ones (issue #29).
+      await editor.closeAll();
+      await externalMcpManager.close();
     },
   };
 }
