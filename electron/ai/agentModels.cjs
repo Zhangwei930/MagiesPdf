@@ -41,14 +41,19 @@ const AGENT_MODEL_PRESETS = {
     { id: 'o4-mini', name: 'o4-mini', description: 'Fast reasoning' },
     { id: 'o3', name: 'o3', description: 'Reasoning' },
   ],
+  // Only a fallback: `cursor-agent models` answers, and its answer wins. Kept
+  // in step with that answer anyway, because a fallback that offers models the
+  // CLI does not have fails the turn rather than the lookup.
   cursor: [
-    { id: 'composer-2.5', name: 'Composer 2.5', description: 'Recommended' },
-    { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol' },
-    { id: 'gpt-5.6', name: 'GPT-5.6' },
-    { id: 'claude-opus-4.6', name: 'Claude Opus 4.6' },
-    { id: 'claude-sonnet-4.6', name: 'Claude Sonnet 4.6' },
-    { id: 'grok-4.5', name: 'Grok 4.5' },
-    { id: 'gemini-3.1-pro', name: 'Gemini 3.1 Pro' },
+    { id: 'auto', name: 'Auto', description: 'Recommended' },
+    { id: 'composer-2.5', name: 'Composer 2.5' },
+    { id: 'gpt-5.3-codex-low', name: 'Codex 5.3 Low', description: 'Fastest' },
+    { id: 'gpt-5.3-codex', name: 'Codex 5.3' },
+    { id: 'gpt-5.3-codex-high', name: 'Codex 5.3 High' },
+    { id: 'gpt-5.3-codex-xhigh', name: 'Codex 5.3 Extra High' },
+    { id: 'claude-opus-5-thinking-high', name: 'Claude Opus 5 Thinking' },
+    { id: 'claude-sonnet-5-thinking-high', name: 'Claude Sonnet 5 Thinking' },
+    { id: 'gpt-5.6-sol-high', name: 'GPT-5.6 Sol High' },
   ],
   gemini: GEMINI_MODELS,
   antigravity: GEMINI_MODELS,
@@ -69,12 +74,15 @@ const AGENT_MODEL_PRESETS = {
 const AGENT_MODEL_FLAGS = {
   claude: { model: '--model', effort: '--effort', levels: ['low', 'medium', 'high', 'xhigh', 'max'] },
   codex: { model: '--model', effortConfig: 'model_reasoning_effort', levels: ['low', 'medium', 'high', 'xhigh'] },
+  // cursor-agent and gemini have no effort flag — `--help` on the installed
+  // binaries does not mention one, and their tiers are part of the model id
+  // instead (`gpt-5.3-codex-xhigh`, `gemini-3.8-flash-low`). So the model list
+  // is the tier selector for these two, which is why it has to be the CLI's
+  // own list and not a shipped one that has gone stale.
   cursor: { model: '--model', levels: [] },
-  // Gemini ids carry their tier — `gemini-3.6-flash-high` — so offering a
-  // separate effort would ask the same question twice, and the two answers
-  // could disagree. The CLI accepts --effort; the model list makes it moot.
-  gemini: { model: '--model', effort: '--effort', levels: [] },
-  antigravity: { model: '--model', effort: '--effort', levels: [] },
+  gemini: { model: '--model', levels: [] },
+  // agy does document one: `--effort  Reasoning effort ... (low|medium|high)`.
+  antigravity: { model: '--model', effort: '--effort', levels: ['low', 'medium', 'high'] },
   grok: { model: '--model', effort: '--reasoning-effort', levels: ['low', 'medium', 'high'] },
 };
 
@@ -92,33 +100,67 @@ const MODEL_LIST_ARGS = {
   cursor: ['models'],
 };
 
+/**
+ * Variants left out of the list the panel offers.
+ *
+ * cursor-agent answers with every model twice — `gpt-5.3-codex-high` and
+ * `gpt-5.3-codex-high-fast` — which was 70 of the 217 entries it returned. That
+ * is a second axis wearing the model's clothes, and it doubles a dropdown that
+ * is already long. Every `-fast` had a plain twin, so nothing here becomes
+ * unreachable: the id can still be typed into the CLI itself, which is true of
+ * every model this app does not list.
+ */
+const HIDDEN_MODEL_VARIANTS = {
+  cursor: /-fast$/,
+};
+
 function modelListArgsFor(agentId) {
   return MODEL_LIST_ARGS[agentId] ? [...MODEL_LIST_ARGS[agentId]] : null;
 }
 
 /**
- * Reads model ids out of that output.
+ * Reads the models out of that output.
  *
- * The shapes differ — `agy` prints one id per line, `grok` prints a bulleted
- * list under prose — so this keeps only lines that look like a model id and
- * strips the decoration. Anything it cannot read yields nothing, which sends
- * the caller back to the static list rather than into a menu of prose.
+ * Every CLI here prints the id beside a human label, and each does it
+ * differently — `cursor-agent` writes `gpt-5.3-codex-low - Codex 5.3 Low`,
+ * `agy` separates with a tab, `grok` bullets a bare id under prose. The parser
+ * used to demand a bare token, so two of the three never matched and fell back
+ * to the shipped list on every launch; that list had drifted far enough to
+ * offer cursor models the CLI does not have.
+ *
+ * The label is kept, because for cursor and gemini the tier *is* the model —
+ * "Codex 5.3 Extra High" is the thing a person is choosing, and reading it off
+ * `gpt-5.3-codex-xhigh` is work the CLI already did.
+ *
+ * Anything it cannot read yields nothing, which sends the caller back to the
+ * static list rather than into a menu of prose.
  */
 function parseModelList(agentId, output) {
   if (!MODEL_LIST_ARGS[agentId]) return [];
 
-  const ids = [];
+  const models = [];
+  const seen = new Set();
   for (const raw of String(output || '').split('\n')) {
     const line = raw.trim()
       .replace(/^[*\-•]\s*/, '')
       .replace(/\s*\((default|recommended)\)\s*$/i, '')
       .trim();
-    // A model id is a single bare token: no spaces, no punctuation of prose.
-    if (!line || /\s/.test(line) || /[:,]/.test(line)) continue;
-    if (!/^[A-Za-z][\w.\-/]*$/.test(line)) continue;
-    if (!ids.includes(line)) ids.push(line);
+    if (!line) continue;
+
+    // `id - Label`, `id\tLabel`, or `id   Label`; otherwise the whole line.
+    const split = /^(\S+)(?:\s+-\s+|\t+|\s{2,})(.*)$/.exec(line);
+    const id = (split ? split[1] : line).trim();
+    const label = split ? split[2].trim() : '';
+
+    // A model id is a bare token: no spaces, no punctuation of prose. This is
+    // what keeps `Available models` and `You are not authenticated.` out.
+    if (!/^[A-Za-z][\w.\-/]*$/.test(id)) continue;
+    if (HIDDEN_MODEL_VARIANTS[agentId]?.test(id)) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    models.push({ id, name: label || id });
   }
-  return ids;
+  return models;
 }
 
 function modelPresetsFor(agentId) {

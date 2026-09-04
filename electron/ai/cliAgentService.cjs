@@ -185,11 +185,13 @@ function createCliAgentService({
 
       try {
         const { code, stdout } = await runCommand(binary, args);
-        const ids = code === 0 ? parseModelList(agentId, stdout) : [];
-        if (ids.length === 0) return fallback;
+        const listed = code === 0 ? parseModelList(agentId, stdout) : [];
+        if (listed.length === 0) return fallback;
 
-        const labels = new Map(fallback.map((preset) => [preset.id, preset]));
-        const models = ids.map((id) => labels.get(id) ?? { id, name: id });
+        // The shipped entry wins on labels — it carries the "Recommended" and
+        // "Fastest" hints — but only for a model the CLI still offers.
+        const presets = new Map(fallback.map((preset) => [preset.id, preset]));
+        const models = listed.map((model) => presets.get(model.id) ?? model);
         modelCache.set(agentId, models);
         return models;
       } catch {
