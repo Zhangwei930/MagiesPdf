@@ -419,8 +419,21 @@ export function Viewer({
     textCache.current = new Map();
   }, [doc]);
 
+  /**
+   * Which search the results on screen belong to.
+   *
+   * Extracting text from a long document takes a while, and every keystroke
+   * starts another search. Without this, typing `B` while the search for `A`
+   * was still walking the pages let A finish last and overwrite B's results —
+   * the list then belonged to a word the user had already replaced.
+   */
+  const searchRun = useRef(0);
+
   const runSearch = useCallback(
     async (needle: string) => {
+      const run = (searchRun.current += 1);
+      const isCurrent = () => searchRun.current === run;
+
       if (!doc || needle.trim() === '') {
         setMatches([]);
         setMatchIndex(0);
@@ -433,14 +446,26 @@ export function Viewer({
           let items = textCache.current.get(pageNumber);
           if (!items) {
             items = await getPageTextItems(doc, pageNumber);
+            // Abandoned mid-walk: a newer search owns the screen now, and the
+            // cache entry above is still worth keeping for it.
+            if (!isCurrent()) return;
             textCache.current.set(pageNumber, items);
           }
           for (const range of findInItems(items, needle)) found.push({ page: pageNumber, ...range });
         }
+        if (!isCurrent()) return;
         setMatches(found);
         setMatchIndex(0);
+      } catch (cause) {
+        // A page that cannot be read is not a reason to leave the previous
+        // results standing as if they answered this search.
+        if (isCurrent()) {
+          console.warn('[viewer] search failed:', cause);
+          setMatches([]);
+          setMatchIndex(0);
+        }
       } finally {
-        setSearching(false);
+        if (isCurrent()) setSearching(false);
       }
     },
     [doc],

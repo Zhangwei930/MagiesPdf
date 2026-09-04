@@ -84,15 +84,72 @@ describe('the size cap', () => {
 
 describe('normalizeTarget', () => {
   it('leaves case alone where the filesystem is case-sensitive', () => {
-    assert.equal(normalizeTarget('/docs/A.pdf', 'linux'), path.resolve('/docs/A.pdf'));
+    assert.equal(normalizeTarget('/docs/A.pdf', { platform: 'linux' }), path.resolve('/docs/A.pdf'));
   });
 
   it('folds case on Windows, where two spellings are the same file', () => {
-    assert.equal(normalizeTarget('C:\\Docs\\A.PDF', 'win32'), normalizeTarget('c:\\docs\\a.pdf', 'win32'));
+    assert.equal(normalizeTarget('C:\\Docs\\A.PDF', { platform: 'win32' }), normalizeTarget('c:\\docs\\a.pdf', { platform: 'win32' }));
   });
 
   it('returns an empty string for input it cannot make sense of', () => {
-    assert.equal(normalizeTarget('', 'linux'), '');
+    assert.equal(normalizeTarget('', { platform: 'linux' }), '');
     assert.equal(normalizeTarget(null, 'linux'), '');
+  });
+});
+
+/**
+ * `darwin` was treated as case-insensitive without exception, and APFS volumes
+ * can be case-sensitive. There the fold is a *widening*: a grant for
+ * `/docs/A.pdf` also permitted writing `/docs/a.pdf`, which on that volume is
+ * a different file the user never chose. Same class as issue #31 — knowing a
+ * path must not be enough.
+ *
+ * The filesystem is the only thing that can answer, so the grant records what
+ * `realpath` makes of the path and the check compares against that. Where the
+ * volume folds case, both spellings resolve to the same canonical name and the
+ * grant still works; where it does not, they stay apart.
+ */
+describe('a macOS volume that does distinguish case', () => {
+  it('does not let a grant for one spelling cover another', () => {
+    forgetAll();
+    remember('/vol/case-sensitive/A.pdf', {
+      platform: 'darwin',
+      realpath: (candidate) => candidate,
+    });
+
+    assert.equal(
+      isWritable('/vol/case-sensitive/a.pdf', {
+        platform: 'darwin',
+        realpath: (candidate) => candidate,
+      }),
+      false,
+      'a different file on this volume',
+    );
+    assert.equal(
+      isWritable('/vol/case-sensitive/A.pdf', {
+        platform: 'darwin',
+        realpath: (candidate) => candidate,
+      }),
+      true,
+    );
+  });
+
+  it('still covers both spellings where the volume folds them', () => {
+    forgetAll();
+    // What a case-insensitive volume's realpath does: it answers with the name
+    // the file was created under, whichever spelling was asked about.
+    const folding = () => '/vol/insensitive/Report.pdf';
+    remember('/vol/insensitive/report.pdf', {
+      platform: 'darwin',
+      realpath: folding,
+    });
+
+    assert.equal(
+      isWritable('/vol/insensitive/REPORT.PDF', {
+        platform: 'darwin',
+        realpath: folding,
+      }),
+      true,
+    );
   });
 });

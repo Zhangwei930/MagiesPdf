@@ -678,3 +678,60 @@ describe('REST asynchronous jobs', () => {
     assert.equal(cancelled, body.jobId);
   });
 });
+
+/**
+ * The cap only ever applied to `?async=true`, and a synchronous POST is the
+ * same work in the same pool. An authenticated caller could open any number of
+ * them, each carrying up to 128 MB of files, with an unbounded queue behind.
+ */
+describe('how many tool runs may be in flight', () => {
+  it('counts a synchronous run against the limit', async () => {
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    const slowPool = {
+      run: async () => {
+        await held;
+        return { files: [], data: {} };
+      },
+    };
+    const handler = createHandler({
+      pool: slowPool,
+      maxActiveJobs: 1,
+      readCatalog: () => ({
+        tools: [{
+          id: 'edit.compress',
+          runtime: 'worker',
+          input: { min: 1, max: 1, accept: ['application/pdf'] },
+          params: [],
+          name: { zh: '', en: '' },
+          description: { zh: '', en: '' },
+        }],
+      }),
+    });
+
+    const body = JSON.stringify({
+      files: [{ name: 'a.pdf', bytesBase64: Buffer.from('%PDF-').toString('base64') }],
+    });
+    const post = () => {
+      const { req, res, result } = mockReqRes({
+        method: 'POST',
+        url: '/v1/tools/edit.compress',
+        headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
+        body,
+      });
+      const done = handler(req, res).then(() => result());
+      return done;
+    };
+
+    const first = post();
+    // Let the first reach the pool before the second arrives.
+    await new Promise((resolve) => setImmediate(resolve));
+    const second = await post();
+
+    assert.equal(second.statusCode, 429, 'the second run is refused while the first holds the slot');
+    release();
+    await first;
+  });
+});

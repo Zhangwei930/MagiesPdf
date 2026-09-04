@@ -217,3 +217,22 @@ describe('AI workspace wiring', () => {
     assert.match(aiSettingsSource, /images: next/);
   });
 });
+
+/**
+ * The panel used to run its own 20-second wait on `onEditorSaved` and throw
+ * away the promise `requestEngineSave` returns. Three things followed: a
+ * failed save became an unhandled rejection while the panel waited out its
+ * own timeout, the two deadlines disagreed (20s here, 60s in the store), and
+ * one success event was handled twice — by the shell's listener and again by
+ * this one.
+ */
+describe('saving before an AI turn', () => {
+  it('waits on the save the store already tracks', () => {
+    assert.match(aiPanelSource, /await useApp\.getState\(\)\.requestEngineSave/);
+  });
+
+  it('does not listen for the save a second time, or discard the promise', () => {
+    assert.doesNotMatch(aiPanelSource, /void useApp\.getState\(\)\.requestEngineSave/);
+    assert.doesNotMatch(aiPanelSource, /onEditorSaved[\s\S]{0,200}engineSaved\(payload\)/);
+  });
+});

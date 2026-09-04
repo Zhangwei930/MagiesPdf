@@ -188,6 +188,8 @@ function createHandler({
   };
   const jobs = new Map();
 
+  /** Synchronous runs already in the pool. They cost the same as async ones. */
+  let inFlightSyncRuns = 0;
   const requireOffice = () => {
     if (!officeProvider) {
       const error = new Error('Office automation is not available in this Magies Office build');
@@ -485,13 +487,15 @@ function createHandler({
             });
             return;
           }
-          if (
-            url.searchParams.get('async') === 'true' &&
-            [...jobs.values()].filter((job) => job.status === 'running').length >= maxActiveJobs
-          ) {
+          // Both shapes count. The cap used to apply to `?async=true` alone,
+          // and a synchronous POST is the same work in the same pool — an
+          // authenticated caller could open any number of them, each carrying
+          // up to 128 MB of files, and the queue behind them is unbounded.
+          const running = [...jobs.values()].filter((job) => job.status === 'running').length;
+          if (running + inFlightSyncRuns >= maxActiveJobs) {
             sendJson(res, 429, {
               error: 'too_many_jobs',
-              message: `At most ${maxActiveJobs} asynchronous jobs may run at once`,
+              message: `At most ${maxActiveJobs} tool runs may be in flight at once`,
             });
             return;
           }
@@ -576,6 +580,7 @@ function createHandler({
             sendJson(res, 202, { jobId: request.jobId, status: 'running' });
             return;
           }
+          inFlightSyncRuns += 1;
           try {
             const result = await runRequest(request, runtime);
             sendJson(res, 200, serializeResult(result));
@@ -589,6 +594,8 @@ function createHandler({
               userMessage: err.userMessage,
               details: err.details,
             });
+          } finally {
+            inFlightSyncRuns -= 1;
           }
           return;
         }

@@ -1122,29 +1122,13 @@ export function AIChatPanel({
         && activeDocument.engineModified
         && activeDocument.path
       ) {
+        // `requestEngineSave` already settles when the document is on disk —
+        // the shell subscribes to the same event and owns the timeout. This
+        // used to listen a second time and discard that promise, so a failed
+        // save became an unhandled rejection while the panel sat waiting for
+        // its own shorter deadline, and one answer was handled twice.
         try {
-          await new Promise<void>((resolve, reject) => {
-            let settled = false;
-            const finish = (error?: Error) => {
-              if (settled) return;
-              settled = true;
-              window.clearTimeout(timeout);
-              unsubscribe();
-              if (error) reject(error);
-              else resolve();
-            };
-            const timeout = window.setTimeout(() => {
-              finish(new Error(locale === 'zh'
-                ? '保存当前文档超时，请先手动保存后再试。'
-                : 'Timed out saving the open document. Save manually and try again.'));
-            }, 20000);
-            const unsubscribe = bridge().onEditorSaved((payload) => {
-              if (payload.sessionId !== activeDocument.editor?.sessionId) return;
-              useApp.getState().engineSaved(payload);
-              finish();
-            });
-            void useApp.getState().requestEngineSave(activeDocument.id);
-          });
+          await useApp.getState().requestEngineSave(activeDocument.id);
         } catch (cause) {
           setError(cause instanceof Error ? cause.message : String(cause));
           setTurn(null);
