@@ -18,6 +18,7 @@ import {
   themeVariables,
 } from './theme/themes.ts';
 import * as docs from './documents.ts';
+import { createEngineSaveTracker } from './engineSave.ts';
 import type { DocumentState } from './documents.ts';
 import type { Locale } from './i18n.ts';
 import { classifyOutput } from './toolApply.ts';
@@ -80,7 +81,12 @@ interface AppState {
   requestEngineSave(id: string): Promise<void>;
   /** Set while a hosted document has been asked for; the frame watches it. */
   engineSaveRequest: { id: string; at: number } | null;
-  engineSaved(payload: { sessionId: string; path?: string; name?: string }): void;
+  engineSaved(payload: { sessionId: string; path?: string; name?: string; exportedTo?: string }): void;
+  /**
+   * The engine's document could not be written. The document keeps whatever
+   * unsaved state it had — the disk still holds the older bytes.
+   */
+  engineSaveFailed(payload: { sessionId: string; message: string }): void;
   saveDocumentAs(id: string): Promise<void>;
   /**
    * Runs a tool over an open document. A single PDF coming back replaces the
@@ -181,6 +187,16 @@ function mapDocument(
 ): DocumentState[] {
   return documents.map((document) => (document.id === id ? change(document) : document));
 }
+
+/**
+ * One save can be in flight at a time — the shell asks the engine holding the
+ * active document, and waits. A large spreadsheet takes real seconds to
+ * serialise, convert and write, so the deadline is generous; its job is to
+ * stop a lost answer from hanging a close forever, not to police speed.
+ */
+const ENGINE_SAVE_TIMEOUT_MS = 60_000;
+const engineSaves = createEngineSaveTracker();
+
 
 export const useApp = create<AppState>((set, get) => ({
   ready: false,
@@ -291,7 +307,28 @@ export const useApp = create<AppState>((set, get) => ({
   async requestEngineSave(id) {
     const document = get().documents.find((d) => d.id === id);
     if (!document?.editor) return;
+    // Settles when the document is on disk, not when the request is posted.
+    // Anything that saves before closing depends on that difference.
+    const written = engineSaves.begin(id, ENGINE_SAVE_TIMEOUT_MS);
     set({ engineSaveRequest: { id, at: Date.now() } });
+    try {
+      await written;
+    } catch (cause) {
+      // A timeout settles inside the tracker, which knows nothing about the
+      // store; clearing here covers that path as well as an outright failure.
+      set({ engineSaveRequest: null });
+      throw cause;
+    }
+  },
+
+  engineSaveFailed(payload) {
+    // Only the outstanding request is cleared. `engineModified` is deliberately
+    // left alone: nothing reached the disk, so the document is still dirty.
+    const request = get().engineSaveRequest;
+    const document = get().documents.find((d) => d.editor?.sessionId === payload.sessionId);
+    if (request && document && request.id !== document.id) return;
+    set({ engineSaveRequest: null });
+    engineSaves.failed(payload.message);
   },
 
   engineSaved(payload) {
@@ -299,11 +336,16 @@ export const useApp = create<AppState>((set, get) => ({
     set((state) => ({
       documents: state.documents.map((d) =>
         d.editor?.sessionId === sessionId
-          ? docs.applyEngineSaved(d, { path: payload.path, name: payload.name })
+          ? docs.applyEngineSaved(d, {
+              path: payload.path,
+              name: payload.name,
+              exportedTo: payload.exportedTo,
+            })
           : d,
       ),
       engineSaveRequest: null,
     }));
+    engineSaves.saved();
   },
 
   async saveDocumentAs(id) {

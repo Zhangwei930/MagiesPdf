@@ -20,6 +20,7 @@ import {
   saveTarget,
   setEngineModified,
   undo,
+  type DocumentState,
 } from './documents.ts';
 import type { PickedFile } from './bridge.ts';
 
@@ -160,6 +161,57 @@ describe('the history budget', () => {
  * has already had, and one of those states can be exactly what is on disk.
  * See issue #34.
  */
+/**
+ * Three different things finish on this path and they are not the same event:
+ * saving the document, saving it somewhere else, and exporting a PDF snapshot
+ * of it. Only the first two put the open document on disk. Treating an export
+ * as a save marks an edited document clean while the disk still holds the old
+ * one, and closing the tab then asks nothing. See issue #24.
+ */
+describe('applyEngineSaved and the three ways a save finishes', () => {
+  const hosted = (): DocumentState => ({
+    ...createDocument(picked('report.docx', '/docs/report.docx')),
+    editor: { sessionId: 's1' } as DocumentState['editor'],
+    engineModified: true,
+  });
+
+  it('marks the document saved when it was written to its own path', () => {
+    const after = applyEngineSaved(hosted(), { path: '/docs/report.docx', name: 'report.docx' });
+    assert.equal(after.engineModified, false);
+    assert.equal(after.path, '/docs/report.docx');
+  });
+
+  it('follows a save-as to the new path', () => {
+    const after = applyEngineSaved(hosted(), { path: '/docs/copy.docx', name: 'copy.docx' });
+    assert.equal(after.engineModified, false);
+    assert.equal(after.path, '/docs/copy.docx');
+    assert.equal(after.name, 'copy.docx');
+  });
+
+  it('leaves an exported PDF snapshot unsaved, because the document was not written', () => {
+    const after = applyEngineSaved(hosted(), {
+      path: '/docs/report.docx',
+      name: 'report.docx',
+      exportedTo: '/docs/report.pdf',
+    });
+
+    assert.equal(after.engineModified, true, 'the document still has unsaved changes');
+    assert.equal(after.path, '/docs/report.docx', 'the tab stays on the document');
+    assert.equal(after.name, 'report.docx');
+  });
+
+  it('does not invent unsaved changes when the export came from a clean document', () => {
+    const clean = { ...hosted(), engineModified: false };
+    const after = applyEngineSaved(clean, {
+      path: '/docs/report.docx',
+      name: 'report.docx',
+      exportedTo: '/docs/report.pdf',
+    });
+
+    assert.equal(after.engineModified, false);
+  });
+});
+
 describe('saved state across undo and redo', () => {
   it('is clean again after undoing an edit made on top of a save', () => {
     const opened = createDocument(picked('a.pdf', '/docs/a.pdf'));

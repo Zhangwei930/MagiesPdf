@@ -1,6 +1,6 @@
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { BrowserWindow, app, nativeTheme, shell } = require('electron');
+const { BrowserWindow, app, dialog, ipcMain, nativeTheme, shell } = require('electron');
 const { JobPool } = require('./jobs/pool.cjs');
 const { documentPathsFromArgv, openableDocumentPath } = require('./files/openPaths.cjs');
 const { registerIpc } = require('./ipc.cjs');
@@ -8,6 +8,11 @@ const settings = require('./settings.cjs');
 const { startUpdater } = require('./updater/index.cjs');
 const { syncApiServer, stopApiServer } = require('./api/server.cjs');
 const { createApprovalGate } = require('./api/approvalGate.cjs');
+const {
+  createCloseGuard,
+  createQuitPrompt,
+  createSaveAllRequester,
+} = require('./closeGuard.cjs');
 const {
   MAIN_WINDOW_WEB_PREFERENCES,
   isExternalUrlAllowed,
@@ -30,6 +35,13 @@ const RENDERER_URL = isDev ? new URL(DEV_SERVER_URL).href : pathToFileURL(PACKAG
 // The visible product name changed, but existing settings and recent documents
 // must remain in the directory used by every previous MagiesPdf release.
 settings.preserveLegacyUserDataPath(app);
+
+/**
+ * What the renderer last reported as unsaved. Held here rather than asked for
+ * at close time: `close` is synchronous, and a round trip cannot be awaited
+ * inside it.
+ */
+let unsavedNames = [];
 
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
@@ -86,6 +98,28 @@ function resolveBackgroundColor() {
   const dark = theme === 'system' ? nativeTheme.shouldUseDarkColors : theme === 'dark';
   return dark ? '#0e1116' : '#f6f7f9';
 }
+
+const saveAll = createSaveAllRequester({
+  getContents: () => {
+    const contents = mainWindow?.webContents;
+    return contents && !contents.isDestroyed() ? contents : null;
+  },
+  send: (contents, payload) => contents.send('app:saveAllRequested', payload),
+});
+
+const closeGuard = createCloseGuard({
+  unsavedDocuments: () => unsavedNames,
+  ask: createQuitPrompt({ dialog, getWindow: () => mainWindow }),
+  saveAll: () => saveAll.saveAll(),
+});
+
+ipcMain.handle('app:reportUnsaved', (_event, payload) => {
+  const names = Array.isArray(payload?.names) ? payload.names : [];
+  unsavedNames = names.filter((name) => typeof name === 'string' && name !== '');
+  return true;
+});
+
+ipcMain.on('app:saveAllResult', (_event, payload) => saveAll.settle(payload));
 
 function createWindow() {
   const window = new BrowserWindow({
@@ -146,6 +180,26 @@ function createWindow() {
   window.webContents.on('did-finish-load', () => {
     rendererReady = true;
     flushPendingOpens();
+  });
+
+  // Closing a tab asked about unsaved changes; closing the window did not.
+  // The close button, ⌘Q and Alt+F4 all went straight through. `close` has to
+  // be answered synchronously, so the decision is taken afterwards and the
+  // window closed again once it is made.
+  let closeApproved = false;
+  window.on('close', (event) => {
+    if (closeApproved) return;
+    event.preventDefault();
+    void closeGuard
+      .mayClose()
+      .then((mayClose) => {
+        if (!mayClose) return;
+        closeApproved = true;
+        window.close();
+      })
+      .catch(() => {
+        // Deciding failed; the window stays, which is the safe direction.
+      });
   });
 
   window.on('closed', () => {

@@ -40,19 +40,41 @@ const api = {
   warmEditor: () => ipcRenderer.invoke('office:editorWarm'),
   focusEditor: (sessionId) => ipcRenderer.invoke('office:editorFocus', { sessionId }),
   saveEditor: (sessionId, bytes) => ipcRenderer.invoke('office:editorSave', { sessionId, bytes }),
-  pickEditorSaveAsTarget: (sessionId, name) =>
-    ipcRenderer.invoke('office:editorSaveAsTarget', { sessionId, name }),
+  pickEditorSaveAsTarget: (sessionId, name, kind) =>
+    ipcRenderer.invoke('office:editorSaveAsTarget', { sessionId, name, kind }),
   /** Writes the file the engine already produced for "Save copy as". */
   saveEditorExport: (sessionId, name) =>
     ipcRenderer.invoke('office:editorSaveExport', { sessionId, name }),
   closeEditor: (sessionId) => ipcRenderer.invoke('office:editorClose', { sessionId }),
   /** Mirrors the tab's unsaved state so an AI write can refuse to clobber it. */
+  /** Names of documents with unsaved changes, so the window can guard its close. */
+  reportUnsaved: (names) => ipcRenderer.invoke('app:reportUnsaved', { names }),
+  /** The window is closing and asked for everything to be written first. */
+  onSaveAllRequested: (handler) => {
+    const listener = (_event, payload) => {
+      void Promise.resolve(handler())
+        .then((result) => ipcRenderer.send('app:saveAllResult', { id: payload.id, ...result }))
+        .catch((cause) => ipcRenderer.send('app:saveAllResult', {
+          id: payload.id,
+          saved: false,
+          message: cause instanceof Error ? cause.message : String(cause),
+        }));
+    };
+    ipcRenderer.on('app:saveAllRequested', listener);
+    return () => ipcRenderer.off('app:saveAllRequested', listener);
+  },
   setEditorModified: (sessionId, modified) =>
     ipcRenderer.invoke('office:editorModified', { sessionId, modified }),
   onEditorSaved: (handler) => {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on('office:editorSaved', listener);
     return () => ipcRenderer.off('office:editorSaved', listener);
+  },
+  /** Fires when a save could not be written; the tab keeps its unsaved state. */
+  onEditorSaveFailed: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on('office:editorSaveFailed', listener);
+    return () => ipcRenderer.off('office:editorSaveFailed', listener);
   },
   /** Editor sessions closed because AI is about to rewrite that path on disk. */
   onOfficeSessionsClosed: (handler) => {

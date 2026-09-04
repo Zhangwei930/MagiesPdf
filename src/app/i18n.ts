@@ -210,6 +210,10 @@ const UI = {
     zh: '「{name}」有还没保存的修改，关掉就没了。',
     en: '“{name}” has changes that are not saved. Closing loses them.',
   },
+  quitDirtyTitle: { zh: '退出前保存修改吗？', en: 'Save changes before quitting?' },
+  quitDirtySave: { zh: '全部保存', en: 'Save all' },
+  quitDirtyDiscard: { zh: '不保存并退出', en: 'Quit without saving' },
+  quitDirtyCancel: { zh: '取消', en: 'Cancel' },
   closeDirtySave: { zh: '保存并关闭', en: 'Save and close' },
   closeDirtyDiscard: { zh: '不保存', en: "Don't save" },
 
@@ -275,6 +279,10 @@ const UI = {
   dropNotPdf: {
     zh: '只能直接打开 PDF。其他格式请先选择对应的工具。',
     en: 'Only PDFs open directly. For other formats, pick the matching tool first.',
+  },
+  officeSaveFailed: {
+    zh: '保存失败，文档未写入磁盘：',
+    en: 'Save failed — nothing was written to disk: ',
   },
   dropNotDocument: {
     zh: '请选择 Word、Excel、PowerPoint 或 PDF 文档。',

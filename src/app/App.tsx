@@ -13,7 +13,7 @@ import { localized, t } from './i18n.ts';
 import { AlertCircle, Bot, Check, Eye, Loader2, Save, Settings, ToolIcon, X } from './icons.ts';
 import { currentPlatform, isTypingTarget, matchShortcut } from './shortcuts.ts';
 import { useApp } from './store.ts';
-import { isDirty, officeCreateKind, saveAsName, type DocumentState } from './documents.ts';
+import { isDirty, officeCreateKind, type DocumentState } from './documents.ts';
 import {
   canApplyInstantly,
   canOpenFromDocument,
@@ -115,6 +115,7 @@ export function App() {
   const setEngineModified = useApp((s) => s.setEngineModified);
   const engineSaveRequest = useApp((s) => s.engineSaveRequest);
   const engineSaved = useApp((s) => s.engineSaved);
+  const engineSaveFailed = useApp((s) => s.engineSaveFailed);
 
   const [main, setMain] = useState<MainView>({ name: 'welcome' });
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -200,6 +201,44 @@ export function App() {
     if (!hasBridge()) return undefined;
     return bridge().onEditorSaved((payload) => engineSaved(payload));
   }, [engineSaved]);
+
+  // The window guards its own close, and `close` is synchronous — it cannot ask
+  // the renderer anything at that moment. So the list is pushed up whenever it
+  // changes, and the main process already has it when the moment comes.
+  useEffect(() => {
+    if (!hasBridge()) return;
+    void bridge().reportUnsaved(documents.filter(isDirty).map((d) => d.name));
+  }, [documents]);
+
+  // Chosen "save all" at the close prompt: write every unsaved document and
+  // report whether that worked. A failure keeps the window open.
+  useEffect(() => {
+    if (!hasBridge()) return undefined;
+    return bridge().onSaveAllRequested(async () => {
+      const unsaved = useApp.getState().documents.filter(isDirty);
+      for (const document of unsaved) {
+        try {
+          await useApp.getState().saveDocument(document.id);
+        } catch (cause) {
+          return { saved: false, message: cause instanceof Error ? cause.message : String(cause) };
+        }
+      }
+      // A document that still reads dirty was never written — a Save As the
+      // user cancelled, for one. Closing then would drop it.
+      const remaining = useApp.getState().documents.filter(isDirty);
+      return { saved: remaining.length === 0 };
+    });
+  }, []);
+
+  // A save that could not be written has to reach the user: the tab still shows
+  // unsaved changes, and the disk still holds the older document.
+  useEffect(() => {
+    if (!hasBridge()) return undefined;
+    return bridge().onEditorSaveFailed((payload) => {
+      engineSaveFailed(payload);
+      setDropError(`${t('officeSaveFailed', locale)}${payload.message}`);
+    });
+  }, [engineSaveFailed, locale]);
 
   /** Apply a tool to the active PDF with default params (instant / quick-confirm). */
   const runAgainstActiveDocument = useCallback(
@@ -670,10 +709,12 @@ export function App() {
     // Where it goes is settled first; the save that follows lands there
     // rather than over the original. PDF uses a .pdf default so the filter
     // and LibreOffice path kick in without an engine format gallery.
-    const suggested = what === 'exportPdf' ? saveAsName(document) : document.name;
+    // The name is the main process's to derive: it owns `pdfExportName`, and
+    // the extension it settles on is what narrows the dialog's type dropdown.
     const target = await bridge().pickEditorSaveAsTarget(
       document.editor?.sessionId ?? '',
-      suggested,
+      document.name,
+      what === 'exportPdf' ? 'pdf' : undefined,
     );
     if (target) await useApp.getState().requestEngineSave(document.id);
     return undefined;

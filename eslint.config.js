@@ -168,6 +168,9 @@ export default [
         Request: 'readonly',
         structuredClone: 'readonly',
         AbortController: 'readonly',
+        // Its other half: `AbortSignal.timeout` is how a test gives a request
+        // a deadline, which is the only way to assert that one is never answered.
+        AbortSignal: 'readonly',
         TextDecoder: 'readonly',
         TextEncoder: 'readonly',
       },

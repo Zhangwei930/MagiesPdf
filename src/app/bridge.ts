@@ -487,7 +487,7 @@ export interface MagiesPdfBridge {
    * Asks where a save-as should land and remembers it; the save that follows
    * goes there instead of over the original. The extension decides the format.
    */
-  pickEditorSaveAsTarget(sessionId: string, name: string): Promise<{ path: string } | null>;
+  pickEditorSaveAsTarget(sessionId: string, name: string, kind?: 'pdf'): Promise<{ path: string } | null>;
   /**
    * The engine's "Save copy as": the file is already converted and uploaded.
    * Opens a save dialog and writes those bytes (does not re-run the engine).
@@ -498,10 +498,20 @@ export interface MagiesPdfBridge {
    * Mirrors this tab's unsaved state into the main process, where an AI write
    * uses it to refuse a document the user is still editing.
    */
+  /** Tells the main process which documents are unsaved, for the close guard. */
+  reportUnsaved(names: string[]): Promise<unknown>;
+  /** Called when the window is closing and everything must be written first. */
+  onSaveAllRequested(
+    handler: () => Promise<{ saved: boolean; message?: string }>,
+  ): () => void;
   setEditorModified(sessionId: string, modified: boolean): Promise<unknown>;
   /** Fires once the engine's document has been written back to disk. */
   onEditorSaved(
-    handler: (payload: { sessionId: string; path?: string; name?: string }) => void,
+    handler: (payload: { sessionId: string; path?: string; name?: string; exportedTo?: string }) => void,
+  ): () => void;
+  /** Fires when a save could not be written. The document is still unsaved. */
+  onEditorSaveFailed(
+    handler: (payload: { sessionId: string; message: string }) => void,
   ): () => void;
   onOfficeSessionsClosed(
     handler: (payload: { sessions: Array<{ sessionId: string; path: string }> }) => void,

@@ -172,8 +172,13 @@ export function officeCreateKind(doc: DocumentState): DocumentOrigin['kind'] {
  */
 export function applyEngineSaved(
   doc: DocumentState,
-  saved: { path?: string; name?: string },
+  saved: { path?: string; name?: string; exportedTo?: string },
 ): DocumentState {
+  // An exported PDF is a snapshot beside the document, not the document. The
+  // engine still holds unsaved changes and the tab still edits the original —
+  // clearing the flag here would mark it clean over bytes never written.
+  if (saved.exportedTo) return doc;
+
   return {
     ...doc,
     engineModified: false,
