@@ -1018,7 +1018,11 @@ export function AIChatPanel({
   const storedChoice = settings.ai.cliModels?.[cliAgentId] ?? {};
   const cliChoice = { model: storedChoice.model ?? '', effort: storedChoice.effort ?? '' };
 
-  const modelChoices = cliModels[cliAgentId] ?? selectedCliAgent?.models ?? [];
+  // `??` would have kept an empty answer: a CLI that listed nothing left the
+  // dropdown blank instead of falling back to the models we ship.
+  const listedModels = cliModels[cliAgentId];
+  const modelChoices =
+    listedModels && listedModels.length > 0 ? listedModels : selectedCliAgent?.models ?? [];
 
   // The shipped list goes stale, so the chosen CLI is asked for its own once.
   useEffect(() => {
