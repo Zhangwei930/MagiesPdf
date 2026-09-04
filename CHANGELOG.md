@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.2.3 — 2026-09-04
+
+### AI assistant
+
+- **Adding Magies Office to a coding CLI produced an entry that could never start.** The path written into the CLI's configuration pointed at a copy of the server that cannot load its own dependencies, so the agent came up with no Magies tools at all and nothing said why. Only installed copies were affected; the same setup made from a source checkout always worked.
+
+If a CLI was configured by an earlier version, add it again from Settings to replace the entry.
+
 ## 3.2.2 — 2026-09-04
 
 ### Security
