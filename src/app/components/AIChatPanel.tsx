@@ -3,7 +3,7 @@ import type { ToolOutputFile } from '@core/types.ts';
 import type { DocumentState } from '../documents.ts';
 import { OfficeApprovalCard, OfficeApprovalTrail } from './OfficeApprovalCard.tsx';
 import type { ApprovalDecision, OfficeApprovalRecord } from '../ai/officeApprovals.ts';
-import { officeCreateKind } from '../documents.ts';
+import { isDirty, officeCreateKind } from '../documents.ts';
 import {
   bridge,
   hasBridge,
@@ -197,7 +197,7 @@ function buildActiveOffice(
     relativePath,
     kind,
     sessionId: document.editor?.sessionId,
-    dirty: Boolean(document.editor ? document.engineModified : !document.saved),
+    dirty: isDirty(document),
     inWorkspace: relativePath !== '',
     saved: path !== '',
   };

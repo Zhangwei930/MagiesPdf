@@ -154,6 +154,58 @@ describe('the history budget', () => {
   });
 });
 
+/**
+ * Saving happens at a point in the history, not to the document as a whole.
+ * A boolean cannot express that: undo and redo move between states the user
+ * has already had, and one of those states can be exactly what is on disk.
+ * See issue #34.
+ */
+describe('saved state across undo and redo', () => {
+  it('is clean again after undoing an edit made on top of a save', () => {
+    const opened = createDocument(picked('a.pdf', '/docs/a.pdf'));
+    const editedOnce = applyEdit(opened, bytes(2));
+    const saved = markSaved(editedOnce, '/docs/a.pdf');
+    const editedTwice = applyEdit(saved, bytes(3));
+
+    assert.equal(isDirty(editedTwice), true);
+    assert.equal(isDirty(undo(editedTwice)), false);
+  });
+
+  it('is clean again after undoing past the save and redoing back to it', () => {
+    const opened = createDocument(picked('a.pdf', '/docs/a.pdf'));
+    const saved = markSaved(applyEdit(opened, bytes(2)), '/docs/a.pdf');
+
+    const back = undo(saved);
+    assert.equal(isDirty(back), true, 'the state before the save is not on disk');
+    assert.equal(isDirty(redo(back)), false);
+  });
+
+  it('stays dirty on a state that was never written', () => {
+    const opened = createDocument(picked('a.pdf', '/docs/a.pdf'));
+    const saved = markSaved(applyEdit(opened, bytes(2)), '/docs/a.pdf');
+    const further = applyEdit(applyEdit(saved, bytes(3)), bytes(4));
+
+    assert.equal(isDirty(further), true);
+    assert.equal(isDirty(undo(further)), true, 'bytes(3) was never saved');
+    assert.equal(isDirty(undo(undo(further))), false, 'back at the saved bytes');
+  });
+
+  it('follows the newer save when the document is written twice', () => {
+    const opened = createDocument(picked('a.pdf', '/docs/a.pdf'));
+    const first = markSaved(applyEdit(opened, bytes(2)), '/docs/a.pdf');
+    const second = markSaved(applyEdit(first, bytes(3)), '/docs/a.pdf');
+
+    assert.equal(isDirty(second), false);
+    assert.equal(isDirty(undo(second)), true, 'the earlier save is no longer what is on disk');
+  });
+
+  it('keeps a document with no file behind it dirty wherever the history sits', () => {
+    const untitled = createDocument({ ...picked('new.pdf', ''), path: '' });
+    assert.equal(isDirty(untitled), true);
+    assert.equal(isDirty(applyEdit(untitled, bytes(2))), true);
+  });
+});
+
 describe('markSaved', () => {
   it('marks the current bytes as being on disk', () => {
     const doc = markSaved(applyEdit(createDocument(picked('a.pdf', '/docs/a.pdf')), bytes(2)), '');

@@ -61,8 +61,15 @@ export interface DocumentState {
   future: Uint8Array[];
   /** Accepted password for an encrypted document, replayed into every edit. */
   password: string;
-  /** True while `bytes` is what is on disk at `path`. */
-  saved: boolean;
+  /**
+   * The exact bytes last written to `path`, or null when nothing has been.
+   *
+   * Identity, not a flag: undo and redo move between states the user already
+   * had, and one of them can be the one on disk. `past` and `future` carry the
+   * same array references this points at, so `bytes === savedBytes` answers
+   * "is this what is on disk" in constant time, without hashing a scan.
+   */
+  savedBytes: Uint8Array | null;
   /** Set only while this document is a rendering of an Office file. */
   origin: DocumentOrigin | null;
   /** Set only while the editor engine is holding this document open. */
@@ -107,17 +114,19 @@ function trimHistory(past: Uint8Array[]): Uint8Array[] {
 
 export function createDocument(file: PickedFile): DocumentState {
   const origin = file.origin ?? null;
+  // A rendering never adopts a path: `file.path` would be the .docx, and
+  // these bytes are a PDF.
+  const path = origin ? '' : file.path;
   return {
     id: crypto.randomUUID(),
     name: file.name,
-    // A rendering never adopts a path: `file.path` would be the .docx, and
-    // these bytes are a PDF.
-    path: origin ? '' : file.path,
+    path,
     bytes: file.bytes,
     past: [],
     future: [],
     password: '',
-    saved: false,
+    // Opened from a file, these bytes are exactly what is on disk.
+    savedBytes: path === '' ? null : file.bytes,
     origin,
     editor: file.editor ?? null,
     engineModified: false,
@@ -189,7 +198,7 @@ export function canRedo(doc: DocumentState): boolean {
  */
 export function isDirty(doc: DocumentState): boolean {
   if (doc.editor) return doc.engineModified;
-  return doc.path === '' || (doc.past.length > 0 && !doc.saved);
+  return doc.path === '' || doc.bytes !== doc.savedBytes;
 }
 
 export function applyEdit(doc: DocumentState, bytes: Uint8Array): DocumentState {
@@ -199,7 +208,6 @@ export function applyEdit(doc: DocumentState, bytes: Uint8Array): DocumentState 
     past: trimHistory([...doc.past, doc.bytes]),
     // A new edit is a new branch; whatever was undone is not coming back.
     future: [],
-    saved: false,
   };
 }
 
@@ -211,7 +219,6 @@ export function undo(doc: DocumentState): DocumentState {
     bytes: previous,
     past: doc.past.slice(0, -1),
     future: [doc.bytes, ...doc.future].slice(0, HISTORY_LIMIT),
-    saved: false,
   };
 }
 
@@ -223,7 +230,6 @@ export function redo(doc: DocumentState): DocumentState {
     bytes: next,
     past: trimHistory([...doc.past, doc.bytes]),
     future: doc.future.slice(1),
-    saved: false,
   };
 }
 
@@ -237,7 +243,7 @@ export function markSaved(doc: DocumentState, path: string): DocumentState {
   return {
     ...doc,
     path: path === '' ? doc.path : path,
-    saved: true,
+    savedBytes: doc.bytes,
     origin: path === '' ? doc.origin : null,
   };
 }
