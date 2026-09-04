@@ -1,5 +1,45 @@
 # Changelog
 
+## 3.2.0 — 2026-09-04
+
+### Security
+
+- Reading a file is now something the main process grants, not a path the interface can ask for by name. Opening a document, dropping one on the window, choosing one from a dialog or from the recent list grants access to that file and nothing else. Any path could previously be read — and reading one also earned the right to overwrite it
+- Choosing the external converter no longer reads the whole program into memory in order to select it. That read is also why a converter larger than 512 MB could not be chosen before
+
+### Your work stays yours
+
+- "Save and close" on an Office document now waits for the bytes to reach the disk before the tab closes. It used to close as soon as the save was asked for, so a save that had not finished took the edits with it
+- A save that fails now says so. The tab kept showing the document as saved while the file on disk still held the old text, and closing it later asked nothing
+- Closing the window or quitting now asks about documents with unsaved changes. Only closing a tab did
+- Undoing back to the version you last saved marks the document as saved again, instead of leaving it changed forever
+- Exporting an Office document to PDF no longer counts as saving it. The document itself was not written, so its unsaved changes survive — and the name offered in the dialog now ends in .pdf
+
+### Printing
+
+- Printing a PDF prints the PDF. It used to print the application window — the toolbar, the sidebar, the panels — and only the pages that happened to be on screen, so a sixty-page document came out as a few screens of interface. The keyboard shortcut, the toolbar button and the file menu now all do the same thing, and a failure is reported instead of nothing happening
+
+### Office documents
+
+- Opening a document that is already open focuses the tab holding it, instead of starting a second editor session that nothing then referenced. Each abandoned session kept a copy of the document in a temporary folder with nothing left able to remove it
+- Opening several documents at once, when one of them fails to convert, no longer leaves the others' sessions behind
+- Quitting now closes the editor and removes every temporary copy. Nothing did that before, so they accumulated
+- When the assistant rewrites several documents in a row, every tab reloads. Only the last one did; the others were left pointing at an editor session that had already closed, with no way back
+
+### Also fixed
+
+- Turning automatic updates on starts the periodic check without needing a restart
+- The text selection menu appears next to the text you selected on a scrolled page, rather than where that text would have been at the top of the document
+- The badge on the heads-up display is centred
+
+### Removed
+
+- The freehand pen and the text-highlight palette are gone. Neither kept anything — the pen's stroke disappeared when the button came up, the palette highlighted nothing, and because neither marked the document as changed, closing the tab asked no questions. They come back when the annotations reach the file
+
+### Under the hood
+
+- lucide-react 1.27 and concurrently 10
+
 ## 3.1.0 — 2026-09-03
 
 ### macOS 13 is now required
