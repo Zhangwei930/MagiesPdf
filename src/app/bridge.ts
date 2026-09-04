@@ -503,6 +503,10 @@ export interface MagiesPdfBridge {
   onEditorSaved(
     handler: (payload: { sessionId: string; path?: string; name?: string }) => void,
   ): () => void;
+  /** Fires when a save could not be written. The document is still unsaved. */
+  onEditorSaveFailed(
+    handler: (payload: { sessionId: string; message: string }) => void,
+  ): () => void;
   onOfficeSessionsClosed(
     handler: (payload: { sessions: Array<{ sessionId: string; path: string }> }) => void,
   ): () => void;

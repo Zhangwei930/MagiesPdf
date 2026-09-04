@@ -276,6 +276,10 @@ const UI = {
     zh: '只能直接打开 PDF。其他格式请先选择对应的工具。',
     en: 'Only PDFs open directly. For other formats, pick the matching tool first.',
   },
+  officeSaveFailed: {
+    zh: '保存失败，文档未写入磁盘：',
+    en: 'Save failed — nothing was written to disk: ',
+  },
   dropNotDocument: {
     zh: '请选择 Word、Excel、PowerPoint 或 PDF 文档。',
     en: 'Choose a Word, Excel, PowerPoint or PDF document.',

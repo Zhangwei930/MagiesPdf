@@ -60,7 +60,13 @@ function cacheControlFor(pathname) {
 /** Serves `handle`'s answers over loopback on a port the OS picks. */
 function listenLoopback(handle) {
   return new Promise((resolve, reject) => {
-    const server = http.createServer(async (request, response) => {
+    /**
+     * Answers one request. Every throw inside it is caught by the wrapper
+     * below — an `async` listener handed straight to `createServer` turns a
+     * failed save into a promise nobody holds, and a request the engine waits
+     * on forever behind its progress dialog.
+     */
+    const serve = async (request, response) => {
       let url;
       try {
         url = new URL(request.url, 'http://127.0.0.1');
@@ -138,6 +144,23 @@ function listenLoopback(handle) {
         ...cache,
       });
       fs.createReadStream(answer.file).pipe(response);
+    };
+
+    const server = http.createServer((request, response) => {
+      void serve(request, response).catch((cause) => {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        if (process.env.MAGIES_EDITOR_TRACE) {
+          console.error('[editor] 500', request.url, message);
+        }
+        // Headers already out means a body was being streamed; there is no
+        // status left to change, so end it rather than leave it hanging.
+        if (response.headersSent) {
+          response.destroy();
+          return;
+        }
+        response.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+        response.end(JSON.stringify({ error: 'editor_host_failed', message }));
+      });
     });
 
     server.once('error', reject);

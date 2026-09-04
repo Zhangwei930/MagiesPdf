@@ -54,6 +54,12 @@ const api = {
     ipcRenderer.on('office:editorSaved', listener);
     return () => ipcRenderer.off('office:editorSaved', listener);
   },
+  /** Fires when a save could not be written; the tab keeps its unsaved state. */
+  onEditorSaveFailed: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on('office:editorSaveFailed', listener);
+    return () => ipcRenderer.off('office:editorSaveFailed', listener);
+  },
   /** Editor sessions closed because AI is about to rewrite that path on disk. */
   onOfficeSessionsClosed: (handler) => {
     const listener = (_event, payload) => handler(payload);

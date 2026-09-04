@@ -81,6 +81,11 @@ interface AppState {
   /** Set while a hosted document has been asked for; the frame watches it. */
   engineSaveRequest: { id: string; at: number } | null;
   engineSaved(payload: { sessionId: string; path?: string; name?: string }): void;
+  /**
+   * The engine's document could not be written. The document keeps whatever
+   * unsaved state it had — the disk still holds the older bytes.
+   */
+  engineSaveFailed(payload: { sessionId: string; message: string }): void;
   saveDocumentAs(id: string): Promise<void>;
   /**
    * Runs a tool over an open document. A single PDF coming back replaces the
@@ -292,6 +297,15 @@ export const useApp = create<AppState>((set, get) => ({
     const document = get().documents.find((d) => d.id === id);
     if (!document?.editor) return;
     set({ engineSaveRequest: { id, at: Date.now() } });
+  },
+
+  engineSaveFailed(payload) {
+    // Only the outstanding request is cleared. `engineModified` is deliberately
+    // left alone: nothing reached the disk, so the document is still dirty.
+    const request = get().engineSaveRequest;
+    const document = get().documents.find((d) => d.editor?.sessionId === payload.sessionId);
+    if (request && document && request.id !== document.id) return;
+    set({ engineSaveRequest: null });
   },
 
   engineSaved(payload) {

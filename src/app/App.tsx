@@ -115,6 +115,7 @@ export function App() {
   const setEngineModified = useApp((s) => s.setEngineModified);
   const engineSaveRequest = useApp((s) => s.engineSaveRequest);
   const engineSaved = useApp((s) => s.engineSaved);
+  const engineSaveFailed = useApp((s) => s.engineSaveFailed);
 
   const [main, setMain] = useState<MainView>({ name: 'welcome' });
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -200,6 +201,16 @@ export function App() {
     if (!hasBridge()) return undefined;
     return bridge().onEditorSaved((payload) => engineSaved(payload));
   }, [engineSaved]);
+
+  // A save that could not be written has to reach the user: the tab still shows
+  // unsaved changes, and the disk still holds the older document.
+  useEffect(() => {
+    if (!hasBridge()) return undefined;
+    return bridge().onEditorSaveFailed((payload) => {
+      engineSaveFailed(payload);
+      setDropError(`${t('officeSaveFailed', locale)}${payload.message}`);
+    });
+  }, [engineSaveFailed, locale]);
 
   /** Apply a tool to the active PDF with default params (instant / quick-confirm). */
   const runAgainstActiveDocument = useCallback(

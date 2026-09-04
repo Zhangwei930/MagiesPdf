@@ -15,6 +15,7 @@ const { createOfficeService } = require('./office/service.cjs');
 const { createOfficeSessions } = require('./office/session.cjs');
 const { createEditorService } = require('./office/editorService.cjs');
 const { createEditorRuntime } = require('./office/editorRuntime.cjs');
+const { createDocumentSavedHandler } = require('./office/documentSaved.cjs');
 const { createEngineX2t } = require('./office/engine.cjs');
 const { createLibreOfficeRenderer } = require('./office/libreOfficeRender.cjs');
 const {
@@ -185,25 +186,17 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     // The engine posts its document back when asked; that is the save.
     // "Save copy as" is not this path — those bytes are already converted and
     // sit on the host as an export (see office:editorSaveExport).
-    onDocumentSaved: async (sessionId, document) => {
-      // A save-as asked where it should go before triggering this; taking
-      // the target here is what keeps the original untouched.
-      const target = pendingSaveAs.get(sessionId);
-      pendingSaveAs.delete(sessionId);
-
-      const saved = target
-        ? await editor.saveAs(sessionId, document.toString('base64'), target)
-        : await editor.save(sessionId, document.toString('base64'));
-
-      // The tab has to adopt path/name after Save As, or the title and the
-      // next ⌘S still point at the original file.
-      if (saved?.path) office.rememberRecent([saved.path]);
-      getWindow()?.webContents.send('office:editorSaved', {
-        sessionId,
-        path: saved?.path,
-        name: saved?.name,
-      });
-    },
+    onDocumentSaved: createDocumentSavedHandler({
+      takeSaveAsTarget: (sessionId) => {
+        const target = pendingSaveAs.get(sessionId);
+        pendingSaveAs.delete(sessionId);
+        return target;
+      },
+      save: (sessionId, base64) => editor.save(sessionId, base64),
+      saveAs: (sessionId, base64, target) => editor.saveAs(sessionId, base64, target),
+      rememberRecent: (paths) => office.rememberRecent(paths),
+      notify: (channel, payload) => getWindow()?.webContents.send(channel, payload),
+    }),
   });
   const editor = createEditorService({
     sessions: editorSessions,
