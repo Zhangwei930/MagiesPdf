@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.2.2 — 2026-09-04
+
+### Security
+
+- The local API's health check no longer names the version to a caller without a token. It answers that it is alive to anyone, as it should — but with the API opened to the local network, that reply also told anyone on it exactly which build was running, and this application bundles several engines whose advisories can be looked up against one.
+
+### Printing
+
+- Printing no longer asks the preview whether it is ready often enough to overwhelm it. On a busy machine that could make the print itself fail — a worse outcome than the blank page the check was added in 3.2.1 to prevent.
+
 ## 3.2.1 — 2026-09-04
 
 ### AI assistant: the CLI agents work again
