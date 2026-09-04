@@ -4,7 +4,7 @@
   "description": "Magies Office is a local-first desktop workspace for Word, Excel, PowerPoint and PDF documents.",
   "homepage": "https://pdf.magies.top",
   "private": true,
-  "version": "3.1.0",
+  "version": "3.2.0",
   "type": "module",
   "main": "electron/main.cjs",
   "author": {
