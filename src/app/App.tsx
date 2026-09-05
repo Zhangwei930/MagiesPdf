@@ -1297,7 +1297,21 @@ export function App() {
                   const target = closing.id;
                   setClosing(null);
                   void saveDocument(target)
-                    .then(() => closeDocument(target))
+                    .then(() => {
+                      // A save that resolved is not a save that happened.
+                      // Cancelling Save As returns normally rather than
+                      // throwing, and an edit made while the dialog was open
+                      // is not in what was written — either way there is
+                      // still unsaved work, and closing would throw it away.
+                      const after = useApp
+                        .getState()
+                        .documents.find((entry) => entry.id === target);
+                      if (after && isDirty(after)) {
+                        setClosing(after);
+                        return;
+                      }
+                      closeDocument(target);
+                    })
                     .catch((cause) => {
                       // A failed save must not take the document with it.
                       setDropError(cause instanceof Error ? cause.message : String(cause));
