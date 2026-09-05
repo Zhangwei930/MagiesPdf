@@ -27,6 +27,7 @@ async function withUpdaterMocks(
   const feeds = [];
   const listeners = new Map();
   const relaunchCalls = [];
+  const errorBoxes = [];
   let quitCalls = 0;
   const fakeAutoUpdater = {
     autoDownload: false,
@@ -75,6 +76,11 @@ async function withUpdaterMocks(
             quitCalls += 1;
           },
         },
+        dialog: {
+          showErrorBox(title, message) {
+            errorBoxes.push({ title, message });
+          },
+        },
       };
     }
     if (request === '../settings.cjs' && parent?.filename === INDEX_PATH) {
@@ -104,6 +110,7 @@ async function withUpdaterMocks(
   try {
     const updater = require('./index.cjs');
     return await fn({
+      errorBoxes,
       updater,
       feeds,
       fakeAutoUpdater,
@@ -274,6 +281,72 @@ describe('macOS client rename during update', () => {
         assert.equal(installCalls.length, 1);
         assert.deepEqual(relaunchCalls, [{ execPath: executablePath }]);
         assert.equal(getQuitCalls(), 1);
+      },
+    );
+  });
+});
+
+/**
+ * The macOS install puts the app away before it swaps the bundle — the worker
+ * pool and the editor host read files out of the .app that is about to be
+ * renamed. If the swap then fails, this process is a shell: it cannot open a
+ * document, run a tool, or save what it is holding, and the window would sit
+ * there looking normal.
+ *
+ * The installed app is intact, because a failed swap rolls back. So the honest
+ * answer is to say what happened and restart into it.
+ */
+describe('an install that fails after the app has been put away', () => {
+  it('says why and restarts rather than leaving a window that cannot work', async () => {
+    await withUpdaterMocks(
+      {
+        installMacUpdateFromZip: async () => {
+          throw new Error('the destination is not writable');
+        },
+      },
+      async ({ updater, fakeAutoUpdater, relaunchCalls, getQuitCalls, errorBoxes }) => {
+        let prepared = false;
+        updater.setInstallPreparation(async () => {
+          prepared = true;
+        });
+        updater.startUpdater(() => {});
+        fakeAutoUpdater.emit('update-downloaded', {
+          version: '2.0.0',
+          downloadedFile: '/tmp/MagiesPdf-2.0.0-mac.zip',
+        });
+
+        await assert.rejects(() => updater.quitAndInstall(), /not writable/);
+
+        assert.equal(prepared, true, 'the app was put away first');
+        assert.equal(errorBoxes.length, 1, 'the user is told why');
+        assert.match(errorBoxes[0].message, /not writable/);
+        assert.equal(relaunchCalls.length, 1, 'and restarted into the app that is still there');
+        assert.equal(getQuitCalls(), 1);
+      },
+    );
+  });
+
+  /** Nothing was put away, so there is nothing to recover from. */
+  it('leaves the app alone when it never got that far', async () => {
+    await withUpdaterMocks(
+      {
+        installMacUpdateFromZip: async () => {
+          throw new Error('no downloaded update');
+        },
+      },
+      async ({ updater, fakeAutoUpdater, relaunchCalls, getQuitCalls, errorBoxes }) => {
+        updater.setInstallPreparation(null);
+        updater.startUpdater(() => {});
+        fakeAutoUpdater.emit('update-downloaded', {
+          version: '2.0.0',
+          downloadedFile: '/tmp/MagiesPdf-2.0.0-mac.zip',
+        });
+
+        await assert.rejects(() => updater.quitAndInstall());
+
+        assert.deepEqual(errorBoxes, []);
+        assert.deepEqual(relaunchCalls, []);
+        assert.equal(getQuitCalls(), 0);
       },
     );
   });

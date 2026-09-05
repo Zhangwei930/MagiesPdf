@@ -7,6 +7,7 @@ const readableTargets = require('./files/readableTargets.cjs');
 const { registerIpc } = require('./ipc.cjs');
 const settings = require('./settings.cjs');
 const { startUpdater, setInstallPreparation } = require('./updater/index.cjs');
+const { createShutdownSequence } = require('./shutdown.cjs');
 const { syncApiServer, stopApiServer } = require('./api/server.cjs');
 const { createApprovalGate } = require('./api/approvalGate.cjs');
 const {
@@ -132,6 +133,17 @@ const quitCleanup = createQuitCleanup({
   quit: () => app.quit(),
 });
 
+/**
+ * Asking comes before putting away. See `shutdown.cjs`: the cleanup used to
+ * run from `before-quit`, ahead of the unsaved prompt, so a cancelled quit
+ * left an app whose worker pool and editor sessions were already gone.
+ */
+const shutdown = createShutdownSequence({
+  mayClose: () => closeGuard.mayClose(),
+  holdQuit: () => quitCleanup.holdQuit(),
+  quit: () => app.quit(),
+});
+
 ipcMain.handle('app:reportUnsaved', (_event, payload) => {
   const names = Array.isArray(payload?.names) ? payload.names : [];
   unsavedNames = names.filter((name) => typeof name === 'string' && name !== '');
@@ -205,15 +217,18 @@ function createWindow() {
   // The close button, ⌘Q and Alt+F4 all went straight through. `close` has to
   // be answered synchronously, so the decision is taken afterwards and the
   // window closed again once it is made.
-  let closeApproved = false;
+  // A window opened now is holding no documents anyone has been asked about.
+  shutdown.reset();
   window.on('close', (event) => {
-    if (closeApproved) return;
+    // Shared with the quit: ⌘Q asks, approves, and then closes the window, and
+    // being asked a second time on the way out is not a question.
+    if (shutdown.isApproved()) return;
     event.preventDefault();
     void closeGuard
       .mayClose()
       .then((mayClose) => {
         if (!mayClose) return;
-        closeApproved = true;
+        shutdown.approveClose();
         window.close();
       })
       .catch(() => {
@@ -308,6 +323,6 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('before-quit', (event) => {
-    if (quitCleanup.holdQuit()) event.preventDefault();
+    if (shutdown.requestQuit()) event.preventDefault();
   });
 }
