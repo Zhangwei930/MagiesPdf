@@ -322,14 +322,21 @@ async function quitAndInstall() {
     // Unpacking ~800 MB takes tens of seconds. Say so, and keep saying it —
     // the alternative is a button that spins with the window unable to answer.
     emitStatus({ state: 'installing', version, message: 'preparing' });
-    // Whether this process still has the pool and the editor sessions it needs
-    // to carry on. Once the preparation has run it does not, whatever happens
-    // next.
-    const putAway = typeof prepareForInstall === 'function';
+    // The preparation both asks and puts away, in that order: installing
+    // quits the app and replaces it, so it has to ask about unsaved documents
+    // exactly as quitting does — and answering "cancel" has to stop the
+    // install rather than delay it, because by the time it returns false
+    // nothing has been touched.
+    let putAway = typeof prepareForInstall === 'function';
     try {
-      await prepareForInstall?.();
+      if ((await prepareForInstall?.()) === false) {
+        emitStatus({ state: 'ready', version });
+        return false;
+      }
     } catch (err) {
       console.warn('[MagiesPdf/updater] pre-install cleanup failed:', err?.message || err);
+      // It may have got part-way through; assume the worst and recover below.
+      putAway = true;
     }
 
     let installed;

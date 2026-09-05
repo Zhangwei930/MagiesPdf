@@ -4,6 +4,7 @@ const https = require('node:https');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const settings = require('../settings.cjs');
+const { poolDispatcher } = require('../jobs/dispatch.cjs');
 const mainRunner = require('../jobs/mainRunner.cjs');
 const { constantTimeTokenEqual, safeFileName } = require('../security.cjs');
 const { InputBudget } = require('../files/inputBudget.cjs');
@@ -183,7 +184,14 @@ function createHandler({
   // Lazily constructed: host.cjs loads Electron, which node:test does not have.
   let hostBridge = null;
   const host = () => {
-    if (!hostBridge) hostBridge = require('../host.cjs').createHostBridge();
+    if (!hostBridge) {
+      hostBridge = require('../host.cjs').createHostBridge({
+        // The same dispatcher the desktop path installs. Without it a batch or
+        // a pipeline started over this API does every step in the main
+        // process, and nothing else in the app moves until it finishes.
+        runTool: poolDispatcher(pool),
+      });
+    }
     return hostBridge;
   };
   const jobs = new Map();

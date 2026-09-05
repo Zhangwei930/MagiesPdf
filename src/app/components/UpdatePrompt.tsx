@@ -183,11 +183,15 @@ export function UpdatePrompt() {
                 void bridge()
                   .installUpdate()
                   .then((result) => {
-                    if (result && typeof result === 'object' && result.success === false) {
-                      setInstallError(result.error || t('updatesError', locale));
-                      setInstalling(false);
+                    if (!result || typeof result !== 'object' || result.success !== false) {
+                      // success: app is quitting / relaunching
+                      return;
                     }
-                    // success: app is quitting / relaunching
+                    setInstalling(false);
+                    // Cancelling the unsaved-documents prompt is an answer,
+                    // not a failure: nothing was installed and nothing broke.
+                    if (result.cancelled) return;
+                    setInstallError(result.error || t('updatesError', locale));
                   })
                   .catch((error: unknown) => {
                     setInstallError(error instanceof Error ? error.message : String(error));
