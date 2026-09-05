@@ -99,7 +99,8 @@ interface AppState {
     params: Record<string, unknown>,
     /** Extra inputs after the open PDF (merge, overlay, …). */
     extraFiles?: Array<{ name: string; bytes: Uint8Array; mime: string }>,
-  ): Promise<JobResult>;
+    /** `changedDocument` is false for a run that only read the document. */
+  ): Promise<JobResult & { changedDocument: boolean }>;
 
   initialize(): Promise<void>;
   setLocale(locale: Locale): Promise<void>;
@@ -410,8 +411,13 @@ export const useApp = create<AppState>((set, get) => ({
       params: { ...params, password: document.password },
     });
 
+    // A run that hands back the bytes it was given read the document rather
+    // than editing it — `edit.fill-form` listing its fields, for one. Saying so
+    // is what lets the pane show what it found instead of reporting an edit.
     const outcome = classifyOutput(result.files);
-    if (outcome.kind === 'document') {
+    const changedDocument =
+      outcome.kind === 'document' && !docs.bytesEqual(document.bytes, outcome.bytes);
+    if (changedDocument && outcome.kind === 'document') {
       set((state) => ({
         documents: mapDocument(state.documents, id, (d) => docs.applyEdit(d, outcome.bytes)),
       }));
@@ -426,7 +432,7 @@ export const useApp = create<AppState>((set, get) => ({
       return { recentToolIds };
     });
 
-    return result;
+    return { ...result, changedDocument };
   },
 
   async initialize() {

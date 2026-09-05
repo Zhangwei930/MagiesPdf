@@ -68,7 +68,7 @@ function isWidgetOn(widget: mupdf.PDFWidget): boolean {
 function applyValue(widget: mupdf.PDFWidget, value: string): void {
   if (widget.isReadOnly()) return;
 
-  if (widget.isCheckbox() || widget.isRadioButton()) {
+  if (widget.isCheckbox()) {
     const wantOn = isTruthy(value);
     if (wantOn !== isWidgetOn(widget)) widget.toggle();
     return;
@@ -80,6 +80,44 @@ function applyValue(widget: mupdf.PDFWidget, value: string): void {
   }
 
   widget.setTextValue(value);
+}
+
+/**
+ * Select the option a radio group's value names.
+ *
+ * A group is several widgets sharing one name, in the same order as the
+ * options the field declares, and toggling one turns its siblings off. So the
+ * value here names an option — it is not "is this ticked", which is what the
+ * checkbox path made of it: `isTruthy('B')` is false, so it turned off
+ * whichever button was on and selected nothing at all.
+ *
+ * How a document spells "currently selected" depends on who wrote it — the
+ * option's own name, or its index — so both are accepted before deciding
+ * there is nothing to do.
+ *
+ * Returns false when the value is not one of the options, so the caller can
+ * say so rather than quietly leaving the field alone.
+ */
+function selectRadioOption(widgets: readonly mupdf.PDFWidget[], value: string): boolean {
+  const first = widgets[0];
+  if (!first) return false;
+
+  const index = first.getOptions().indexOf(value);
+  const target = widgets[index];
+  if (index < 0 || !target) return false;
+
+  const current = String(first.getValue() ?? '');
+  if (current !== value && current !== String(index)) target.toggle();
+  return true;
+}
+
+/** Some widget types have no appearance stream to refresh. */
+function refresh(widget: mupdf.PDFWidget): void {
+  try {
+    widget.update();
+  } catch {
+    // Nothing to redraw.
+  }
 }
 
 export const fillFormTool: ToolDescriptor = {
@@ -158,19 +196,41 @@ export const fillFormTool: ToolDescriptor = {
 
       let filled = 0;
       let missing = 0;
+      let rejected = 0;
       const pageCount = doc.countPages();
       const known = new Set(listed.map((field) => field.name));
 
+      // Gathered by field name first: a radio group is several widgets sharing
+      // one name and has to be answered as a group, not one button at a time.
+      const groups = new Map<string, mupdf.PDFWidget[]>();
       for (let i = 0; i < pageCount; i += 1) {
         for (const widget of doc.loadPage(i).getWidgets()) {
           const name = widget.getName();
           if (!name || !map.has(name)) continue;
-          applyValue(widget, map.get(name) as string);
-          try {
-            widget.update();
-          } catch {
-            // Some widget types have no appearance stream to refresh.
+          const group = groups.get(name);
+          if (group) group.push(widget);
+          else groups.set(name, [widget]);
+        }
+      }
+
+      for (const [name, widgets] of groups) {
+        const value = map.get(name) as string;
+        const first = widgets[0] as mupdf.PDFWidget;
+
+        if (first.isRadioButton()) {
+          if (first.isReadOnly()) continue;
+          if (!selectRadioOption(widgets, value)) {
+            rejected += 1;
+            continue;
           }
+          for (const widget of widgets) refresh(widget);
+          filled += 1;
+          continue;
+        }
+
+        for (const widget of widgets) {
+          applyValue(widget, value);
+          refresh(widget);
           filled += 1;
         }
       }
@@ -185,14 +245,20 @@ export const fillFormTool: ToolDescriptor = {
       return {
         files: [pdfOutput(suffixedName(file.name, '_filled', '.pdf'), bytes)],
         summary: {
-          zh:
-            missing > 0
-              ? `已填写 ${filled} 处（${missing} 个字段名在文档中不存在）`
-              : `已填写 ${filled} 处表单域`,
-          en:
-            missing > 0
-              ? `Filled ${filled} widget(s) (${missing} name(s) not found in the document)`
-              : `Filled ${filled} form widget(s)`,
+          zh: [
+            `已填写 ${filled} 处表单域`,
+            missing > 0 ? `${missing} 个字段名在文档中不存在` : '',
+            rejected > 0 ? `${rejected} 个值不是该字段的选项之一` : '',
+          ]
+            .filter(Boolean)
+            .join('；'),
+          en: [
+            `Filled ${filled} form widget(s)`,
+            missing > 0 ? `${missing} name(s) not found in the document` : '',
+            rejected > 0 ? `${rejected} value(s) not among the field's options` : '',
+          ]
+            .filter(Boolean)
+            .join('; '),
         },
       };
     } finally {

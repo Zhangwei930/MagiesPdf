@@ -243,7 +243,22 @@ export function isDirty(doc: DocumentState): boolean {
   return doc.path === '' || doc.bytes !== doc.savedBytes;
 }
 
+/** Whether two buffers hold the same bytes. */
+export function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  return left.every((byte, index) => byte === right[index]);
+}
+
+/**
+ * A run that hands back the bytes it was given did not edit anything, and
+ * recording it as an edit is a lie the user has to act on: an undo step that
+ * undoes nothing, and a tab marked unsaved with nothing to save. `edit.fill-form`
+ * in "list fields only" mode does exactly that — it reads, and returns the
+ * document it read.
+ */
 export function applyEdit(doc: DocumentState, bytes: Uint8Array): DocumentState {
+  if (bytesEqual(doc.bytes, bytes)) return doc;
   return {
     ...doc,
     bytes,
