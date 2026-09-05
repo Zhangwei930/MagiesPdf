@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.3.2 — 2026-09-05
+
+### Security
+
+- Seven internal channels that the interface never used have been removed. Each was something a compromised window could have reached for no benefit to anyone — leftovers from when Office documents opened in a separate application. Nothing you can do in the app changes.
+
+### Under the hood
+
+- The certificate-signing tool is now exercised end to end by its tests, not only the functions beneath it.
+
 ## 3.3.1 — 2026-09-05
 
 **Nothing in the application changed.** This build is the same as 3.3.0; if you already have that, you will find no difference, and there is no reason to look for one.
