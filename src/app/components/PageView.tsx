@@ -173,6 +173,10 @@ export function PageView({
 
   return (
     <div
+      // A selection reports itself in viewport coordinates and knows nothing
+      // about pages, so the page has to be findable in the DOM to say which
+      // one a highlight landed on.
+      data-page-number={pageNumber}
       className="absolute left-1/2 -translate-x-1/2"
       style={{ top, width: size.width * scale, height: size.height * scale }}
     >

@@ -120,3 +120,40 @@ describe('ToolRegistry.search', () => {
     assert.equal(seeded().search('', 'en', 2).length, 2);
   });
 });
+
+/**
+ * Some tools exist to be *run* by the shell, not chosen from a grid. Drawing a
+ * highlight is an edit the viewer performs, and its parameters are the geometry
+ * of a selection — nothing a person could type into a form. It still has to be
+ * a tool, because that is how an edit reaches the worker and the undo history,
+ * so it is a tool that is not offered.
+ *
+ * `tryGet` and `has` keep finding it: the shell asks for it by id.
+ */
+describe('tools that exist but are not offered', () => {
+  function hidden(): ToolRegistry {
+    const registry = new ToolRegistry();
+    registry.register(tool('edit.visible', 'edit', '可见', 'Visible'));
+    registry.register({ ...tool('edit.annotate', 'edit', '批注', 'Annotate'), hidden: true });
+    return registry;
+  }
+
+  it('leaves a hidden tool out of its category', () => {
+    assert.deepEqual(hidden().byCategory('edit').map((entry) => entry.id), ['edit.visible']);
+  });
+
+  it('leaves it out of the search palette', () => {
+    const found = hidden().search('批注').map((entry) => entry.id);
+    assert.equal(found.includes('edit.annotate'), false);
+    assert.deepEqual(hidden().search('').map((entry) => entry.id), ['edit.visible']);
+  });
+
+  it('leaves it out of the pipeline palette', () => {
+    assert.deepEqual(hidden().pipelineTools().map((entry) => entry.id), ['edit.visible']);
+  });
+
+  it('still hands it over when asked by id', () => {
+    assert.equal(hidden().has('edit.annotate'), true);
+    assert.equal(hidden().tryGet('edit.annotate')?.id, 'edit.annotate');
+  });
+});

@@ -46,6 +46,7 @@ export type PdfRibbonViewerAction =
   | 'print'
   | 'nightMode'
   | 'modeText'
+  | 'modeDraw'
   | 'modeForm'
   | 'modeStamp'
   | 'modeRedact'
@@ -139,6 +140,7 @@ export const PDF_RIBBON_TABS: readonly PdfRibbonTab[] = [
     labelKey: 'pdfTabEdit',
     items: [
       action('modeText'),
+      action('modeDraw'),
       action('modeForm'),
       action('modeStamp'),
       action('modeRedact'),

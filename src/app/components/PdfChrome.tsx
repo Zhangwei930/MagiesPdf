@@ -277,6 +277,9 @@ function ActionChip({
       case 'modeForm':
         props.onMode('form');
         break;
+      case 'modeDraw':
+        props.onMode('draw');
+        break;
       case 'modeStamp':
         props.onMode('stamp');
         break;
@@ -380,6 +383,16 @@ function ActionChip({
         </>
       ),
       active: mode === 'form',
+    },
+    modeDraw: {
+      label: locale === 'zh' ? '自由画笔' : 'Freehand draw',
+      icon: (
+        <>
+          <PenLine size={15} />
+          <span className="ml-1 text-[11px]">{locale === 'zh' ? '画笔' : 'Draw'}</span>
+        </>
+      ),
+      active: mode === 'draw',
     },
     modeStamp: {
       label: t('viewerStampMode', locale),

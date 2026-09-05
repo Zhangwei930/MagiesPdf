@@ -223,6 +223,14 @@ export interface ToolDescriptor {
   runtime: 'worker' | 'main';
   /** Excluded from pipelines (e.g. report-only tools that produce no file to chain). */
   pipelineable?: boolean;
+  /**
+   * Kept out of the grid, the palette and the pipeline, but still runnable by
+   * id. For an edit the shell performs on the user's behalf — drawing a
+   * highlight is a tool run, because that is how an edit reaches the worker and
+   * the undo history, but its parameters are the geometry of a selection and
+   * there is nothing a person could usefully type into a form for it.
+   */
+  hidden?: boolean;
   run(ctx: ToolContext): Promise<ToolResult>;
 }
 
