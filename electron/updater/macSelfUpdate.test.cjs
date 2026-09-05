@@ -407,6 +407,39 @@ test('sweepStaleBackups removes the bundles a past update left aside', async (t)
   );
 });
 
+/**
+ * The sweep runs a recursive delete in whatever directory the app is installed
+ * in — /Applications, for most people. Matching the suffix alone meant it
+ * would happily remove `Some Other.app.update-backup-123`, which is not ours
+ * to delete.
+ */
+test('sweepStaleBackups only removes backups of the bundle it was given', async (t) => {
+  const root = makeTempDir(t, 'magiespdf-mac-update-');
+  const bundlePath = path.join(root, 'Magies Office.app');
+  writeFakeAppBundle(bundlePath, 'current', 'Magies Office');
+  writeFakeAppBundle(path.join(root, 'Magies Office.app.update-backup-1'), 'ours', 'Magies Office');
+  writeFakeAppBundle(path.join(root, 'Some Other.app.update-backup-2'), 'theirs', 'Some Other');
+
+  assert.equal(await sweepStaleBackups(bundlePath), 1);
+
+  assert.deepEqual(
+    fs.readdirSync(root).sort(),
+    ['Magies Office.app', 'Some Other.app.update-backup-2'],
+  );
+});
+
+/** A bundle name is a file name, and file names may contain regex characters. */
+test('sweepStaleBackups treats the bundle name as a name, not a pattern', async (t) => {
+  const root = makeTempDir(t, 'magiespdf-mac-update-');
+  const bundlePath = path.join(root, 'M+g(e).app');
+  writeFakeAppBundle(bundlePath, 'current', 'M');
+  writeFakeAppBundle(path.join(root, 'M+g(e).app.update-backup-1'), 'ours', 'M');
+  writeFakeAppBundle(path.join(root, 'MXgXeX.app.update-backup-2'), 'not ours', 'M');
+
+  assert.equal(await sweepStaleBackups(bundlePath), 1);
+  assert.ok(fs.existsSync(path.join(root, 'MXgXeX.app.update-backup-2')));
+});
+
 test('sweepStaleBackups is quiet when there is nothing to sweep', async (t) => {
   const root = makeTempDir(t, 'magiespdf-mac-update-');
   const bundlePath = path.join(root, 'Magies Office.app');

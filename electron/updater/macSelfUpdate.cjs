@@ -35,7 +35,12 @@ const { promisify } = require('node:util');
 const runCommand = promisify(nodeExecFile);
 
 /** Suffix of the set-aside bundle; `sweepStaleBackups` is the only thing that reads it. */
-const BACKUP_PATTERN = /\.app\.update-backup-\d+$/;
+const BACKUP_SUFFIX = '.update-backup-';
+
+/** A file name is a name, not a pattern — `M+g(e).app` is a legal bundle name. */
+function literal(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 /**
  * Derive the .app bundle path from the running executable
@@ -115,9 +120,15 @@ async function sweepStaleBackups(bundlePath, { log = console } = {}) {
     return 0;
   }
 
+  // Scoped to this bundle's own name. This is a recursive delete in whatever
+  // directory the app is installed in — /Applications, for most people — and
+  // the suffix alone would have matched another application's backup just as
+  // well as ours.
+  const ours = new RegExp(`^${literal(path.basename(bundlePath))}${literal(BACKUP_SUFFIX)}\\d+$`);
+
   let removed = 0;
   for (const entry of entries) {
-    if (!BACKUP_PATTERN.test(entry)) continue;
+    if (!ours.test(entry)) continue;
     try {
       await fs.promises.rm(path.join(parentDir, entry), { recursive: true, force: true });
       removed += 1;
@@ -192,7 +203,7 @@ async function installMacUpdateFromZip({
     installedExecutablePath = path.join(installedBundlePath, executableRelativePath);
 
     onProgress('installing');
-    backupPath = path.join(parentDir, `${path.basename(bundlePath)}.update-backup-${process.pid}`);
+    backupPath = path.join(parentDir, `${path.basename(bundlePath)}${BACKUP_SUFFIX}${process.pid}`);
     await fs.promises.rename(bundlePath, backupPath);
 
     /** Put the original bundle back so the running install stays intact. */
