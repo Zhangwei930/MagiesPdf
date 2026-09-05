@@ -811,13 +811,17 @@ export function Viewer({
   const applyForm = () => {
     const changed = fillable.filter((field) => (drafts[field.name] ?? '') !== field.value);
     if (changed.length === 0) return;
+    // One line per field, not per widget: a radio group is several widgets
+    // under one name and would otherwise repeat itself.
+    const lines = new Map<string, string>();
+    for (const field of changed) {
+      lines.set(field.name, (drafts[field.name] ?? '').replace(/[\r\n]+/g, ' '));
+    }
     void runEdit(
       'edit.fill-form',
       {
         mode: 'fill',
-        fields: changed
-          .map((field) => `${field.name}=${(drafts[field.name] ?? '').replace(/[\r\n]+/g, ' ')}`)
-          .join('\n'),
+        fields: [...lines].map(([name, value]) => `${name}=${value}`).join('\n'),
       },
       'all',
     );

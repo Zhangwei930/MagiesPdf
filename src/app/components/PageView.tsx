@@ -296,9 +296,11 @@ export function PageView({
         )}
 
         {mode === 'form' &&
-          fillable.map((field) => (
+          fillable.map((field, index) => (
             <div
-              key={field.name}
+              // A radio group is several widgets under one field name, so the
+              // name alone is not a key.
+              key={`${field.name}:${field.radioValue}:${index}`}
               className="absolute"
               style={{
                 left: `${field.box.x * 100}%`,
@@ -307,7 +309,19 @@ export function PageView({
                 height: `${field.box.height * 100}%`,
               }}
             >
-              {field.checkbox ? (
+              {field.radioValue ? (
+                <input
+                  type="radio"
+                  name={field.name}
+                  title={`${field.name} = ${field.radioValue}`}
+                  checked={(drafts[field.name] ?? '') === field.radioValue}
+                  // The value is which option, not on-or-off: these used to be
+                  // drawn as tickboxes that all wrote `true` to one name, so
+                  // no option could be chosen at all.
+                  onChange={() => onDraftChange(field.name, field.radioValue)}
+                  className="h-full w-full accent-[var(--accent)]"
+                />
+              ) : field.checkbox ? (
                 <input
                   type="checkbox"
                   title={field.name}
