@@ -304,10 +304,19 @@ if (!app.requestSingleInstanceLock()) {
 
     // Overseas installs check GitHub, mainland ones the mirror. When autoUpdate
     // is on we check + download automatically; install still needs a click.
-    // Installing on macOS renames the .app this process runs from. The worker
-    // pool and the editor host read files out of it, so they are put away
-    // first — during the quit is too late, and it cost the full deadline.
-    setInstallPreparation(() => quitCleanup.release());
+    // Installing quits the app and replaces it, so it asks about unsaved
+    // documents exactly as quitting does — and asks *first*, because putting
+    // things away closes every editor session and destroys the worker pool.
+    // Only then the teardown: on macOS the install renames the .app this
+    // process runs from, and the pool and the editor host read files out of
+    // it, so doing this during the quit is too late.
+    setInstallPreparation(async () => {
+      if (!(await closeGuard.mayClose())) return false;
+      // The quit that follows must not ask the same question again.
+      shutdown.approveClose();
+      await quitCleanup.release();
+      return true;
+    });
 
     startUpdater((status) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('updater:status', status);

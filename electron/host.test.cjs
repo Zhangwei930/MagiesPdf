@@ -142,15 +142,19 @@ describe('running another tool from a main-process tool', () => {
     }
   });
 
-  /** The one this app actually installs sends the step to the job pool. */
-  it('is wired to the pool in ipc.cjs', () => {
-    const source = require('node:fs').readFileSync(
-      require('node:path').join(__dirname, 'ipc.cjs'),
-      'utf8',
-    );
-    const call = /createHostBridge\(\{[\s\S]{0,900}/.exec(source)?.[0] ?? '';
-    assert.match(call, /runTool:/);
-    assert.match(call, /pool\s*\n?\s*\.run\(/, 'the step has to reach the pool');
-    assert.match(call, /pool\.cancel\(jobId\)/, 'cancelling a batch has to reach the step');
+  /**
+   * Every entry point that owns a pool has to install it. Wiring the desktop
+   * one alone left a batch started over the local REST API doing every step in
+   * the main process, exactly as before.
+   */
+  it('is installed by every entry point that has a pool', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    for (const file of ['ipc.cjs', path.join('api', 'server.cjs')]) {
+      const source = fs.readFileSync(path.join(__dirname, file), 'utf8');
+      assert.match(source, /poolDispatcher/, `${file} does not install the dispatcher`);
+      const call = /createHostBridge\(\{[\s\S]{0,600}/.exec(source)?.[0] ?? '';
+      assert.match(call, /runTool: poolDispatcher\(pool\)/, `${file} does not pass it to the bridge`);
+    }
   });
 });

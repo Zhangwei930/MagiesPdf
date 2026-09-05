@@ -287,6 +287,76 @@ describe('macOS client rename during update', () => {
 });
 
 /**
+ * "Restart to install" quits the app and replaces it, so it has to ask about
+ * unsaved documents exactly as quitting does — and *before* anything is put
+ * away, because the preparation closes every editor session and destroys the
+ * worker pool. Answering "cancel" has to leave the app as it was.
+ */
+describe('installing with unsaved documents open', () => {
+  it('does not install when the preparation says not to', async () => {
+    let installs = 0;
+    await withUpdaterMocks(
+      {
+        installMacUpdateFromZip: async () => {
+          installs += 1;
+          return { bundlePath: '/x.app', executablePath: '/x.app/Contents/MacOS/x' };
+        },
+      },
+      async ({ updater, fakeAutoUpdater, relaunchCalls, getQuitCalls }) => {
+        updater.setInstallPreparation(async () => false);
+        updater.startUpdater(() => {});
+        fakeAutoUpdater.emit('update-downloaded', {
+          version: '2.0.0',
+          downloadedFile: '/tmp/x.zip',
+        });
+
+        assert.equal(await updater.quitAndInstall(), false);
+        assert.equal(installs, 0, 'nothing may be swapped');
+        assert.deepEqual(relaunchCalls, []);
+        assert.equal(getQuitCalls(), 0, 'and the app stays');
+      },
+    );
+  });
+
+  it('leaves the update ready to install again', async () => {
+    await withUpdaterMocks(
+      { installMacUpdateFromZip: async () => ({ bundlePath: '/x.app', executablePath: '/x' }) },
+      async ({ updater, fakeAutoUpdater }) => {
+        const seen = [];
+        updater.setInstallPreparation(async () => false);
+        updater.startUpdater((status) => seen.push(status.state));
+        fakeAutoUpdater.emit('update-downloaded', { version: '2.0.0', downloadedFile: '/tmp/x.zip' });
+
+        await updater.quitAndInstall();
+
+        assert.equal(seen.at(-1), 'ready', 'the toast goes back to offering the install');
+      },
+    );
+  });
+
+  it('installs when the preparation says go ahead', async () => {
+    let installs = 0;
+    await withUpdaterMocks(
+      {
+        installMacUpdateFromZip: async () => {
+          installs += 1;
+          return { bundlePath: '/x.app', executablePath: '/x.app/Contents/MacOS/x' };
+        },
+      },
+      async ({ updater, fakeAutoUpdater, getQuitCalls }) => {
+        updater.setInstallPreparation(async () => true);
+        updater.startUpdater(() => {});
+        fakeAutoUpdater.emit('update-downloaded', { version: '2.0.0', downloadedFile: '/tmp/x.zip' });
+
+        assert.equal(await updater.quitAndInstall(), true);
+        assert.equal(installs, 1);
+        assert.equal(getQuitCalls(), 1);
+      },
+    );
+  });
+});
+
+/**
  * The macOS install puts the app away before it swaps the bundle — the worker
  * pool and the editor host read files out of the .app that is about to be
  * renamed. If the swap then fails, this process is a shell: it cannot open a

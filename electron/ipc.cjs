@@ -10,6 +10,7 @@ const { collectFilePaths } = require('./files/walk.cjs');
 const { InputBudget } = require('./files/inputBudget.cjs');
 const writableTargets = require('./files/writableTargets.cjs');
 const { writeWithoutOverwriting } = require('./files/writeOutputs.cjs');
+const { poolDispatcher } = require('./jobs/dispatch.cjs');
 const readableTargets = require('./files/readableTargets.cjs');
 const { executableProblem } = require('./files/executable.cjs');
 const updater = require('./updater/index.cjs');
@@ -646,20 +647,9 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
   }));
 
   const hostBridge = createHostBridge({
-    // A `runtime: 'main'` tool that runs other tools — `advanced.batch`,
-    // `advanced.pipeline` — hands the steps that do not need this bridge back
-    // here, and they go to the pool like any other job. Without it the main
-    // process did that work itself and nothing else in the app moved.
-    runTool: (toolId, files, params, signal, onProgress) => {
-      const jobId = crypto.randomUUID();
-      const abort = () => void pool.cancel(jobId);
-      signal?.addEventListener('abort', abort, { once: true });
-      return pool
-        .run({ jobId, toolId, files, params }, (fraction, message) => {
-          onProgress?.(fraction, message);
-        })
-        .finally(() => signal?.removeEventListener('abort', abort));
-    },
+    // `advanced.batch` and `advanced.pipeline` run here because a step might
+    // need this bridge; the steps that do not go to the pool instead.
+    runTool: poolDispatcher(pool),
   });
   const secretStore = getSecretStore();
   const aiHistory = createAiHistoryStore({
@@ -998,7 +988,11 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
       if (!event.sender.isDestroyed()) event.sender.send('updater:status', status);
     };
     try {
-      await updater.quitAndInstall();
+      // False means the user answered "cancel" to the unsaved-documents
+      // prompt: nothing was installed and nothing went wrong, so the toast
+      // goes back to offering the install rather than reporting a failure.
+      const installed = await updater.quitAndInstall();
+      if (installed === false) return { success: false, cancelled: true };
       return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

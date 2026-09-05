@@ -586,7 +586,8 @@ export interface MagiesPdfBridge {
   getUpdaterStatus(): Promise<UpdaterStatus>;
   checkForUpdates(): Promise<boolean>;
   downloadUpdate(): Promise<boolean>;
-  installUpdate(): Promise<{ success: boolean; error?: string } | boolean>;
+  /** `cancelled` means the unsaved-documents prompt was answered "cancel". */
+  installUpdate(): Promise<{ success: boolean; error?: string; cancelled?: boolean } | boolean>;
   getSettings(): Promise<AppSettings>;
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
   getApiStatus(): Promise<{ running: boolean; address: string; enabled: boolean }>;
