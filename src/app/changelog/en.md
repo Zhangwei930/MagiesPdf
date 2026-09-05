@@ -1,5 +1,31 @@
 # Changelog
 
+## 3.2.4 — 2026-09-05
+
+### Your work stays yours
+
+- **An edit made while a PDF was being saved could be marked saved without reaching the file.** A save writes the document as it was when you asked for it, and finishes a moment later; anything typed in between was recorded as though it had been written. The tab then showed no changes and closing it asked nothing. Save As had the same gap
+- **Saving two Office documents at once could end the wrong one.** Whichever answer arrived first settled whoever was waiting, so a slower save could be reported as finished — and a tab closed believing its changes were on disk. Saves are now tracked per document
+
+### Security
+
+- **A correctly signed PDF could be reported as having an invalid signature.** Roughly one signature in a few hundred ends in a byte the padding removal mistook for padding, and the check then read a truncated signature and called it malformed. Nothing was ever wrong with the documents themselves; verifying one again in this version will say so
+- A grant to overwrite one file could cover a second file on macOS volumes that distinguish upper and lower case. The check assumed every Mac treats `A.pdf` and `a.pdf` as one file; it now asks the filesystem instead of assuming
+- The local API's limit on how many tools may run at once applied only to asynchronous requests. An ordinary request is the same work, and any number could be started at once
+
+### AI assistant
+
+- **Web search did nothing.** It could be configured, and the search tool was never registered — so the assistant was never told the capability existed
+- Running two tools in a row on one file gave the second one an empty file, and it reported the document as damaged
+- Two open Office documents could be shown each other's images
+- Pictures in a reply that the window was never allowed to load now appear as their description instead of as a broken image
+
+### Also fixed
+
+- Searching a long PDF: typing a new word while the previous search was still running could leave the older results on screen
+- On Linux, two documents whose names differ only in upper and lower case are two documents again, rather than sharing one tab
+- Opening the same Office file twice at the same moment no longer leaves a second editor session behind
+
 ## 3.2.3 — 2026-09-04
 
 ### AI assistant
