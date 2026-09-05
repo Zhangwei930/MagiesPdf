@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { PDFArray, PDFDocument, PDFName, PDFNumber } from 'pdf-lib';
+import { PDFDocument, PDFName, type PDFArray, type PDFNumber } from 'pdf-lib';
 import { openDocument, saveDocument } from './document.ts';
 import { samplePdf } from '../testing/fixtures.ts';
 import { writeAnnotations, type InkStroke, type TextHighlight } from './annotations.ts';
