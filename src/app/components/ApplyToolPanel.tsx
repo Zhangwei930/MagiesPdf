@@ -15,7 +15,7 @@ import {
   X,
 } from '../icons.ts';
 import { useApp } from '../store.ts';
-import { classifyOutput, documentTaskParams } from '../toolApply.ts';
+import { documentTaskParams } from '../toolApply.ts';
 import { ParamForm } from './ParamForm.tsx';
 import { Button } from './ui.tsx';
 

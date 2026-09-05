@@ -26,7 +26,6 @@ import {
   canApplyInstantly,
   canOpenFromDocument,
   canQuickApplyWithConfirm,
-  classifyOutput,
 } from './toolApply.ts';
 import { officeUiThemeFor, partitionDocumentPaths } from './office.ts';
 import { createReloadQueue } from './officeReload.ts';
