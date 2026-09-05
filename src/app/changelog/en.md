@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.3.1 — 2026-09-05
+
+**Nothing in the application changed.** This build is the same as 3.3.0; if you already have that, you will find no difference, and there is no reason to look for one
+
+What changed is the download page. macOS says *“Magies Office is damaged and can't be opened”* about any application whose signature it cannot check, and these builds are not signed — so people were deleting a file that was never broken. The page now says that before it gives the workaround
+
 ## 3.3.0 — 2026-09-05
 
 ### Highlighting and drawing on a PDF
