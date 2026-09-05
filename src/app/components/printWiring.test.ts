@@ -20,9 +20,36 @@ describe('printing wiring', () => {
   });
 
   it('sends the document the tab is showing, bytes and all', () => {
-    assert.match(viewerSource, /printPdf\(bytes, name, pageCount\)/);
+    assert.match(viewerSource, /printPdf\(printable, name, pageCount\)/);
     assert.match(preloadSource, /invoke\('app:printPdf', \{ bytes, name, pages \}\)/);
     assert.match(ipcSource, /pdfPrinter\.print\(bytes, \{/);
+  });
+
+  /**
+   * Printing hands the document to a separate Chromium PDF viewer in the main
+   * process, which opens the file itself and has no password to give it.
+   *
+   * Unlocking a document in this viewer only tells pdf.js the password — the
+   * bytes the tab holds are still the encrypted file. So a document the user
+   * had open and was reading printed nothing at all ("Printing failed"). The
+   * unlocked copy has to be made here, which is where the password is.
+   */
+  it('hands the print path bytes it can actually open', () => {
+    const body = /const print = useCallback\([\s\S]{0,1400}/.exec(viewerSource)?.[0];
+
+    assert.ok(body, 'the print callback moved; this test needs updating');
+    assert.match(body, /if \(password\)/, 'the password is not consulted before printing');
+    assert.match(body, /security\.remove-password/, 'nothing decrypts the bytes');
+    assert.ok(
+      body.indexOf('security.remove-password') < body.indexOf('printPdf('),
+      'the decryption has to happen before the print',
+    );
+  });
+
+  /** The decrypted copy is for the print, not for the document. */
+  it('does not write the decrypted copy back into the document', () => {
+    const body = /const print = useCallback\([\s\S]{0,1400}/.exec(viewerSource)?.[0] ?? '';
+    assert.doesNotMatch(body, /editDocument\(/);
   });
 
   /**

@@ -361,6 +361,41 @@ describe('checking the document is rendered rather than waiting for it', () => {
     };
   }
 
+  /**
+   * The deadline only ever raced the *wait between* probes; `printToPDF`
+   * itself was awaited outright. A call that never answers therefore left the
+   * loop unable to come back and look at `expired` — and the hidden window and
+   * the temp copy of the document stayed with it.
+   */
+  it('gives up on a printToPDF that never answers', async () => {
+    const timers = [];
+    const clock = {
+      setTimeout: (run, ms) => {
+        timers.push({ run, ms });
+        return timers.length;
+      },
+      clearTimeout: () => {},
+    };
+    const contents = { printToPDF: () => new Promise(() => {}) };
+
+    let done = false;
+    const waiting = whenDocumentRendered(contents, {
+      expectedPages: 60,
+      clock,
+      probeIntervalMs: 100,
+      timeoutMs: 5000,
+    }).then(() => {
+      done = true;
+    });
+
+    await Promise.resolve();
+    assert.equal(done, false, 'nothing has answered yet');
+
+    for (const timer of timers.filter((entry) => entry.ms === 5000)) timer.run();
+    await waiting;
+    assert.equal(done, true, 'the deadline has to cover the call itself');
+  });
+
   it('waits while the window still reports a single blank page', async () => {
     const r = rendering([1, 1, 60]);
     let done = false;
