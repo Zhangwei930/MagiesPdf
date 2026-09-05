@@ -107,6 +107,16 @@ export interface FormFieldBox {
   value: string;
   readOnly: boolean;
   checkbox: boolean;
+  /**
+   * For one button of a radio group: the option that button selects. Empty for
+   * everything else.
+   *
+   * A radio group is several widgets sharing one field name, and the value is
+   * *which option*, not on-or-off. Folding them in with checkboxes lost that:
+   * the page drew three tickboxes that all wrote `true` to the same name, so
+   * no option could be chosen at all.
+   */
+  radioValue: string;
   /** Position on the displayed page, as fractions of it. */
   box: Rect;
 }
@@ -135,6 +145,8 @@ export async function getFormFields(
       readOnly?: boolean;
       checkBox?: boolean;
       radioButton?: boolean;
+      /** One radio button's own option; pdf.js resolves `/Opt` to its name. */
+      buttonValue?: unknown;
       rect?: number[];
     };
     if (annotation.subtype !== 'Widget') continue;
@@ -158,7 +170,13 @@ export async function getFormFields(
       type: annotation.fieldType ?? 'unknown',
       value: annotation.fieldValue == null ? '' : String(annotation.fieldValue),
       readOnly: annotation.readOnly === true,
-      checkbox: annotation.checkBox === true || annotation.radioButton === true,
+      checkbox: annotation.checkBox === true,
+      // pdf.js resolves `/Opt` for us, so this is the option's name — the same
+      // spelling `edit.fill-form` matches against on the way back in.
+      radioValue:
+        annotation.radioButton === true && annotation.buttonValue != null
+          ? String(annotation.buttonValue)
+          : '',
       box: toFractionRect(rectFromDrag({ x: x1, y: y1 }, { x: x2, y: y2 }), {
         width: viewport.width,
         height: viewport.height,
