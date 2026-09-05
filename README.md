@@ -66,13 +66,18 @@ never leaves the machine and is never saved by Magies Office.
 
 | Mode | What it is |
 | --- | --- |
-| **PDF workspace** | Open PDFs in tabs; continuous scroll, search, redact, stamp, fill forms, run any of the **61 tools**, full undo |
+| **PDF workspace** | Open PDFs in tabs; continuous scroll, search, **highlight and draw**, redact, stamp, fill forms, run any of the **61 tools**, full undo |
 | **Office editor** | Create and open Word, Excel, PowerPoint (and ODF) **as tabs inside Magies Office** — embedded ONLYOFFICE on loopback, no server to run, no account |
 | **AI automation** | Natural-language tasks on a folder you grant; interactive approval, or review / unattended folder rules |
 
 PDF tools open as a **right-hand task pane or compact dialog**, so the page
 stays visible while you set options. Office editing and PDF work share one
 toolbar and one set of tabs.
+
+Highlights and pen strokes are written into the file as real `/Highlight` and
+`/Ink` annotations, so the text under a highlight is still text and any PDF
+reader can see, move or remove them. A mark joins the same undo history as
+rotating a page, marks the document unsaved, and reaches the file on `⌘S`.
 
 LibreOffice remains bundled for **PDF previews and high-fidelity format
 conversion**. The embedded engine is the *editing* path.
