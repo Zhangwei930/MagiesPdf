@@ -1215,9 +1215,28 @@ export function App() {
               size="sm"
               variant="primary"
               onClick={() => {
-                void bridge().saveOutputs(taskFeedback.files).then(() => {
-                  showTaskFeedback({ kind: 'ok', title: t('savedTo', locale) }, 2200);
-                });
+                const { title, files } = taskFeedback;
+                void bridge()
+                  .saveOutputs(files)
+                  .then((result) => {
+                    // `null` means the folder picker was closed without a
+                    // choice: nothing was written, so nothing may say it was.
+                    // Leaving the files on screen is the point — the only way
+                    // back to them otherwise is to run the tool again.
+                    if (!result) return;
+                    showTaskFeedback({ kind: 'ok', title: t('savedTo', locale) }, 2200);
+                  })
+                  .catch((cause: unknown) => {
+                    // A write that failed says why and keeps the files
+                    // reachable, rather than disappearing as an unhandled
+                    // rejection.
+                    showTaskFeedback({
+                      kind: 'files',
+                      title,
+                      summary: cause instanceof Error ? cause.message : String(cause),
+                      files,
+                    });
+                  });
               }}
             >
               <Save size={12} />
