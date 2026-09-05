@@ -94,6 +94,44 @@ export async function signPdfWithP12(
   );
 }
 
+/**
+ * Puts back the zero bytes the placeholder stripping ate.
+ *
+ * `/Contents` is padded with `00` to the fixed placeholder size, and
+ * extracting it removes every trailing zero. When the signature's own last
+ * byte is `00` — which for an RSA blob is a coin toss weighted 1 in 256, and
+ * happens often enough to see — the real DER loses a byte and stops parsing.
+ * A correctly signed document was then reported as having an invalid
+ * signature, which is the worst direction for this feature to be wrong in.
+ *
+ * DER says how long it is, so the missing bytes can be counted rather than
+ * guessed. Anything that is not a well-formed length is left alone, so a truly
+ * malformed signature still fails as it should.
+ */
+export function restoreStrippedPadding(signature: Buffer): Buffer {
+  if (signature.length < 2) return signature;
+
+  const first = signature[1] ?? 0;
+  let headerLength: number;
+  let contentLength: number;
+  if (first < 0x80) {
+    headerLength = 2;
+    contentLength = first;
+  } else {
+    const lengthBytes = first & 0x7f;
+    if (lengthBytes === 0 || lengthBytes > 4 || signature.length < 2 + lengthBytes) return signature;
+    headerLength = 2 + lengthBytes;
+    contentLength = 0;
+    for (let index = 0; index < lengthBytes; index += 1) {
+      contentLength = contentLength * 256 + (signature[2 + index] ?? 0);
+    }
+  }
+
+  const declared = headerLength + contentLength;
+  if (declared <= signature.length) return signature;
+  return Buffer.concat([signature, Buffer.alloc(declared - signature.length)]);
+}
+
 export async function verifyPdfSignatures(
   pdfBytes: Uint8Array,
 ): Promise<CertificateSignatureInfo[]> {
@@ -109,7 +147,7 @@ export async function verifyPdfSignatures(
         signature: string;
         signedData: Buffer;
       };
-      const signature = Buffer.from(extracted.signature, 'binary');
+      const signature = restoreStrippedPadding(Buffer.from(extracted.signature, 'binary'));
       const parsed = fromBER(arrayBuffer(signature));
       if (parsed.offset === -1) throw new Error('Invalid CMS signature encoding');
       const contentInfo = new ContentInfo({ schema: parsed.result });
