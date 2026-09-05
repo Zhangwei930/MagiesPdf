@@ -23,13 +23,6 @@ const api = {
 
   /** Tool metadata for the UI. Implementations stay in the worker pool. */
   getCatalog: () => ipcRenderer.invoke('catalog:get'),
-
-  getOfficeStatus: () => ipcRenderer.invoke('office:status'),
-  pickLibreOfficeExecutable: () => ipcRenderer.invoke('office:pickExecutable'),
-  openLibreOfficeDownload: () => ipcRenderer.invoke('office:openDownloadPage'),
-  pickAndOpenOffice: (multiple) => ipcRenderer.invoke('office:pickAndOpen', { multiple }),
-  createAndOpenOffice: (kind) => ipcRenderer.invoke('office:createAndOpen', { kind }),
-  openOfficePaths: (paths) => ipcRenderer.invoke('office:openPaths', { paths }),
   createBlankOffice: (kind) => ipcRenderer.invoke('office:createBlank', { kind }),
   openInEditor: (paths, options) =>
     ipcRenderer.invoke('office:editorOpen', {
@@ -236,8 +229,6 @@ const api = {
   pickDirectory: () => ipcRenderer.invoke('files:pickDirectory'),
   pickFolderFiles: (accept, recursive) =>
     ipcRenderer.invoke('files:pickFolderFiles', { accept, recursive }),
-
-  openExternal: (url) => ipcRenderer.invoke('shell:openExternal', { url }),
   printPdf: (bytes, name, pages) => ipcRenderer.invoke('app:printPdf', { bytes, name, pages }),
 };
 

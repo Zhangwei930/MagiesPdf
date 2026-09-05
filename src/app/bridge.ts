@@ -459,12 +459,6 @@ export interface MagiesPdfBridge {
   getVersion(): Promise<string>;
   isPackaged(): Promise<boolean>;
   getCatalog(): Promise<ToolMeta[]>;
-  getOfficeStatus(): Promise<OfficeStatus>;
-  pickLibreOfficeExecutable(): Promise<{ canceled: boolean; status: OfficeStatus }>;
-  openLibreOfficeDownload(): Promise<{ opened: boolean }>;
-  pickAndOpenOffice(multiple: boolean): Promise<OfficeOpenResult>;
-  createAndOpenOffice(kind: OfficeCreateKind): Promise<OfficeOpenResult>;
-  openOfficePaths(paths: string[]): Promise<OfficeOpenResult>;
   /** Creates a blank document on disk. Opening it is a separate step. */
   createBlankOffice(kind: OfficeCreateKind): Promise<{ created: string; canceled: boolean }>;
   /**
@@ -609,7 +603,6 @@ export interface MagiesPdfBridge {
     accept: string[],
     recursive: boolean,
   ): Promise<{ directory: string; files: PickedFile[]; truncated: boolean }>;
-  openExternal(url: string): Promise<boolean>;
   /**
    * Prints a document's bytes, not the window. Resolves `printed: false` with
    * `reason: 'cancelled'` when the user dismisses the print dialog.
