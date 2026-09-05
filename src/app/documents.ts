@@ -34,8 +34,20 @@ import type { PickedFile } from './bridge.ts';
  */
 let pathsFoldCase = true;
 
+/**
+ * Whether a backslash means "separator" rather than "part of the name".
+ *
+ * Only on Windows. It is a legal character in a filename everywhere else — on
+ * macOS exactly as on Linux — and rewriting it merged `/docs/a\b.pdf` with
+ * `/docs/a/b.pdf`, two different files sharing one tab. Defaults to off for
+ * the same reason the case fold defaults to on: a missed fold opens a second
+ * tab, a wrong one hides a document.
+ */
+let pathsFoldSeparators = false;
+
 export function setPathCaseSensitivity(platform: string): void {
   pathsFoldCase = platform !== 'linux';
+  pathsFoldSeparators = platform === 'win32';
 }
 
 /**
@@ -48,13 +60,14 @@ export function setPathCaseSensitivity(platform: string): void {
  * it. Not a real-path resolution: this is pure, and the answer is only ever
  * used to reuse a tab.
  *
- * Where case matters, so does the separator: a backslash is a legal character
- * in a Linux filename, and rewriting it would merge `/docs/a\b.pdf` with
- * `/docs/a/b.pdf`.
+ * The case and the separator are two different questions, and only Windows
+ * answers both the same way. A backslash is a legal character in a filename on
+ * macOS as much as on Linux, so folding it there merged `/docs/a\b.pdf` with
+ * `/docs/a/b.pdf` — two different files, one tab.
  */
 export function normalizeDocumentPath(candidate: string): string {
-  if (!pathsFoldCase) return candidate;
-  return candidate.replace(/\\/g, '/').toLowerCase();
+  const separated = pathsFoldSeparators ? candidate.replace(/\\/g, '/') : candidate;
+  return pathsFoldCase ? separated.toLowerCase() : separated;
 }
 
 export interface DocumentOrigin {
