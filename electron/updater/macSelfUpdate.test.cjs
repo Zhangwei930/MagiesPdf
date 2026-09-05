@@ -7,6 +7,7 @@ const path = require('node:path');
 const {
   resolveMacBundlePath,
   installMacUpdateFromZip,
+  sweepStaleBackups,
 } = require('./macSelfUpdate.cjs');
 
 function makeTempDir(t, prefix) {
@@ -43,7 +44,7 @@ test('installMacUpdateFromZip swaps the bundle, clears quarantine, and cleans up
   fs.writeFileSync(zipPath, 'fake-zip-bytes');
 
   const execCalls = [];
-  const fakeExecFileSync = (cmd, args) => {
+  const fakeExecFile = (cmd, args) => {
     execCalls.push([cmd, ...args]);
     if (cmd === 'ditto' && args[0] === '-x') {
       // Simulate extraction: create the new .app inside the staging dir.
@@ -52,10 +53,10 @@ test('installMacUpdateFromZip swaps the bundle, clears quarantine, and cleans up
     }
   };
 
-  await installMacUpdateFromZip({
+  const installed = await installMacUpdateFromZip({
     zipPath,
     bundlePath,
-    execFileSync: fakeExecFileSync,
+    execFile: fakeExecFile,
     tmpRoot: root,
   });
 
@@ -73,9 +74,14 @@ test('installMacUpdateFromZip swaps the bundle, clears quarantine, and cleans up
     `xattr must clear quarantine, got: ${JSON.stringify(execCalls)}`,
   );
 
-  // No backup bundle or staging dir left behind next to the app.
-  const leftovers = fs.readdirSync(root).filter((name) => name !== 'MagiesPdf.app' && name !== 'update.zip');
-  assert.deepEqual(leftovers, [], `no leftovers expected, got: ${JSON.stringify(leftovers)}`);
+  // The old bundle is left aside on purpose: deleting 2 GB takes long enough
+  // to be felt as a hang, and the restart must not wait for it. What must not
+  // be left is the staging directory.
+  const leftovers = fs
+    .readdirSync(root)
+    .filter((name) => name !== 'MagiesPdf.app' && name !== 'update.zip');
+  assert.deepEqual(leftovers, [path.basename(installed.backupPath)], `got: ${JSON.stringify(leftovers)}`);
+  assert.match(installed.backupPath, /MagiesPdf\.app\.update-backup-\d+$/);
 });
 
 test('installMacUpdateFromZip migrates a legacy bundle to the product name', async (t) => {
@@ -88,7 +94,7 @@ test('installMacUpdateFromZip migrates a legacy bundle to the product name', asy
   fs.writeFileSync(zipPath, 'fake-zip-bytes');
 
   const execCalls = [];
-  const fakeExecFileSync = (cmd, args) => {
+  const fakeExecFile = (cmd, args) => {
     execCalls.push([cmd, ...args]);
     if (cmd === 'ditto' && args[0] === '-x') {
       writeFakeAppBundle(
@@ -102,14 +108,15 @@ test('installMacUpdateFromZip migrates a legacy bundle to the product name', asy
   const installed = await installMacUpdateFromZip({
     zipPath,
     bundlePath: legacyBundlePath,
-    execFileSync: fakeExecFileSync,
+    execFile: fakeExecFile,
     tmpRoot: root,
   });
 
-  assert.deepEqual(installed, {
-    bundlePath: productBundlePath,
-    executablePath: path.join(productBundlePath, 'Contents', 'MacOS', 'Magies Office'),
-  });
+  assert.equal(installed.bundlePath, productBundlePath);
+  assert.equal(
+    installed.executablePath,
+    path.join(productBundlePath, 'Contents', 'MacOS', 'Magies Office'),
+  );
   assert.equal(fs.existsSync(legacyBundlePath), false);
   assert.equal(
     fs.readFileSync(path.join(productBundlePath, 'Contents', 'MacOS', 'Magies Office'), 'utf8'),
@@ -135,7 +142,7 @@ test('installMacUpdateFromZip does not overwrite an existing product-named bundl
     installMacUpdateFromZip({
       zipPath,
       bundlePath: legacyBundlePath,
-      execFileSync(cmd, args) {
+      execFile(cmd, args) {
         if (cmd === 'ditto' && args[0] === '-x') {
           writeFakeAppBundle(
             path.join(args[3], 'Magies Office.app'),
@@ -168,13 +175,13 @@ test('installMacUpdateFromZip restores the original bundle when extraction yield
   fs.writeFileSync(zipPath, 'fake-zip-bytes');
 
   // ditto "succeeds" but produces no .app (corrupt archive).
-  const fakeExecFileSync = () => {};
+  const fakeExecFile = () => {};
 
   await assert.rejects(
     installMacUpdateFromZip({
       zipPath,
       bundlePath,
-      execFileSync: fakeExecFileSync,
+      execFile: fakeExecFile,
       tmpRoot: root,
     }),
     /no \.app bundle/i,
@@ -197,7 +204,7 @@ test('installMacUpdateFromZip fails fast when the downloaded zip is missing', as
     installMacUpdateFromZip({
       zipPath: path.join(root, 'missing.zip'),
       bundlePath,
-      execFileSync: () => {},
+      execFile: () => {},
       tmpRoot: root,
     }),
     /zip/i,
@@ -213,9 +220,198 @@ test('installMacUpdateFromZip fails fast when no update was downloaded', async (
     installMacUpdateFromZip({
       zipPath: null,
       bundlePath,
-      execFileSync: () => {},
+      execFile: () => {},
       tmpRoot: root,
     }),
     /downloaded/i,
   );
+});
+
+/**
+ * Everything below is about the restart taking tens of seconds.
+ *
+ * The install used to run `ditto`, `xattr` and a recursive delete of the old
+ * ~2 GB bundle synchronously, on the main process. The window stopped
+ * answering the OS for the whole of it — a beachball, while the toast's
+ * spinner (which lives in the renderer, a different process) kept turning as
+ * if something were going fine.
+ */
+
+test('installMacUpdateFromZip never blocks: every command is awaited', async (t) => {
+  const root = makeTempDir(t, 'magiespdf-mac-update-');
+  const bundlePath = path.join(root, 'MagiesPdf.app');
+  writeFakeAppBundle(bundlePath, 'old-version');
+  const zipPath = path.join(root, 'update.zip');
+  fs.writeFileSync(zipPath, 'fake-zip-bytes');
+
+  let ranOnALaterTick = false;
+  // A command that only finishes on a later tick, the way a real one does.
+  const asyncExecFile = async (cmd, args) => {
+    await new Promise((resolve) => setImmediate(resolve));
+    ranOnALaterTick = true;
+    if (cmd === 'ditto' && args[0] === '-x') {
+      writeFakeAppBundle(path.join(args[3], 'MagiesPdf.app'), 'new-version');
+    }
+    return { stdout: '', stderr: '' };
+  };
+
+  await installMacUpdateFromZip({
+    zipPath,
+    bundlePath,
+    execFile: asyncExecFile,
+    tmpRoot: root,
+  });
+
+  assert.equal(ranOnALaterTick, true);
+  assert.equal(
+    fs.readFileSync(path.join(bundlePath, 'Contents', 'MacOS', 'MagiesPdf'), 'utf8'),
+    'new-version',
+  );
+});
+
+test('installMacUpdateFromZip reports what it is doing', async (t) => {
+  const root = makeTempDir(t, 'magiespdf-mac-update-');
+  const bundlePath = path.join(root, 'MagiesPdf.app');
+  writeFakeAppBundle(bundlePath, 'old-version');
+  const zipPath = path.join(root, 'update.zip');
+  fs.writeFileSync(zipPath, 'fake-zip-bytes');
+
+  const stages = [];
+  await installMacUpdateFromZip({
+    zipPath,
+    bundlePath,
+    execFile: (cmd, args) => {
+      if (cmd === 'ditto' && args[0] === '-x') {
+        writeFakeAppBundle(path.join(args[3], 'MagiesPdf.app'), 'new-version');
+      }
+      return { stdout: '', stderr: '' };
+    },
+    tmpRoot: root,
+    onProgress: (stage) => stages.push(stage),
+  });
+
+  // Unpacking 777 MB is most of the wait, so it has to be the first thing said.
+  assert.equal(stages[0], 'extracting');
+  assert.ok(stages.includes('installing'), `got: ${JSON.stringify(stages)}`);
+});
+
+/**
+ * The symptom this catches: the app restarts, still reports the old version,
+ * and offers the same update again — with nothing anywhere saying the swap
+ * did not take.
+ */
+test('installMacUpdateFromZip rolls back when the installed bundle is the wrong version', async (t) => {
+  const root = makeTempDir(t, 'magiespdf-mac-update-');
+  const bundlePath = path.join(root, 'MagiesPdf.app');
+  writeFakeAppBundle(bundlePath, 'old-version');
+  const zipPath = path.join(root, 'update.zip');
+  fs.writeFileSync(zipPath, 'fake-zip-bytes');
+
+  await assert.rejects(
+    installMacUpdateFromZip({
+      zipPath,
+      bundlePath,
+      expectedVersion: '3.3.2',
+      execFile: (cmd, args) => {
+        if (cmd === 'ditto' && args[0] === '-x') {
+          writeFakeAppBundle(path.join(args[3], 'MagiesPdf.app'), 'new-version');
+        }
+        if (cmd === 'plutil') return { stdout: '3.2.2\n', stderr: '' };
+        return { stdout: '', stderr: '' };
+      },
+      tmpRoot: root,
+    }),
+    /3\.2\.2/,
+  );
+
+  assert.equal(
+    fs.readFileSync(path.join(bundlePath, 'Contents', 'MacOS', 'MagiesPdf'), 'utf8'),
+    'old-version',
+    'the working install must survive a bad update',
+  );
+});
+
+test('installMacUpdateFromZip accepts a bundle whose version is the expected one', async (t) => {
+  const root = makeTempDir(t, 'magiespdf-mac-update-');
+  const bundlePath = path.join(root, 'MagiesPdf.app');
+  writeFakeAppBundle(bundlePath, 'old-version');
+  const zipPath = path.join(root, 'update.zip');
+  fs.writeFileSync(zipPath, 'fake-zip-bytes');
+
+  await installMacUpdateFromZip({
+    zipPath,
+    bundlePath,
+    expectedVersion: '3.3.2',
+    execFile: (cmd, args) => {
+      if (cmd === 'ditto' && args[0] === '-x') {
+        writeFakeAppBundle(path.join(args[3], 'MagiesPdf.app'), 'new-version');
+      }
+      if (cmd === 'plutil') return { stdout: '3.3.2\n', stderr: '' };
+      return { stdout: '', stderr: '' };
+    },
+    tmpRoot: root,
+  });
+
+  assert.equal(
+    fs.readFileSync(path.join(bundlePath, 'Contents', 'MacOS', 'MagiesPdf'), 'utf8'),
+    'new-version',
+  );
+});
+
+/** A machine without `plutil` must still get its update. */
+test('installMacUpdateFromZip installs anyway when the version cannot be read', async (t) => {
+  const root = makeTempDir(t, 'magiespdf-mac-update-');
+  const bundlePath = path.join(root, 'MagiesPdf.app');
+  writeFakeAppBundle(bundlePath, 'old-version');
+  const zipPath = path.join(root, 'update.zip');
+  fs.writeFileSync(zipPath, 'fake-zip-bytes');
+
+  const warnings = [];
+  await installMacUpdateFromZip({
+    zipPath,
+    bundlePath,
+    expectedVersion: '3.3.2',
+    execFile: (cmd, args) => {
+      if (cmd === 'ditto' && args[0] === '-x') {
+        writeFakeAppBundle(path.join(args[3], 'MagiesPdf.app'), 'new-version');
+      }
+      if (cmd === 'plutil') throw new Error('plutil: command not found');
+      return { stdout: '', stderr: '' };
+    },
+    tmpRoot: root,
+    log: { warn: (...args) => warnings.push(args.join(' ')) },
+  });
+
+  assert.equal(
+    fs.readFileSync(path.join(bundlePath, 'Contents', 'MacOS', 'MagiesPdf'), 'utf8'),
+    'new-version',
+  );
+  assert.ok(warnings.some((line) => /version/i.test(line)), `got: ${JSON.stringify(warnings)}`);
+});
+
+test('sweepStaleBackups removes the bundles a past update left aside', async (t) => {
+  const root = makeTempDir(t, 'magiespdf-mac-update-');
+  const bundlePath = path.join(root, 'Magies Office.app');
+  writeFakeAppBundle(bundlePath, 'current', 'Magies Office');
+  writeFakeAppBundle(path.join(root, 'Magies Office.app.update-backup-123'), 'old', 'Magies Office');
+  writeFakeAppBundle(path.join(root, 'Magies Office.app.update-backup-456'), 'older', 'Magies Office');
+  // Neighbours that are none of its business.
+  writeFakeAppBundle(path.join(root, 'Some Other.app'), 'unrelated', 'Some Other');
+  fs.writeFileSync(path.join(root, 'notes.txt'), 'keep me');
+
+  assert.equal(await sweepStaleBackups(bundlePath), 2);
+
+  assert.deepEqual(
+    fs.readdirSync(root).sort(),
+    ['Magies Office.app', 'Some Other.app', 'notes.txt'],
+  );
+});
+
+test('sweepStaleBackups is quiet when there is nothing to sweep', async (t) => {
+  const root = makeTempDir(t, 'magiespdf-mac-update-');
+  const bundlePath = path.join(root, 'Magies Office.app');
+  writeFakeAppBundle(bundlePath, 'current', 'Magies Office');
+
+  assert.equal(await sweepStaleBackups(bundlePath), 0);
+  assert.equal(await sweepStaleBackups(null), 0);
 });

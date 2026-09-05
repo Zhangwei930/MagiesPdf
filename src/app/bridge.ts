@@ -96,7 +96,15 @@ export interface ProgressEvent {
 }
 
 export interface UpdaterStatus {
-  state: 'idle' | 'checking' | 'available' | 'current' | 'downloading' | 'ready' | 'error';
+  state:
+    | 'idle'
+    | 'checking'
+    | 'available'
+    | 'current'
+    | 'downloading'
+    | 'ready'
+    | 'installing'
+    | 'error';
   message?: string;
   version?: string;
 }

@@ -6,7 +6,7 @@ const { documentPathsFromArgv, openableDocumentPath } = require('./files/openPat
 const readableTargets = require('./files/readableTargets.cjs');
 const { registerIpc } = require('./ipc.cjs');
 const settings = require('./settings.cjs');
-const { startUpdater } = require('./updater/index.cjs');
+const { startUpdater, setInstallPreparation } = require('./updater/index.cjs');
 const { syncApiServer, stopApiServer } = require('./api/server.cjs');
 const { createApprovalGate } = require('./api/approvalGate.cjs');
 const {
@@ -289,6 +289,11 @@ if (!app.requestSingleInstanceLock()) {
 
     // Overseas installs check GitHub, mainland ones the mirror. When autoUpdate
     // is on we check + download automatically; install still needs a click.
+    // Installing on macOS renames the .app this process runs from. The worker
+    // pool and the editor host read files out of it, so they are put away
+    // first — during the quit is too late, and it cost the full deadline.
+    setInstallPreparation(() => quitCleanup.release());
+
     startUpdater((status) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('updater:status', status);
     });

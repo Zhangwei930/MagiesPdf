@@ -121,3 +121,52 @@ describe('quitting once everything is put away', () => {
     assert.deepEqual(done.filter((entry) => entry === 'quit'), ['quit']);
   });
 });
+
+/**
+ * The updater needs the same work done, but at a different moment.
+ *
+ * Installing on macOS swaps the .app bundle the app is running from. Anything
+ * that reads files out of it afterwards — the worker pool, the editor host —
+ * is reading from a bundle that has been renamed out from under it, so the
+ * cleanup has to finish *before* the swap, not after it during the quit.
+ * Doing it in the quit also cost the user the full deadline on every update:
+ * the steps had nothing left to talk to and simply timed out.
+ */
+describe('putting everything away before the bundle is swapped', () => {
+  it('runs the steps without quitting', async () => {
+    const { cleanup: c, done } = cleanup();
+
+    await c.release();
+
+    assert.deepEqual(done, ['api', 'office', 'pool'], 'no quit yet');
+  });
+
+  it('lets the later quit straight through', async () => {
+    const { cleanup: c, done } = cleanup();
+
+    await c.release();
+    assert.equal(c.holdQuit(), false, 'nothing left to hold the quit for');
+    assert.deepEqual(done, ['api', 'office', 'pool'], 'and the steps did not run twice');
+  });
+
+  it('does not run the steps twice when releasing more than once', async () => {
+    const { cleanup: c, done } = cleanup();
+
+    await Promise.all([c.release(), c.release()]);
+
+    assert.deepEqual(done, ['api', 'office', 'pool']);
+  });
+
+  it('gives up on a step that never finishes, as the quit does', async () => {
+    const { cleanup: c, done, fireTimeout } = cleanup({
+      steps: [async () => done.push('api'), () => new Promise(() => {})],
+    });
+
+    const released = c.release();
+    fireTimeout();
+    await released;
+
+    assert.deepEqual(done, ['api'], 'the straggler was left behind');
+    assert.equal(c.holdQuit(), false);
+  });
+})

@@ -28,7 +28,10 @@ const REAL_CLOCK = {
  * @param {() => void} options.quit asked for again once the steps are done
  */
 function createQuitCleanup({ steps, quit, timeoutMs = DEFAULT_TIMEOUT_MS, clock = REAL_CLOCK }) {
-  let running = null;
+  /** The cleanup itself, started at most once however it was asked for. */
+  let putAway = null;
+  /** Set by `holdQuit`, so the quit it asks for happens exactly once. */
+  let quitting = null;
   let finished = false;
 
   const run = async () => {
@@ -42,7 +45,7 @@ function createQuitCleanup({ steps, quit, timeoutMs = DEFAULT_TIMEOUT_MS, clock 
     ]);
     clock.clearTimeout(deadline);
     if (outcomes === null) {
-      console.warn('[magiespdf] quit cleanup timed out; quitting anyway');
+      console.warn('[magiespdf] quit cleanup timed out; carrying on anyway');
     } else {
       for (const outcome of outcomes) {
         if (outcome.status === 'rejected') {
@@ -51,7 +54,11 @@ function createQuitCleanup({ steps, quit, timeoutMs = DEFAULT_TIMEOUT_MS, clock 
       }
     }
     finished = true;
-    quit();
+  };
+
+  const start = () => {
+    if (!putAway) putAway = run();
+    return putAway;
   };
 
   return {
@@ -61,13 +68,27 @@ function createQuitCleanup({ steps, quit, timeoutMs = DEFAULT_TIMEOUT_MS, clock 
      */
     holdQuit() {
       if (finished) return false;
-      if (!running) running = run();
+      if (!quitting) quitting = start().then(() => quit());
       return true;
     },
 
-    /** Resolves once the cleanup has run and the quit has been asked for again. */
+    /**
+     * Put everything away *now*, without quitting.
+     *
+     * The macOS updater swaps the .app bundle this process is running from.
+     * The worker pool and the editor host read files out of that bundle, so
+     * they have to be shut down while it is still there — waiting for the
+     * quit means they are torn down against a bundle that has been renamed
+     * away, where they have nothing to talk to and simply burn the deadline.
+     * A quit that follows is let straight through.
+     */
+    release() {
+      return start();
+    },
+
+    /** Resolves once the cleanup has run (and, for a quit, that it was asked for). */
     settled() {
-      return running ?? Promise.resolve();
+      return quitting ?? putAway ?? Promise.resolve();
     },
   };
 }
