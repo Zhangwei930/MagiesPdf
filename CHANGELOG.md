@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.3.0 — 2026-09-05
+
+### Highlighting and drawing on a PDF
+
+- **Select text and highlight it, or draw on a page with the pen — and the marks stay.** They are written into the document as real annotations, so the text under a highlight is still text and other PDF readers can see, move or remove what you drew.
+- A mark joins the same undo history as rotating a page: ⌘Z takes it back. The document counts as changed, so closing the tab asks before losing it, and ⌘S writes it to the file.
+- Highlighting a selection that runs across a page break marks both pages, each in the right place.
+
+These two controls were removed in 3.2.0 because they kept nothing — a stroke disappeared the moment you lifted the pen. They are back because there is now somewhere for the mark to go.
+
+### Under the hood
+
+- Build and lint tooling updated (Vite 8, ESLint 10). The application starts a little smaller.
+
 ## 3.2.4 — 2026-09-05
 
 ### Your work stays yours
