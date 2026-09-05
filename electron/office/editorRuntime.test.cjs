@@ -201,6 +201,39 @@ describe('which document an image request belongs to', () => {
     assert.equal(asked('http://127.0.0.1:9/editor/a%2Fb'), 'a/b');
   });
 
+  /**
+   * The outer page is `/editor/<session>`, but the engine runs in a frame
+   * *inside* it whose url the engine builds itself:
+   * `/editors/web-apps/apps/documenteditor/main/index.html?...`. Nothing in
+   * that path says which document it is, so every request the engine makes —
+   * its images, its socket stub — fell back to whichever session was last
+   * focused. Two documents open, and one could be served the other's picture,
+   * or a socket stub naming the other's `Editor.bin`.
+   *
+   * ONLYOFFICE carries the placeholder element's id into that url as
+   * `frameEditorId`, so making the placeholder's id name the session puts the
+   * session back into the referer.
+   */
+  it('reads the session out of the engine\'s own frame url', () => {
+    assert.equal(
+      asked('http://127.0.0.1:51234/editors/web-apps/apps/documenteditor/main/index.html?_dc=1&frameEditorId=editor-sess-a&lang=en'),
+      'sess-a',
+    );
+    assert.equal(
+      asked('http://127.0.0.1:51234/editors/web-apps/apps/spreadsheeteditor/main/index.html?frameEditorId=editor-sess-b'),
+      'sess-b',
+    );
+  });
+
+  it('takes an explicit session in the referer over anything else', () => {
+    assert.equal(asked('http://127.0.0.1:9/anything?session=sess-c'), 'sess-c');
+  });
+
+  it('ignores a frame id that is not one of ours', () => {
+    assert.equal(asked('http://127.0.0.1:9/x?frameEditorId=editor'), undefined);
+    assert.equal(asked('http://127.0.0.1:9/x?frameEditorId=somebody-else'), undefined);
+  });
+
   it('is only a fallback — an explicit session still wins', () => {
     const source = require('node:fs').readFileSync(
       require('node:path').join(__dirname, 'editorRuntime.cjs'),

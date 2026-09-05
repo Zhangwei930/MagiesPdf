@@ -135,6 +135,16 @@ function officeUiTheme(value) {
 }
 
 function editorPageSource({ documentType, title, fileType, sessionId, uiTheme = 'theme-white' }) {
+  /**
+   * The placeholder's id names the session on purpose.
+   *
+   * ONLYOFFICE carries it into the url of the frame it builds for the engine,
+   * as `frameEditorId`. That frame's url is the referer on every request the
+   * engine then makes, and it is otherwise the same for every open document —
+   * so without this the host had nothing to go on and fell back to whichever
+   * session was last focused. See `sessionFromReferer`.
+   */
+  const frameEditorId = `editor-${String(sessionId).replace(/[^A-Za-z0-9_-]/g, '')}`;
   const theme = officeUiTheme(uiTheme);
   const config = JSON.stringify({
     width: '100%',
@@ -184,13 +194,13 @@ function editorPageSource({ documentType, title, fileType, sessionId, uiTheme = 
 <title>${escapeHtml(title)}</title>
 <style>
 html,body{margin:0;height:100%;overflow:hidden;background:#fff;color:#222}
-#editor{height:100%;background:#fff}
+.magies-editor{height:100%;background:#fff}
 /* Keep loadmask / file panels from sitting as a black veil on the page. */
 .loadmask,.asc-loadmask,.modals-mask,#loading-mask{background:rgba(255,255,255,.72)!important}
 </style>
 </head>
 <body>
-<div id="editor"></div>
+<div id="${frameEditorId}" class="magies-editor"></div>
 <script src="/editors/web-apps/apps/api/documents/api.js"></script>
 <script>
 (function () {
@@ -393,7 +403,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#fff;color:#222}
     },
   };
 
-  var editor = new DocsAPI.DocEditor('editor', config);
+  var editor = new DocsAPI.DocEditor(${JSON.stringify(frameEditorId)}, config);
 
   /**
    * Saving.

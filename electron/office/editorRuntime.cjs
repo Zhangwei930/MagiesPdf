@@ -58,16 +58,50 @@ function cacheControlFor(pathname) {
 }
 
 /** Serves `handle`'s answers over loopback on a port the OS picks. */
-/** `…/editor/<sessionId>` — the frame a request came from, or nothing. */
+/** The prefix on the placeholder element's id; see `sessionFromReferer`. */
+const FRAME_ID_PREFIX = 'editor-';
+
+/**
+ * Which document a request came from, read out of the referer.
+ *
+ * Three spellings, because the engine asks from two different places.
+ *
+ * The outer page is `/editor/<session>`, and requests it makes name the
+ * session in their referer's path. But the engine runs in a frame *inside*
+ * that page whose url it builds itself —
+ * `/editors/web-apps/apps/documenteditor/main/index.html?…` — and nothing in
+ * that path says which document it is. Every request the engine made from
+ * there fell back to whichever session was last focused, so with two
+ * documents open one could be handed the other's `image1.png`, or a socket
+ * stub naming the other's `Editor.bin`.
+ *
+ * ONLYOFFICE carries the placeholder element's id into that url as
+ * `frameEditorId`, so the placeholder is named after the session
+ * (`editor-<session>`, in `editorAssets.cjs`) and it comes back here. A
+ * `frameEditorId` without that prefix is not ours and is ignored rather than
+ * guessed at.
+ */
 function sessionFromReferer(request) {
   const referer = request.headers?.referer || request.headers?.referrer;
   if (typeof referer !== 'string' || referer === '') return undefined;
+  let url;
   try {
-    const match = /\/editor\/([^/?#]+)/.exec(new URL(referer).pathname);
-    return match ? decodeURIComponent(match[1]) : undefined;
+    url = new URL(referer);
   } catch {
     return undefined;
   }
+
+  const explicit = url.searchParams.get('session');
+  if (explicit) return explicit;
+
+  const frameId = url.searchParams.get('frameEditorId');
+  if (frameId && frameId.startsWith(FRAME_ID_PREFIX)) {
+    const id = frameId.slice(FRAME_ID_PREFIX.length);
+    if (id !== '') return id;
+  }
+
+  const match = /\/editor\/([^/?#]+)/.exec(url.pathname);
+  return match ? decodeURIComponent(match[1]) : undefined;
 }
 
 function listenLoopback(handle) {
@@ -205,6 +239,7 @@ module.exports = {
   createEditorRuntime,
   listenLoopback,
   sessionFromReferer,
+  FRAME_ID_PREFIX,
   contentType,
   cacheControlFor,
 };
