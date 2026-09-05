@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { clsx } from 'clsx';
 import { bridge, type PickedFile } from '../bridge.ts';
 import { t } from '../i18n.ts';
+import { createEditQueue } from '../editQueue.ts';
 import { useApp } from '../store.ts';
 import {
   AlertCircle,
@@ -180,6 +181,8 @@ export function Viewer({
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   /** The document the drafts belong to; a different one means they are stale. */
   const fieldSourceRef = useRef<PdfDocumentHandle | null>(null);
+  /** Edits run one at a time; see `editQueue.ts` for why. */
+  const editQueue = useMemo(() => createEditQueue(), []);
   /** The image being stamped; picked when stamp mode is entered. */
   const [stampImage, setStampImage] = useState<PickedFile | null>(null);
 
@@ -535,29 +538,39 @@ export function Viewer({
       setBusy(true);
       setEditError('');
       try {
-        const result = await bridge().runJob({
-          jobId: crypto.randomUUID(),
-          toolId,
-          files: [
-            { name, bytes, mime: 'application/pdf' },
-            ...(extra ? [{ name: extra.name, bytes: extra.bytes, mime: extra.mime }] : []),
-          ],
-          params: { ...params, password },
+        await editQueue.run(async () => {
+          // The document as it is *now*, not as it was when this was queued.
+          // Each edit replaces the document whole, so one that started from
+          // stale bytes silently undoes the edit before it — two pen strokes
+          // on different pages, and only the second one is in the file.
+          const current = useApp.getState().documents.find((entry) => entry.id === documentId);
+          const result = await bridge().runJob({
+            jobId: crypto.randomUUID(),
+            toolId,
+            files: [
+              { name, bytes: current?.bytes ?? bytes, mime: 'application/pdf' },
+              ...(extra ? [{ name: extra.name, bytes: extra.bytes, mime: extra.mime }] : []),
+            ],
+            params: { ...params, password: current?.password ?? password },
+          });
+          const output = result.files[0];
+          if (!output) throw new Error('the tool produced no output');
+          // Set only once the edit is certain to land. An edit that failed would
+          // otherwise leave this pointing at its pages, and the next reload — an
+          // undo, say — would trust it and leave the rest of the document stale.
+          pendingInvalidation.current = invalidates;
+          editDocument(documentId, output.bytes);
         });
-        const output = result.files[0];
-        if (!output) throw new Error('the tool produced no output');
-        // Set only once the edit is certain to land. An edit that failed would
-        // otherwise leave this pointing at its pages, and the next reload — an
-        // undo, say — would trust it and leave the rest of the document stale.
-        pendingInvalidation.current = invalidates;
-        editDocument(documentId, output.bytes);
       } catch (cause) {
         setEditError(cause instanceof Error ? cause.message : String(cause));
       } finally {
-        setBusy(false);
+        // Only when nothing else is still running. Whichever edit finished
+        // first used to clear this while the next was still in flight, so the
+        // viewer said it was idle and went on accepting more.
+        if (editQueue.pending === 0) setBusy(false);
       }
     },
-    [bytes, documentId, editDocument, name, offsets, password, scale, sizes],
+    [bytes, documentId, editDocument, editQueue, name, offsets, password, scale, sizes],
   );
 
   /** Which colour the highlight palette is set to. */
