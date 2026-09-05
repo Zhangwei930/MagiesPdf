@@ -230,3 +230,53 @@ describe('security.certificate-sign as a tool', () => {
     );
   });
 });
+
+/**
+ * The padding is restored by trusting DER's own declared length, and a
+ * four-byte length can declare 4 GB. A 128-byte file was enough to ask for a
+ * 2 GB allocation from the verify entry point — and an out-of-memory process
+ * is not something a `catch` further up can put right.
+ *
+ * A signature that has had trailing zeros stripped is missing a handful of
+ * bytes, never megabytes. So a declared length far beyond what a signature
+ * could be is a corrupt or hostile file rather than a stripped one, and it is
+ * left as it is to fail parsing the way it should.
+ */
+describe('a signature that declares an implausible length', () => {
+  it('does not allocate what a four-byte length asks for', () => {
+    // 30 84 7f ff ff ff — SEQUENCE, long form, 2,147,483,647 bytes of content.
+    const hostile = Buffer.concat([
+      Buffer.from([0x30, 0x84, 0x7f, 0xff, 0xff, 0xff]),
+      Buffer.alloc(122),
+    ]);
+
+    const restored = restoreStrippedPadding(hostile);
+    assert.equal(restored.length, hostile.length, 'nothing was added');
+  });
+
+  it('leaves a length just past the ceiling alone', () => {
+    const tooBig = Buffer.concat([
+      Buffer.from([0x30, 0x83, 0x20, 0x00, 0x01]),
+      Buffer.alloc(50),
+    ]);
+    assert.equal(restoreStrippedPadding(tooBig).length, tooBig.length);
+  });
+
+  /** The bug it was written for still has to be fixed. */
+  it('still restores a signature that really did lose its trailing zeros', () => {
+    // SEQUENCE of 8 bytes, but only 6 are present: two trailing zeros gone.
+    const stripped = Buffer.from([0x30, 0x08, 1, 2, 3, 4, 5, 6]);
+    const restored = restoreStrippedPadding(stripped);
+
+    assert.equal(restored.length, 10);
+    assert.deepEqual([...restored.subarray(8)], [0, 0]);
+  });
+
+  it('restores a long-form length inside the ceiling', () => {
+    const stripped = Buffer.concat([
+      Buffer.from([0x30, 0x82, 0x01, 0x00]),
+      Buffer.alloc(254),
+    ]);
+    assert.equal(restoreStrippedPadding(stripped).length, 4 + 256);
+  });
+});

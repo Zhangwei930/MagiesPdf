@@ -108,6 +108,14 @@ export async function signPdfWithP12(
  * guessed. Anything that is not a well-formed length is left alone, so a truly
  * malformed signature still fails as it should.
  */
+/**
+ * The most a signature may grow back to. Real CMS signatures are a few
+ * kilobytes and the `/Contents` placeholder that holds one is a few tens, so
+ * this is generous by design — it is a bound on a hostile length, not a limit
+ * on documents anyone actually signs.
+ */
+const MAX_RESTORED_SIGNATURE_BYTES = 256 * 1024;
+
 export function restoreStrippedPadding(signature: Buffer): Buffer {
   if (signature.length < 2) return signature;
 
@@ -129,6 +137,13 @@ export function restoreStrippedPadding(signature: Buffer): Buffer {
 
   const declared = headerLength + contentLength;
   if (declared <= signature.length) return signature;
+  // A stripped signature is missing a handful of zero bytes, never megabytes.
+  // A four-byte DER length can declare 4 GB, so without this a 128-byte file
+  // asks the verify path for a 2 GB allocation — and a process that runs out
+  // of memory is not something a catch further up can put right. Beyond the
+  // ceiling the file is corrupt or hostile rather than stripped, so it is left
+  // as it is and fails to parse, which is the answer it deserves.
+  if (declared > MAX_RESTORED_SIGNATURE_BYTES) return signature;
   return Buffer.concat([signature, Buffer.alloc(declared - signature.length)]);
 }
 
