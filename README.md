@@ -93,14 +93,20 @@ Configure the model under **Settings → AI** (OpenAI, DeepSeek, Qwen, Ollama, �
 
 ## First launch (unsigned builds)
 
-> **macOS:** Not code-signed or notarized. After dragging into Applications:
+> **macOS:** Not code-signed or notarized, so double-clicking it says
+> **“Magies Office is damaged and can't be opened. You should move it to the
+> Bin.”** Nothing is damaged and nothing needs deleting — that is the message
+> macOS shows for *any* application it cannot check a signature for, and this
+> project does not buy one.
+>
+> Right-click → **Open** → confirm, which offers the real choice. Or, after
+> dragging into Applications:
 >
 > ```bash
 > xattr -dr com.apple.quarantine "/Applications/Magies Office.app"
 > ```
 >
-> Or right-click → **Open** → confirm. Use **`mac-x64`** on Intel,
-> **`mac-arm64`** on Apple Silicon.
+> Use **`mac-x64`** on Intel, **`mac-arm64`** on Apple Silicon.
 
 > **Windows:** SmartScreen may say “Windows protected your PC”. Choose
 > **More info** → **Run anyway**. Prefer `MagiesPdf-*-win-x64.exe` (or arm64
