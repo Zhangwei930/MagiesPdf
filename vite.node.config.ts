@@ -52,6 +52,13 @@ export default defineConfig({
       fileName: (_format, entryName) => `${entryName}.mjs`,
     },
     rollupOptions: {
+      // Rolldown otherwise treats a bare `crypto` — which a CJS dependency
+      // imports without the `node:` prefix — as an external CommonJS module and
+      // emits its own `require` helper. The output is ESM on disk and runs in a
+      // worker thread, where there is no `require`, so every job died with
+      // "Calling `require` for \"crypto\" in an environment that doesn't expose
+      // the `require` function". Naming the platform makes builtins builtins.
+      platform: 'node',
       // Native/WASM-backed deps stay external so they resolve from node_modules at runtime.
       external: [
         ...builtinModules,
