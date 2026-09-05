@@ -17,6 +17,13 @@ interface OfficeEditorProps {
    * `title` is the suggested file name (with extension).
    */
   onExportReady(title: string): void;
+  /**
+   * The engine could not start the save — it was not ready, or `downloadAs`
+   * threw before anything left the frame. It says so straight away, and
+   * nothing was listening: the save sat waiting out its whole timeout and the
+   * reason it had already been given was dropped.
+   */
+  onSaveFailed(reason: string): void;
 }
 
 /**
@@ -37,6 +44,7 @@ export function OfficeEditor({
   onModifiedChange,
   onRequest,
   onExportReady,
+  onSaveFailed,
   saveRequestedAt,
 }: OfficeEditorProps) {
   const frame = useRef<HTMLIFrameElement>(null);
@@ -52,7 +60,12 @@ export function OfficeEditor({
      */
     const onMessage = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow) return;
-      const data = event.data as { magies?: string; modified?: boolean; title?: string } | null;
+      const data = event.data as {
+        magies?: string;
+        modified?: boolean;
+        title?: string;
+        reason?: string;
+      } | null;
       if (!data) return;
 
       if (data.magies === 'modified') {
@@ -64,11 +77,14 @@ export function OfficeEditor({
       else if (data.magies === 'requestSaveAs') onRequest('saveAs');
       else if (data.magies === 'requestExportPdf') onRequest('exportPdf');
       else if (data.magies === 'exportReady') onExportReady(typeof data.title === 'string' ? data.title : '');
+      else if (data.magies === 'saveFailed') {
+        onSaveFailed(typeof data.reason === 'string' ? data.reason : 'the editor could not save');
+      }
     };
 
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [session, onModifiedChange, onRequest, onExportReady]);
+  }, [session, onModifiedChange, onRequest, onExportReady, onSaveFailed]);
 
   useEffect(() => {
     if (!saveRequestedAt) return;

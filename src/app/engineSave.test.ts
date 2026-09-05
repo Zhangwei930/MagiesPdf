@@ -240,3 +240,118 @@ describe('two documents saving at once', () => {
     assert.deepEqual(tracker.waitingFor().sort(), ['doc-a', 'doc-b']);
   });
 });
+
+/**
+ * A receipt from the engine names the session, not the request — the engine
+ * posts the document to `/editors/downloadas/<session>` and nothing carries a
+ * per-save token. So the tracker has to know that an answer can belong to a
+ * request that has already given up.
+ *
+ * Without that: a save times out, the user saves again, and the *first*
+ * save's late receipt settles the second. The tab is then marked saved on the
+ * strength of bytes from before the edits that followed, and closing it throws
+ * them away.
+ */
+describe('a receipt that arrives after its own save gave up', () => {
+  it('does not complete the save that replaced it', async () => {
+    const { clock, advance } = testClock();
+    const tracker = createEngineSaveTracker(clock);
+
+    const first = tracker.begin('doc-1', TIMEOUT);
+    await assert.rejects(
+      (async () => {
+        advance(TIMEOUT);
+        await first;
+      })(),
+      /did not answer/,
+    );
+
+    const retry = tracker.begin('doc-1', TIMEOUT);
+    let settled = false;
+    void retry.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+
+    // The first save's receipt, arriving at last.
+    tracker.saved('doc-1');
+    await Promise.resolve();
+    assert.equal(settled, false, 'that receipt was for the save that timed out');
+
+    // The retry's own receipt still completes it.
+    tracker.saved('doc-1');
+    await retry;
+  });
+
+  it('does the same for a late failure', async () => {
+    const { clock, advance } = testClock();
+    const tracker = createEngineSaveTracker(clock);
+
+    const first = tracker.begin('doc-1', TIMEOUT);
+    await assert.rejects(
+      (async () => {
+        advance(TIMEOUT);
+        await first;
+      })(),
+      /did not answer/,
+    );
+
+    const retry = tracker.begin('doc-1', TIMEOUT);
+    let settled = false;
+    void retry.then(() => { settled = true; }, () => { settled = true; });
+
+    tracker.failed('doc-1', 'the engine gave up');
+    await Promise.resolve();
+    assert.equal(settled, false);
+
+    tracker.saved('doc-1');
+    await retry;
+  });
+
+  /**
+   * A receipt that never comes must not swallow a later save's. The marker is
+   * forgotten after the same window it was given to answer in.
+   */
+  it('forgets a receipt that never arrives', async () => {
+    const { clock, advance } = testClock();
+    const tracker = createEngineSaveTracker(clock);
+
+    const first = tracker.begin('doc-1', TIMEOUT);
+    await assert.rejects(
+      (async () => {
+        advance(TIMEOUT);
+        await first;
+      })(),
+      /did not answer/,
+    );
+
+    // Nothing ever answered the first save.
+    advance(TIMEOUT);
+
+    const later = tracker.begin('doc-1', TIMEOUT);
+    tracker.saved('doc-1');
+    await later;
+  });
+
+  it('leaves another document\'s receipts alone', async () => {
+    const { clock, advance } = testClock();
+    const tracker = createEngineSaveTracker(clock);
+
+    const a = tracker.begin('doc-a', TIMEOUT);
+    await assert.rejects(
+      (async () => {
+        advance(TIMEOUT);
+        await a;
+      })(),
+      /did not answer/,
+    );
+
+    const b = tracker.begin('doc-b', TIMEOUT);
+    tracker.saved('doc-b');
+    await b;
+  });
+});
