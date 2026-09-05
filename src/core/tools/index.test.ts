@@ -95,10 +95,27 @@ describe('tool catalogue', () => {
     }
   });
 
-  it('finds each tool by its own Chinese name', () => {
-    for (const tool of ALL_TOOLS) {
+  /**
+   * Every tool a person can choose has to be findable by typing its own name —
+   * a tool the palette cannot surface is a tool nobody will use.
+   *
+   * A hidden tool is the exception, and deliberately so: `edit.annotate` is run
+   * by the viewer when a highlight is drawn, and its parameters are the
+   * geometry of a selection. Offering it in the palette would be offering a
+   * form nobody can fill in.
+   */
+  it('finds each offered tool by its own Chinese name', () => {
+    for (const tool of ALL_TOOLS.filter((entry) => entry.hidden !== true)) {
       const hits = registry.search(tool.name.zh, 'zh');
       assert.equal(hits[0]?.id, tool.id, `searching "${tool.name.zh}" did not surface ${tool.id}`);
+    }
+  });
+
+  it('keeps a hidden tool out of the palette entirely', () => {
+    for (const tool of ALL_TOOLS.filter((entry) => entry.hidden === true)) {
+      const hits = registry.search(tool.name.zh, 'zh').map((entry) => entry.id);
+      assert.equal(hits.includes(tool.id), false, `${tool.id} should not be searchable`);
+      assert.equal(registry.tryGet(tool.id)?.id, tool.id, 'but still reachable by id');
     }
   });
 });

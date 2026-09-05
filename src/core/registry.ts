@@ -94,13 +94,16 @@ export class ToolRegistry<T extends ToolMeta = ToolDescriptor> {
     return [...this.#tools.values()];
   }
 
+  /** What the grid shows: everything in a category that is offered at all. */
   byCategory(category: CategoryId): T[] {
-    return this.list().filter((t) => t.category === category);
+    return this.list().filter((t) => t.category === category && t.hidden !== true);
   }
 
   /** Tools that can be used as pipeline nodes: they must produce files to chain. */
   pipelineTools(): T[] {
-    return this.list().filter((t) => t.pipelineable !== false && t.output !== 'report');
+    return this.list().filter(
+      (t) => t.pipelineable !== false && t.output !== 'report' && t.hidden !== true,
+    );
   }
 
   /**
@@ -109,11 +112,12 @@ export class ToolRegistry<T extends ToolMeta = ToolDescriptor> {
    */
   search(query: string, locale: Locale = 'zh', limit = 50): T[] {
     const needle = query.trim().toLowerCase();
-    if (needle === '') return this.list().slice(0, limit);
+    const offered = this.list().filter((t) => t.hidden !== true);
+    if (needle === '') return offered.slice(0, limit);
 
     const scored: Array<{ tool: T; score: number }> = [];
 
-    for (const tool of this.#tools.values()) {
+    for (const tool of offered) {
       const score = scoreTool(tool, needle, locale);
       if (score > 0) scored.push({ tool, score });
     }

@@ -29,6 +29,7 @@ import { pdfToXlsxTool } from './convert/pdfToXlsx.ts';
 import { pdfToPptxTool } from './convert/pdfToPptx.ts';
 import { pdfToCsvTool } from './convert/pdfToCsv.ts';
 import { pptxToPdfTool } from './convert/pptxToPdf.ts';
+import { annotateTool } from './edit/annotate.ts';
 import { createBlankTool } from './edit/createBlank.ts';
 import { addTextTool } from './edit/addText.ts';
 import { grayscaleTool } from './edit/grayscale.ts';
@@ -133,6 +134,7 @@ export const ALL_TOOLS: readonly ToolDescriptor[] = [
   createFormTool,
   fillFormTool,
   replaceTextTool,
+  annotateTool,
   getInfoTool,
 
   // Advanced

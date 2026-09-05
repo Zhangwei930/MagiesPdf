@@ -56,6 +56,10 @@ import { PageView } from './PageView.tsx';
 import { Thumbnail } from './Thumbnail.tsx';
 
 import { TextSelectionMenu } from './TextSelectionMenu.tsx';
+import { selectionOnPages, type RenderedPage } from '../pdf/selectionGeometry.ts';
+import { HIGHLIGHT_COLORS, type HighlightColor } from '../pdf/highlights.ts';
+import { HighlightToolbar } from './HighlightToolbar.tsx';
+import type { InkAnnotation } from '../pdf/inkAnnotation.ts';
 
 interface ViewerProps {
   /** Which open document to show. Its state lives in the store, not here. */
@@ -553,6 +557,69 @@ export function Viewer({
     },
     [bytes, documentId, editDocument, name, offsets, password, scale, sizes],
   );
+
+  /** Which colour the highlight palette is set to. */
+  const [highlightColor, setHighlightColor] = useState<HighlightColor>('yellow');
+
+  /**
+   * Marks are an edit like any other: they go through the same tool run, so
+   * they land in the same undo history as a page rotation, mark the document
+   * dirty, and reach the file on ⌘S. Nothing extra had to be built for any of
+   * that — which is the reason they are a tool run rather than state of their
+   * own.
+   */
+  const writeMarks = (annotations: {
+    highlights: { pageNumber: number; rects: unknown[]; color: string }[];
+    ink: { pageNumber: number; points: unknown[]; color: string; strokeWidth: number }[];
+  }, touched: number[]) =>
+    void runEdit('edit.annotate', { annotations: JSON.stringify(annotations) }, touched);
+
+  /** Where every rendered page currently sits, for placing a selection. */
+  const renderedPages = (): RenderedPage[] => {
+    const element = scrollRef.current;
+    if (!element) return [];
+    return [...element.querySelectorAll('[data-page-number]')].flatMap((node) => {
+      const pageNumber = Number(node.getAttribute('data-page-number'));
+      if (!Number.isInteger(pageNumber)) return [];
+      const box = node.getBoundingClientRect();
+      return [{ pageNumber, left: box.left, top: box.top, width: box.width, height: box.height }];
+    });
+  };
+
+  const highlightSelection = () => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
+    const rects = [...selection.getRangeAt(0).getClientRects()];
+    const onPages = selectionOnPages(rects, renderedPages(), scale);
+    if (onPages.length === 0) return;
+
+    selection.removeAllRanges();
+    writeMarks(
+      {
+        highlights: onPages.map((entry) => ({
+          pageNumber: entry.pageNumber,
+          rects: entry.rects,
+          color: HIGHLIGHT_COLORS[highlightColor],
+        })),
+        ink: [],
+      },
+      onPages.map((entry) => entry.pageNumber),
+    );
+  };
+
+  const addInk = (pageNumber: number, stroke: Omit<InkAnnotation, 'id' | 'pageNumber'>) =>
+    writeMarks(
+      {
+        highlights: [],
+        ink: [{
+          pageNumber,
+          points: stroke.points,
+          color: stroke.color,
+          strokeWidth: stroke.strokeWidth,
+        }],
+      },
+      [pageNumber],
+    );
 
   const rotatePage = (pageNumber: number) =>
     void runEdit('organize.rotate', { degrees: '90', mode: 'add', pages: String(pageNumber) }, [
@@ -1119,10 +1186,17 @@ export function Viewer({
         )}
 
         {mode === 'text' && (
-          <div className="border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-1.5 text-xs">
+          <div className="flex items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] px-4 py-1.5 text-xs">
             <span className="text-[var(--text-muted)]">
-              {locale === 'zh' ? '点击页面插入文本。' : 'Click a page to insert text.'}
+              {locale === 'zh'
+                ? '点击页面插入文本，或选中文字后高亮：'
+                : 'Click a page to insert text, or select text and highlight it:'}
             </span>
+            <HighlightToolbar
+              locale={locale}
+              activeColor={highlightColor}
+              onChangeColor={(color) => setHighlightColor(color ?? 'yellow')}
+            />
           </div>
         )}
 
@@ -1189,7 +1263,12 @@ export function Viewer({
               className="relative mx-auto"
               style={{ width: columnWidth, minWidth: '100%', height: columnHeight }}
             >
-              <TextSelectionMenu containerRef={scrollRef} locale={locale} onAiAction={handleAiAction} />
+              <TextSelectionMenu
+                containerRef={scrollRef}
+                locale={locale}
+                onAiAction={handleAiAction}
+                onHighlightText={highlightSelection}
+              />
               {sizes.map((size, index) => {
                 const pageNumber = index + 1;
                 if (pageNumber < range.first || pageNumber > range.last) return null;
@@ -1218,6 +1297,7 @@ export function Viewer({
                     hits={hitsByPage.get(pageNumber) ?? NO_HITS}
                     currentHits={currentHitsByPage.get(pageNumber) ?? NO_HITS}
                     inkAnnotations={openDocument.inkAnnotations?.[pageNumber] ?? []}
+                    onAddInkAnnotation={addInk}
                     onFields={onPageFields}
                     onDraftChange={(name, value) =>
                       setDrafts((current) => ({ ...current, [name]: value }))
