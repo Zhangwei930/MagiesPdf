@@ -20,6 +20,33 @@ export default [
   },
   js.configs.recommended,
 
+  {
+    rules: {
+      /**
+       * Off, deliberately.
+       *
+       * ESLint 10 turned this on in `recommended`, and every one of the eleven
+       * places it fires in this repository is the same shape:
+       *
+       *     let encrypted = false;
+       *     try { encrypted = peek.getMetaData('encryption') !== 'None'; }
+       *     catch { encrypted = true; }
+       *
+       * The rule is not wrong — both branches assign, so the initialiser is
+       * never read. But it is not dead weight either: it states the type and
+       * the fallback at the declaration, where someone reading the code meets
+       * the variable, instead of making them scan ahead to find out what the
+       * failure case is. Removing it means either losing that, or replacing it
+       * with a type annotation that says less.
+       *
+       * What the rule is good at — a value computed and then thrown away,
+       * which usually means someone meant to use it — does not occur here, and
+       * the rule cannot tell the two apart.
+       */
+      'no-useless-assignment': 'off',
+    },
+  },
+
   // Renderer + isomorphic core (TypeScript).
   {
     files: ['src/**/*.{ts,tsx}', '*.config.ts'],
