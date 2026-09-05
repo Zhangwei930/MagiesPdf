@@ -49,6 +49,20 @@ let downloadedFile = null;
 /** True while a download is in flight (auto or manual). */
 let isDownloading = false;
 
+/**
+ * Run before the macOS installer swaps the bundle. Wired to the quit cleanup
+ * in main.cjs: the worker pool and the editor host read files out of the .app
+ * that is about to be renamed away, so they are shut down while it is still
+ * there rather than during the quit that follows.
+ * @type {(() => Promise<unknown>) | null}
+ */
+let prepareForInstall = null;
+
+/** @param {() => Promise<unknown>} prepare */
+function setInstallPreparation(prepare) {
+  prepareForInstall = prepare;
+}
+
 function readAutoUpdateEnabled() {
   try {
     return settings.read().autoUpdate !== false;
@@ -220,6 +234,16 @@ function startUpdater(onStatus) {
 
   wireUpdaterEvents((status) => emitStatus(status));
 
+  // A finished update leaves the old ~2 GB bundle aside rather than spending
+  // the restart deleting it. This is where it goes.
+  if (process.platform === 'darwin') {
+    const macSelfUpdate = require('./macSelfUpdate.cjs');
+    const bundlePath = macSelfUpdate.resolveMacBundlePath(
+      typeof app.getPath === 'function' ? app.getPath('exe') : process.execPath,
+    );
+    void macSelfUpdate.sweepStaleBackups(bundlePath).catch(() => {});
+  }
+
   if (readAutoUpdateEnabled()) {
     const initial = setTimeout(() => {
       if (!readAutoUpdateEnabled()) return;
@@ -293,9 +317,22 @@ async function quitAndInstall() {
     const bundlePath = macSelfUpdate.resolveMacBundlePath(
       typeof app.getPath === 'function' ? app.getPath('exe') : process.execPath,
     );
+    const version = lastStatus.version;
+
+    // Unpacking ~800 MB takes tens of seconds. Say so, and keep saying it —
+    // the alternative is a button that spins with the window unable to answer.
+    emitStatus({ state: 'installing', version, message: 'preparing' });
+    try {
+      await prepareForInstall?.();
+    } catch (err) {
+      console.warn('[MagiesPdf/updater] pre-install cleanup failed:', err?.message || err);
+    }
+
     const installed = await macSelfUpdate.installMacUpdateFromZip({
       zipPath: downloadedFile,
       bundlePath,
+      expectedVersion: version ?? null,
+      onProgress: (stage) => emitStatus({ state: 'installing', version, message: stage }),
     });
     try {
       app.relaunch({ execPath: installed.executablePath });
@@ -355,6 +392,7 @@ module.exports = {
   checkNow,
   downloadUpdate,
   quitAndInstall,
+  setInstallPreparation,
   currentFeeds,
   onAutoUpdatePreferenceChanged,
   setAutoDownloadEnabled,

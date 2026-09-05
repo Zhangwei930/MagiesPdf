@@ -575,6 +575,15 @@ const UI = {
   updatesAvailable: { zh: '发现新版本', en: 'Update available' },
   updatesDownloading: { zh: '正在下载…', en: 'Downloading…' },
   updatesReady: { zh: '已下载，可安装', en: 'Downloaded — ready to install' },
+  updatesInstalling: { zh: '正在安装更新…', en: 'Installing the update…' },
+  // The stages of the macOS install, which is minutes of work on a ~2 GB app.
+  updateStagePreparing: { zh: '正在收尾当前会话…', en: 'Closing the current session…' },
+  updateStageExtracting: {
+    zh: '正在解压安装包（约 800 MB，请稍候）…',
+    en: 'Unpacking the download (~800 MB) — this takes a moment…',
+  },
+  updateStageInstalling: { zh: '正在替换应用…', en: 'Replacing the app…' },
+  updateStageFinishing: { zh: '即将重启…', en: 'Almost there — restarting…' },
   updatesError: { zh: '更新失败', en: 'Update failed' },
   updatesDevNote: {
     zh: '当前为开发运行，更新通道仅在安装包中可用。',

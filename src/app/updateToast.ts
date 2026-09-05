@@ -16,7 +16,9 @@ export interface Dismissal {
 
 /** States where the toast has something for the user to act on. */
 export function isActionable(state: UpdaterStatus['state']): boolean {
-  return state === 'available' || state === 'downloading' || state === 'ready';
+  return (
+    state === 'available' || state === 'downloading' || state === 'ready' || state === 'installing'
+  );
 }
 
 /**

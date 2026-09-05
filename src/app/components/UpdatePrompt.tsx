@@ -10,6 +10,19 @@ import { Button, ProgressBar } from './ui.tsx';
  * auto-check + auto-download when enabled, progress, then restart-to-install.
  * Non-modal so Settings remains usable while the update is ready.
  */
+/**
+ * The macOS install unpacks ~800 MB and swaps a 2 GB bundle. It used to do
+ * that with the main process stopped, so the window went unresponsive and the
+ * only thing moving was this toast's spinner — in the renderer, which knew
+ * nothing. Naming the stage is what makes the wait legible.
+ */
+const INSTALL_STAGE_KEYS: Record<string, 'updateStagePreparing' | 'updateStageExtracting' | 'updateStageInstalling' | 'updateStageFinishing'> = {
+  preparing: 'updateStagePreparing',
+  extracting: 'updateStageExtracting',
+  installing: 'updateStageInstalling',
+  finishing: 'updateStageFinishing',
+};
+
 export function UpdatePrompt() {
   const locale = useApp((s) => s.locale);
   const [status, setStatus] = useState<UpdaterStatus>({ state: 'idle' });
@@ -53,22 +66,26 @@ export function UpdatePrompt() {
   })();
 
   const title =
-    status.state === 'ready'
-      ? t('updatesReady', locale)
-      : status.state === 'downloading'
-        ? t('updatesDownloading', locale)
-        : status.state === 'error'
-          ? t('updatesError', locale)
-          : t('updatesAvailable', locale);
+    status.state === 'installing'
+      ? t('updatesInstalling', locale)
+      : status.state === 'ready'
+        ? t('updatesReady', locale)
+        : status.state === 'downloading'
+          ? t('updatesDownloading', locale)
+          : status.state === 'error'
+            ? t('updatesError', locale)
+            : t('updatesAvailable', locale);
 
   const hint =
-    status.state === 'ready'
-      ? t('updatePromptReadyHint', locale)
-      : status.state === 'downloading'
-        ? t('updatePromptDownloadHint', locale)
-        : status.state === 'error'
-          ? status.message || installError || ''
-          : t('updatePromptAvailableHint', locale);
+    status.state === 'installing'
+      ? t(INSTALL_STAGE_KEYS[status.message ?? ''] ?? 'updateStagePreparing', locale)
+      : status.state === 'ready'
+        ? t('updatePromptReadyHint', locale)
+        : status.state === 'downloading'
+          ? t('updatePromptDownloadHint', locale)
+          : status.state === 'error'
+            ? status.message || installError || ''
+            : t('updatePromptAvailableHint', locale);
 
   return (
     <div

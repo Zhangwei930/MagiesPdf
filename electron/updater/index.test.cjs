@@ -91,6 +91,7 @@ async function withUpdaterMocks(
       return {
         resolveMacBundlePath: () => '/Applications/MagiesPdf.app',
         installMacUpdateFromZip,
+        sweepStaleBackups: async () => 0,
       };
     }
     return originalLoad.call(this, request, parent, isMain);
