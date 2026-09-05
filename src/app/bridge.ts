@@ -535,10 +535,8 @@ export interface MagiesPdfBridge {
    */
   pickExecutable(): Promise<{ path: string; problem?: string } | null>;
   pathForFile(file: File): string;
-  saveOutputs(
-    files: ToolOutputFile[],
-    options?: { directory?: string },
-  ): Promise<SaveResult | null>;
+  /** Writes into the folder from Settings, or one the user picks. */
+  saveOutputs(files: ToolOutputFile[]): Promise<SaveResult | null>;
   saveOutputAs(file: ToolOutputFile): Promise<SaveResult | null>;
   /** Overwrites a file the app already opened. Rejects any other path. */
   writeToPath(targetPath: string, bytes: Uint8Array): Promise<SaveResult>;

@@ -9,6 +9,7 @@ const { createHostBridge } = require('./host.cjs');
 const { collectFilePaths } = require('./files/walk.cjs');
 const { InputBudget } = require('./files/inputBudget.cjs');
 const writableTargets = require('./files/writableTargets.cjs');
+const { writeWithoutOverwriting } = require('./files/writeOutputs.cjs');
 const readableTargets = require('./files/readableTargets.cjs');
 const { executableProblem } = require('./files/executable.cjs');
 const updater = require('./updater/index.cjs');
@@ -128,19 +129,6 @@ async function readMany(paths) {
 }
 
 /** `report.pdf` → `report (2).pdf` until the name is free. */
-async function freeName(directory, name) {
-  const extension = path.extname(name);
-  const stem = path.basename(name, extension);
-
-  for (let n = 1; ; n += 1) {
-    const candidate = n === 1 ? name : `${stem} (${n})${extension}`;
-    try {
-      await fs.access(path.join(directory, candidate));
-    } catch {
-      return candidate;
-    }
-  }
-}
 
 /**
  * Tool metadata, emitted at build time by `scripts/generate-catalog.mjs`.
@@ -526,10 +514,16 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     return { directory, files, truncated };
   });
 
-  handle('files:save', async (_event, { files, options }) => {
+  handle('files:save', async (_event, { files }) => {
     if (!Array.isArray(files) || files.length === 0) return null;
 
-    let directory = options?.directory || settings.read().defaultOutputDirectory;
+    // The renderer does not get to name the directory. Every path this app
+    // writes to is one the main process itself established — a folder the user
+    // chose in Settings, or one they just picked in the dialog below — because
+    // validating the shape of a path proves nothing: every path is well
+    // formed. A renderer that has been compromised can therefore put files
+    // where the user already agreed files go, and nowhere else.
+    let directory = settings.read().defaultOutputDirectory;
     if (!directory) {
       const result = await dialog.showOpenDialog(getWindow(), {
         properties: ['openDirectory', 'createDirectory'],
@@ -545,9 +539,14 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     const written = [];
     for (const file of files) {
       const safeName = safeFileName(file.name);
-      const name = overwrite ? safeName : await freeName(directory, safeName);
-      const target = path.join(directory, name);
-      await fs.writeFile(target, Buffer.from(file.bytes));
+      const bytes = Buffer.from(file.bytes);
+      let target;
+      if (overwrite) {
+        target = path.join(directory, safeName);
+        await fs.writeFile(target, bytes);
+      } else {
+        target = await writeWithoutOverwriting(directory, safeName, bytes);
+      }
       written.push(target);
     }
 
@@ -1018,7 +1017,6 @@ module.exports = {
   registerIpc,
   readCatalog,
   mimeOf,
-  freeName,
   MAX_INPUT_BYTES,
   MAX_TOTAL_INPUT_BYTES,
   MAX_INPUT_FILES,
