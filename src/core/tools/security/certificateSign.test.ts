@@ -4,7 +4,12 @@ import forge from 'node-forge';
 import { executeTool } from '../../execute.ts';
 import { asInput, samplePdf } from '../../testing/fixtures.ts';
 import type { ReportRow } from '../edit/getInfo.ts';
-import { restoreStrippedPadding, signPdfWithP12, verifyPdfSignatures } from './certificateSign.ts';
+import {
+  certificateSignTool,
+  restoreStrippedPadding,
+  signPdfWithP12,
+  verifyPdfSignatures,
+} from './certificateSign.ts';
 import { inspectSignaturesTool } from './inspectSignatures.ts';
 
 function testP12(password: string): Uint8Array {
@@ -108,5 +113,120 @@ describe('a signature whose last byte was stripped as padding', () => {
       const input = Buffer.from(bytes);
       assert.equal(restoreStrippedPadding(input), input, JSON.stringify(bytes));
     }
+  });
+});
+
+/**
+ * The tool itself, not just the functions under it.
+ *
+ * Everything above tests `signPdfWithP12` and `verifyPdfSignatures` directly,
+ * so the tool's own `run` — which file is the PDF and which the certificate,
+ * the passwords, the output name, the error wrapping — had never executed. It
+ * was the only one of the sixty-one tools in that position, and it is the one
+ * that signs documents.
+ */
+describe('security.certificate-sign as a tool', () => {
+  const PASSWORD = 'cert-password';
+
+  it('picks the certificate out of the files and signs the PDF with it', async () => {
+    const result = await executeTool(certificateSignTool, {
+      files: [
+        asInput(await samplePdf({ pages: 1 }), 'contract.pdf'),
+        asInput(testP12(PASSWORD), 'signer.p12', 'application/x-pkcs12'),
+      ],
+      params: { certificatePassword: PASSWORD, signerName: 'MagiesPdf Test Signer' },
+    });
+
+    assert.equal(result.files[0]?.name, 'contract_certificate_signed.pdf');
+    const [signature] = await verifyPdfSignatures(result.files[0]!.bytes);
+    assert.equal(signature?.cryptographicallyValid, true);
+    assert.match(signature?.subject ?? '', /MagiesPdf Test Signer/);
+  });
+
+  it('names the certificate as missing when two files arrive without one', async () => {
+    await assert.rejects(
+      async () => executeTool(certificateSignTool, {
+        files: [
+          asInput(await samplePdf({ pages: 1 }), 'contract.pdf'),
+          asInput(await samplePdf({ pages: 1 }), 'notes.pdf'),
+        ],
+        params: { certificatePassword: PASSWORD },
+      }),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, 'INVALID_INPUT');
+        assert.match((error as { message: string }).message, /P12 or PFX/i);
+        return true;
+      },
+    );
+  });
+
+  it('takes the certificate whichever order the files arrive in', async () => {
+    const result = await executeTool(certificateSignTool, {
+      files: [
+        asInput(testP12(PASSWORD), 'signer.pfx', 'application/x-pkcs12'),
+        asInput(await samplePdf({ pages: 1 }), 'contract.pdf'),
+      ],
+      params: { certificatePassword: PASSWORD, signerName: 'Signer' },
+    });
+    assert.equal(result.files[0]?.name, 'contract_certificate_signed.pdf');
+  });
+
+  /**
+   * Caught by the input spec before `run` is reached — the tool declares it
+   * needs two files. That is a better message than the one inside
+   * `certificateInput`, which only speaks when two files arrive and neither is
+   * a certificate.
+   */
+  it('says a certificate is missing rather than failing obscurely', async () => {
+    await assert.rejects(
+      async () => executeTool(certificateSignTool, {
+        files: [asInput(await samplePdf({ pages: 1 }), 'contract.pdf')],
+        params: { certificatePassword: PASSWORD },
+      }),
+      (error: unknown) => {
+        assert.match((error as { message: string }).message, /at least 2 file/i);
+        return true;
+      },
+    );
+  });
+
+  /**
+   * The wrong password is the mistake a person actually makes, and forge
+   * throws something unreadable for it. It has to come back as a typed error
+   * the panel can explain.
+   */
+  it('turns a wrong certificate password into a typed error', async () => {
+    await assert.rejects(
+      async () => executeTool(certificateSignTool, {
+        files: [
+          asInput(await samplePdf({ pages: 1 }), 'contract.pdf'),
+          asInput(testP12(PASSWORD), 'signer.p12', 'application/x-pkcs12'),
+        ],
+        params: { certificatePassword: 'wrong' },
+      }),
+      (error: unknown) => (error as { code?: string }).code === 'INVALID_INPUT',
+    );
+  });
+
+  it('refuses to sign a document that already carries a signature', async () => {
+    const once = await executeTool(certificateSignTool, {
+      files: [
+        asInput(await samplePdf({ pages: 1 }), 'contract.pdf'),
+        asInput(testP12(PASSWORD), 'signer.p12', 'application/x-pkcs12'),
+      ],
+      params: { certificatePassword: PASSWORD, signerName: 'Signer' },
+    });
+
+    await assert.rejects(
+      () => executeTool(certificateSignTool, {
+        files: [
+          asInput(once.files[0]!.bytes, 'contract_certificate_signed.pdf'),
+          asInput(testP12(PASSWORD), 'signer.p12', 'application/x-pkcs12'),
+        ],
+        params: { certificatePassword: PASSWORD, signerName: 'Signer' },
+      }),
+      // Re-signing would invalidate the first signature, so it is refused.
+      (error: unknown) => /already contains a digital signature/i.test((error as Error).message),
+    );
   });
 });

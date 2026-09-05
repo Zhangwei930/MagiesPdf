@@ -14,7 +14,6 @@ const { executableProblem } = require('./files/executable.cjs');
 const updater = require('./updater/index.cjs');
 const {
   PRINT_WINDOW_WEB_PREFERENCES,
-  isExternalUrlAllowed,
   isTrustedIpcSender,
   safeFileName,
 } = require('./security.cjs');
@@ -316,19 +315,7 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
 
   handle('catalog:get', () => readCatalog().tools);
 
-  handle('office:status', () => office.status());
-  handle('office:pickExecutable', () => office.pickExecutable(getWindow()));
-  handle('office:openDownloadPage', () => office.openDownloadPage());
-  handle('office:pickAndOpen', (_event, { multiple }) =>
-    office.pickAndOpen(getWindow(), multiple === true),
-  );
-  handle('office:createAndOpen', (_event, { kind }) =>
-    office.createAndOpen(getWindow(), kind),
-  );
   handle('office:createBlank', (_event, { kind }) => office.createBlank(getWindow(), kind));
-  handle('office:openPaths', (_event, { paths }) =>
-    office.openPaths(Array.isArray(paths) ? paths : []),
-  );
   // The embedded editor. Paths are validated by the session layer, which
   // refuses anything relative or of a format no editor opens.
   handle('office:editorOpen', (_event, { paths, uiTheme }) =>
@@ -599,11 +586,6 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
 
   handle('shell:reveal', (_event, { path: target }) => {
     if (typeof target === 'string' && target !== '') shell.showItemInFolder(target);
-    return true;
-  });
-  handle('shell:openExternal', async (_event, { url }) => {
-    if (!isExternalUrlAllowed(url)) return false;
-    await shell.openExternal(url);
     return true;
   });
   /**
