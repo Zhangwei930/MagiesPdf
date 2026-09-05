@@ -475,3 +475,44 @@ describe('the socket stand-in served in place of socket.io', () => {
     assert.doesNotThrow(() => new Function(source));
   });
 });
+
+/**
+ * The engine runs in a frame the engine itself builds, at a url that is the
+ * same for every open document. ONLYOFFICE carries the placeholder element's
+ * id into that url as `frameEditorId`, so naming the placeholder after the
+ * session is what puts the session into the referer of every request the
+ * engine makes from inside it — see `sessionFromReferer`.
+ */
+describe('the editor page names its session in the placeholder', () => {
+  const page = () =>
+    editorPageSource({
+      documentType: 'word',
+      title: 'a.docx',
+      fileType: 'docx',
+      sessionId: 'sess-a',
+    });
+
+  it('gives the placeholder a session-scoped id', () => {
+    assert.match(page(), /id="editor-sess-a"/);
+  });
+
+  it('hands that id to the engine, so it reaches the frame url', () => {
+    assert.match(page(), /DocsAPI\.DocEditor\("editor-sess-a"/);
+  });
+
+  it('no longer styles by an id that is not fixed any more', () => {
+    const source = page();
+    assert.match(source, /\.magies-editor\{/);
+    assert.doesNotMatch(source, /#editor\{/);
+  });
+
+  it('keeps an id that a url and a selector can both carry', () => {
+    const odd = editorPageSource({
+      documentType: 'word',
+      title: 'a.docx',
+      fileType: 'docx',
+      sessionId: 'a/b c#d',
+    });
+    assert.match(odd, /id="editor-abcd"/);
+  });
+});
