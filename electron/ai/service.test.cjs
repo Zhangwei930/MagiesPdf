@@ -3,12 +3,13 @@ const { describe, it } = require('node:test');
 
 const { createAiService } = require('./service.cjs');
 
-function serviceWith(overrides = {}) {
+function serviceWith({ permissionMode, ...overrides } = {}) {
   const settings = {
     ai: {
       baseUrl: 'http://127.0.0.1:11434/v1',
       model: 'local-model',
       maxSteps: 6,
+      ...(permissionMode ? { permissionMode } : {}),
     },
   };
   // Keyed by secret name: the migrated provider reads the pre-list `apiKey`.
@@ -221,6 +222,73 @@ describe('AI service', () => {
 
     assert.deepEqual(result, { message: 'done', files: [] });
     assert.equal(dependencies.externalToolProvider, undefined);
+  });
+
+  /**
+   * An unattended rule runs against a folder with nobody watching, and its
+   * allow-list is the whole of what makes that safe. Two things went around it.
+   *
+   * Web search was never turned off: the override list dropped the external
+   * MCP provider but the web provider was resolved with `||`, which cannot be
+   * switched off by passing undefined. So a rule allowing one Office tool got
+   * a runtime that could also reach the network.
+   *
+   * And the allow-list is only consulted by `requestApproval`, which auto mode
+   * skips entirely — so even a tool that never appeared in the list would have
+   * run, had it been registered.
+   */
+  it('gives an unattended turn no way to reach the network', async () => {
+    let dependencies;
+    const service = serviceWith({
+      officeToolProvider: {
+        listTools: async () => [{ functionName: 'read', toolId: 'office:excel:read' }],
+        callTool: async () => ({}),
+      },
+      webSearchProvider: { search: async () => [{ title: 'a result' }] },
+      runtimeFactory: (received) => {
+        dependencies = received;
+        return {
+          async runTurn({ onEvent }) {
+            onEvent({ type: 'tool_result', toolId: 'office:excel:read', ok: true });
+            return { message: 'done', files: [] };
+          },
+        };
+      },
+    });
+
+    await service.runUnattended({
+      requestId: 'automation-web',
+      prompt: 'read workbook',
+      allowedToolIds: ['office:excel:read'],
+    }, () => {});
+
+    assert.equal(dependencies.webSearchProvider, undefined, 'web search must not be registered');
+  });
+
+  it('never runs an unattended turn in a mode that skips the allow-list', async () => {
+    let seen;
+    const service = serviceWith({
+      permissionMode: 'auto',
+      officeToolProvider: {
+        listTools: async () => [{ functionName: 'read', toolId: 'office:excel:read' }],
+        callTool: async () => ({}),
+      },
+      runtimeFactory: () => ({
+        async runTurn({ config, onEvent }) {
+          seen = config.permissionMode;
+          onEvent({ type: 'tool_result', toolId: 'office:excel:read', ok: true });
+          return { message: 'done', files: [] };
+        },
+      }),
+    });
+
+    await service.runUnattended({
+      requestId: 'automation-mode',
+      prompt: 'read workbook',
+      allowedToolIds: ['office:excel:read'],
+    }, () => {});
+
+    assert.notEqual(seen, 'auto', 'auto approves without asking, and asking is the allow-list');
   });
 
   it('rejects unsafe unattended allowlists and turns without a successful tool', async () => {

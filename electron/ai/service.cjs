@@ -128,7 +128,12 @@ function createAiService({
         ? options.externalToolProvider
         : externalToolProvider,
       officeToolProvider: options.officeToolProvider || officeToolProvider,
-      webSearchProvider: options.webSearchProvider || webSearchProvider,
+      // `hasOwn`, not `||`: an unattended turn switches this off by passing
+      // undefined, and `||` would hand it the ambient provider instead —
+      // which is how a rule allowing one Office tool also reached the network.
+      webSearchProvider: Object.hasOwn(options, 'webSearchProvider')
+        ? options.webSearchProvider
+        : webSearchProvider,
     });
     activeTurns.set(requestId, { controller, approvals });
 
@@ -155,9 +160,10 @@ function createAiService({
           apiKey: secretStore.getSecret(secretKeyForProvider(active.id)),
           model: active.model,
           maxSteps: Number(ai.maxSteps) || 6,
-          permissionMode: ai.permissionMode === 'auto' || ai.permissionMode === 'observer'
-            ? ai.permissionMode
-            : 'confirm',
+          permissionMode: options.permissionMode
+            || (ai.permissionMode === 'auto' || ai.permissionMode === 'observer'
+              ? ai.permissionMode
+              : 'confirm'),
           reasoningEffort: active.reasoningEffort || '',
         },
         signal: controller.signal,
@@ -205,7 +211,15 @@ function createAiService({
     }, {
       tools: [],
       externalToolProvider: undefined,
+      // Nothing here may reach the network. The allow-list is Office tools by
+      // construction, and a rule that runs against a folder with nobody
+      // watching does not get a search engine as well.
+      webSearchProvider: undefined,
       officeToolProvider: filteredOfficeProvider,
+      // Never the user's interactive mode. `auto` approves without asking, and
+      // asking is the only thing that consults the allow-list below — so an
+      // unattended turn in auto mode had no allow-list at all.
+      permissionMode: 'confirm',
       requestApproval: async (details) => allowed.has(String(details?.toolId || '')),
     });
     if (!successfulOfficeTool) {
