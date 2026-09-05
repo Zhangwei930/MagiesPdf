@@ -178,7 +178,16 @@ async function whenDocumentRendered(contents, options = {}) {
   for (let probe = 0; probe < MAX_RENDER_PROBES && !expired; probe += 1) {
     let rendered = 0;
     try {
-      rendered = renderedPageCount(await contents.printToPDF({}));
+      // Raced, not awaited. The deadline has to cover the call itself: a
+      // `printToPDF` that never answers left this loop unable to come back and
+      // look at `expired`, and the hidden window and the temp copy of the
+      // document stayed with it.
+      const answer = await Promise.race([
+        contents.printToPDF({}).then((data) => ({ data })),
+        deadline,
+      ]);
+      if (answer === 'deadline') return;
+      rendered = renderedPageCount(answer.data);
     } catch {
       // The window cannot answer — under load the print subsystem itself can
       // refuse. Asking again would only add to what it is already struggling

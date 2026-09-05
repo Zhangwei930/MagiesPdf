@@ -842,13 +842,31 @@ export function Viewer({
   const print = useCallback(async () => {
     setEditError('');
     try {
-      await bridge().printPdf(bytes, name, pageCount);
+      // Unlocking a document here only tells pdf.js the password — the bytes
+      // are still the encrypted file. The print path hands them to a separate
+      // Chromium PDF viewer that has no password to give, so an encrypted
+      // document printed nothing at all ("Printing failed"), even though the
+      // tab in front of the user was open and readable.
+      //
+      // A decrypted copy is made for the print alone. It is not written to the
+      // document and never outlives the temp file the printer already removes.
+      let printable = bytes;
+      if (password) {
+        const unlocked = await bridge().runJob({
+          jobId: crypto.randomUUID(),
+          toolId: 'security.remove-password',
+          files: [{ name, bytes, mime: 'application/pdf' }],
+          params: { password },
+        });
+        printable = unlocked.files[0]?.bytes ?? bytes;
+      }
+      await bridge().printPdf(printable, name, pageCount);
     } catch (cause) {
       setEditError(
         `${t('viewerPrintFailed', locale)} — ${cause instanceof Error ? cause.message : String(cause)}`,
       );
     }
-  }, [bytes, locale, name, pageCount]);
+  }, [bytes, locale, name, pageCount, password]);
 
   /**
    * The document's own shortcuts. The shell owns the ones that are not about a
