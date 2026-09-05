@@ -34,10 +34,16 @@ export function canOpenFromDocument(tool: ToolMeta): boolean {
 
 /**
  * Params the task pane should show when applying to an open document.
- * Password is taken from the document itself, so it never needs a field here.
+ *
+ * The document's own open password is the one thing the pane can answer by
+ * itself, and `passwordParam()` always calls it `password`. Every other
+ * password is one the user is *choosing* — the open password to set, the
+ * permissions password, a certificate's passphrase — and hiding those left
+ * encryption and certificate signing with no field to type into and a run
+ * with an empty password.
  */
 export function documentTaskParams(tool: ToolMeta): ToolMeta['params'] {
-  return tool.params.filter((param) => param.type !== 'password');
+  return tool.params.filter((param) => !(param.type === 'password' && param.key === 'password'));
 }
 
 /**
