@@ -62,7 +62,9 @@ describe('opening the same file twice at once', () => {
   });
 
   it('counts two spellings of one path as one file', () => {
-    setPathCaseSensitivity('darwin');
+    // Both spellings are Windows spellings, and Windows is the only platform
+    // where a backslash is a separator rather than part of the name.
+    setPathCaseSensitivity('win32');
     const guard = createOpenGuard();
     guard.claim(['C:\\Docs\\Report.docx']);
     assert.deepEqual(guard.claim(['c:/docs/report.docx']), []);

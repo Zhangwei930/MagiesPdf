@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
+import { setPathCaseSensitivity } from './documents.ts';
 import { createReloadQueue } from './officeReload.ts';
 
 /** Timers that only fire when the test says so. */
@@ -98,6 +99,9 @@ describe('coalescing the reloads of AI-written documents', () => {
   });
 
   it('counts two spellings of one path as one file', () => {
+    // Windows spellings, and Windows is the only platform where a backslash
+    // is a separator rather than a legal character in the name.
+    setPathCaseSensitivity('win32');
     const { queue: q, reloaded, advance } = queue();
 
     q.schedule('C:\\Docs\\Report.docx');

@@ -393,6 +393,9 @@ describe('partitionOpenPaths', () => {
   });
 
   it('recognises a path however it is spelled', () => {
+    // A Windows scenario, and only Windows treats the two separators as one
+    // file — so it has to say so rather than inherit whatever ran last.
+    setPathCaseSensitivity('win32');
     const win = createDocument(picked('r.docx', 'C:/Docs/Report.docx'));
     const { open, fresh } = partitionOpenPaths([win], ['C:\\Docs\\report.DOCX']);
     assert.deepEqual(open.map((doc) => doc.id), [win.id]);
@@ -414,11 +417,25 @@ describe('partitionOpenPaths', () => {
 
 describe('normalizeDocumentPath', () => {
   it('makes the separators and the case agree where the filesystem does', () => {
-    setPathCaseSensitivity('darwin');
-    assert.equal(normalizeDocumentPath('C:\\Docs\\Report.docx'), 'c:/docs/report.docx');
-    assert.equal(normalizeDocumentPath('/docs/Report.docx'), '/docs/report.docx');
     setPathCaseSensitivity('win32');
     assert.equal(normalizeDocumentPath('C:\\Docs\\Report.docx'), 'c:/docs/report.docx');
+    setPathCaseSensitivity('darwin');
+    assert.equal(normalizeDocumentPath('/docs/Report.docx'), '/docs/report.docx');
+  });
+
+  /**
+   * Only Windows accepts either separator for the same file. A backslash is a
+   * legal character in a filename on macOS exactly as it is on Linux, and
+   * rewriting it merged `/docs/a\b.pdf` with `/docs/a/b.pdf` — two different
+   * files sharing one tab, which reads as the second one failing to open.
+   */
+  it('leaves a backslash alone on macOS, where it is part of the name', () => {
+    setPathCaseSensitivity('darwin');
+    assert.notEqual(
+      normalizeDocumentPath('/docs/a\\b.pdf'),
+      normalizeDocumentPath('/docs/a/b.pdf'),
+    );
+    assert.equal(normalizeDocumentPath('/docs/a\\b.pdf'), '/docs/a\\b.pdf');
   });
 
   /**
