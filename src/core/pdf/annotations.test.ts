@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { PDFArray, PDFDocument, PDFName, PDFNumber } from 'pdf-lib';
 import { openDocument, saveDocument } from './document.ts';
 import { samplePdf } from '../testing/fixtures.ts';
 import { writeAnnotations, type InkStroke, type TextHighlight } from './annotations.ts';
@@ -120,16 +121,30 @@ describe('writing annotations into a PDF', () => {
   });
 
   /**
-   * Writing twice must not stack: the document carries its marks, so a second
-   * save of the same set is the same document, not a document with everything
-   * duplicated.
+   * The viewer submits one mark per run — the new one — so a run that cleared
+   * what it had written before meant every mark deleted the one before it.
+   * Undo already covers "take that back": a run is an edit on the document's
+   * bytes like any other, so the previous bytes still carry the previous mark.
    */
-  it('replaces the marks it wrote rather than adding to them', async () => {
+  it('adds to the marks already there rather than replacing them', async () => {
     const source = await samplePdf({ pages: 1 });
     const once = writeAnnotations(source, { highlights: [highlight()], ink: [] });
-    const twice = writeAnnotations(once, { highlights: [highlight()], ink: [] });
+    const twice = writeAnnotations(once, { highlights: [], ink: [ink()] });
 
-    assert.equal(annotationsOn(twice, 1).length, 1);
+    assert.deepEqual(
+      annotationsOn(twice, 1).map((entry) => entry.type).sort(),
+      ['Highlight', 'Ink'],
+    );
+  });
+
+  it('keeps every stroke of a run of pen marks', async () => {
+    const source = await samplePdf({ pages: 1 });
+    let written = source;
+    for (let n = 0; n < 3; n += 1) {
+      written = writeAnnotations(written, { highlights: [], ink: [ink()] });
+    }
+
+    assert.equal(annotationsOn(written, 1).length, 3);
   });
 
   it('opens an encrypted document with its password', async () => {
@@ -142,100 +157,105 @@ describe('writing annotations into a PDF', () => {
 });
 
 /**
- * The flip is the part a reader cannot check by eye: a mark drawn near the top
- * of the page must land near the top of the page, and getting it upside down
- * would look plausible in every other assertion here.
+ * Where the mark lands, checked without MuPDF.
+ *
+ * The first version of these tests read the geometry back with MuPDF's
+ * `getBounds()` and asserted `PAGE_HEIGHT - y`. Both the writer and the
+ * reader work in the page's *displayed* space, so the assertion compared a
+ * wrong value against itself and passed: a mark drawn 100pt from the top was
+ * written 742pt from the top, and every test here was green.
+ *
+ * So the geometry is read straight out of the PDF with pdf-lib instead. What
+ * ends up in the file is in PDF user space — origin bottom-left, y upward —
+ * and that is the one description of a mark's position that does not depend
+ * on the library that wrote it.
  */
 describe('where the mark lands on the page', () => {
-  it('puts a mark drawn near the top near the top', async () => {
+  /** The raw `/InkList` of the first annotation, as the file stores it. */
+  async function rawInkList(bytes: Uint8Array): Promise<number[]> {
+    const doc = await PDFDocument.load(bytes);
+    const annotations = doc.getPage(0).node.Annots();
+    const annotation = annotations?.lookup(0) as unknown as { lookup(key: unknown): unknown };
+    const list = annotation.lookup(PDFName.of('InkList')) as PDFArray;
+    return (list.lookup(0) as PDFArray)
+      .asArray()
+      .map((entry) => (entry as PDFNumber).asNumber());
+  }
+
+  /** The raw `/QuadPoints` of the first annotation. */
+  async function rawQuadPoints(bytes: Uint8Array): Promise<number[]> {
+    const doc = await PDFDocument.load(bytes);
+    const annotations = doc.getPage(0).node.Annots();
+    const annotation = annotations?.lookup(0) as unknown as { lookup(key: unknown): unknown };
+    return (annotation.lookup(PDFName.of('QuadPoints')) as PDFArray)
+      .asArray()
+      .map((entry) => (entry as PDFNumber).asNumber());
+  }
+
+  it('puts a stroke drawn 100pt from the top 100pt from the top', async () => {
+    const source = await samplePdf({ pages: 1 });
+    const written = writeAnnotations(source, {
+      highlights: [],
+      ink: [ink({ points: [{ x: 100, y: 100 }, { x: 200, y: 100 }] })],
+    });
+
+    const [x, y] = await rawInkList(written);
+    assert.equal(x, 100, 'x is the same in both spaces');
+    // User space measures up from the bottom, so 100 from the top of an
+    // 842pt page is 742 — not 100, which would be 742 from the top.
+    assert.ok(Math.abs((y ?? 0) - (PAGE_HEIGHT - 100)) < 1, `stroke sat at y=${y}, expected 742`);
+  });
+
+  it('puts a highlight where the text it covers is', async () => {
     const source = await samplePdf({ pages: 1 });
     const written = writeAnnotations(source, {
       highlights: [highlight({ rects: [{ x: 72, y: 100, width: 120, height: 14 }] })],
       ink: [],
     });
 
-    const [found] = annotationsOn(written, 1);
-    const [, bottom, , top] = found?.rect ?? [];
-    // 100pt down from the top of an 842pt page is 742pt up from the bottom.
-    // The reported bounds sit a few points outside the quad — a highlight's
-    // box is inflated by its own border — so this checks the position, not the
-    // exact edge. The direction is what the next test pins down.
-    assert.ok(Math.abs((top ?? 0) - (PAGE_HEIGHT - 100)) < 6, `top was ${top}`);
-    assert.ok(Math.abs((bottom ?? 0) - (PAGE_HEIGHT - 114)) < 6, `bottom was ${bottom}`);
+    const quad = await rawQuadPoints(written);
+    const ys = [quad[1], quad[3], quad[5], quad[7]].map((value) => value ?? 0);
+    assert.ok(Math.abs(Math.max(...ys) - (PAGE_HEIGHT - 100)) < 1, `top edge at ${Math.max(...ys)}`);
+    assert.ok(Math.abs(Math.min(...ys) - (PAGE_HEIGHT - 114)) < 1, `bottom edge at ${Math.min(...ys)}`);
+  });
+
+  /**
+   * A scanned page often arrives rotated, and it is where a coordinate bug
+   * hides: every other case here uses an upright page, so a mark that lands
+   * sideways passes all of them. MuPDF rotates as it converts, so the viewer
+   * must not — pdf.js's `convertToPdfPoint` would undo it a second time.
+   */
+  it('follows the page as the reader sees it when the page is rotated', async () => {
+    const upright = openDocument(await samplePdf({ pages: 1 }));
+    (upright as unknown as { findPage(index: number): { put(key: string, value: number): void } })
+      .findPage(0)
+      .put('Rotate', 90);
+    const rotated = saveDocument(upright);
+    upright.destroy();
+
+    const written = writeAnnotations(rotated, {
+      highlights: [],
+      ink: [ink({ points: [{ x: 50, y: 60 }, { x: 150, y: 60 }] })],
+    });
+
+    // Displayed 90° clockwise, an A4 page is 842 × 595 and a displayed point
+    // (dx, dy) is user-space (dy, dx).
+    const [x, y] = await rawInkList(written);
+    assert.equal(x, 60, 'displayed 60pt from the top');
+    assert.equal(y, 50, 'displayed 50pt from the left');
   });
 
   it('does not put it upside down', async () => {
     const source = await samplePdf({ pages: 1 });
-    const nearTop = writeAnnotations(source, {
-      highlights: [highlight({ rects: [{ x: 72, y: 50, width: 100, height: 10 }] })],
-      ink: [],
-    });
-    const nearBottom = writeAnnotations(source, {
-      highlights: [highlight({ rects: [{ x: 72, y: 780, width: 100, height: 10 }] })],
-      ink: [],
-    });
+    const near = (y: number) =>
+      writeAnnotations(source, {
+        highlights: [],
+        ink: [ink({ points: [{ x: 72, y }, { x: 172, y }] })],
+      });
 
-    const topY = annotationsOn(nearTop, 1)[0]?.rect[3] ?? 0;
-    const bottomY = annotationsOn(nearBottom, 1)[0]?.rect[3] ?? 0;
-    assert.ok(topY > bottomY, `drawn higher should sit higher: ${topY} vs ${bottomY}`);
-  });
-
-  it('keeps ink where it was drawn', async () => {
-    const source = await samplePdf({ pages: 1 });
-    const written = writeAnnotations(source, {
-      highlights: [],
-      ink: [ink({ points: [{ x: 100, y: 200 }, { x: 300, y: 200 }] })],
-    });
-
-    const [, bottom, , top] = annotationsOn(written, 1)[0]?.rect ?? [];
-    const middle = ((bottom ?? 0) + (top ?? 0)) / 2;
-    assert.ok(Math.abs(middle - (PAGE_HEIGHT - 200)) < 6, `stroke sat at ${middle}`);
-  });
-});
-
-/**
- * A scanned page often arrives rotated, and this is where a coordinate bug
- * would hide: everything else in this file uses an upright page, so a mark
- * that lands sideways would pass every other assertion.
- *
- * Both MuPDF's page bounds and its annotation geometry are in the space the
- * page is *displayed* in, which is the same space the viewer draws in. So the
- * flip is all that is needed, and the renderer must not convert as well —
- * pdf.js's `convertToPdfPoint` would undo the rotation a second time.
- */
-describe('a page that is rotated', () => {
-  async function rotatedNinety(): Promise<Uint8Array> {
-    const doc = openDocument(await samplePdf({ pages: 1 }));
-    try {
-      const page = doc.loadPage(0) as unknown as { getBounds(): number[] };
-      void page.getBounds();
-      const pageObject = (doc as unknown as { findPage(index: number): { put(key: string, value: number): void } })
-        .findPage(0);
-      pageObject.put('Rotate', 90);
-      return saveDocument(doc);
-    } finally {
-      doc.destroy();
-    }
-  }
-
-  it('measures from the top of the page as the reader sees it', async () => {
-    const rotated = await rotatedNinety();
-
-    const doc = openDocument(rotated);
-    const [, , , displayedTop] = doc.loadPage(0).getBounds();
-    doc.destroy();
-    // Rotating swaps the box: an A4 page becomes 842 wide and 595 tall.
-    assert.ok(Math.abs((displayedTop ?? 0) - 595) < 1, `displayed height ${displayedTop}`);
-
-    const written = writeAnnotations(rotated, {
-      highlights: [highlight({ rects: [{ x: 50, y: 60, width: 100, height: 12 }] })],
-      ink: [],
-    });
-
-    const top = annotationsOn(written, 1)[0]?.rect[3] ?? 0;
-    assert.ok(
-      Math.abs(top - ((displayedTop ?? 0) - 60)) < 6,
-      `60pt down from the top of the rotated page should be ${(displayedTop ?? 0) - 60}, was ${top}`,
-    );
+    const [, high] = await rawInkList(near(50));
+    const [, low] = await rawInkList(near(780));
+    // Drawn nearer the top means a larger user-space y.
+    assert.ok((high ?? 0) > (low ?? 0), `drawn higher should sit higher: ${high} vs ${low}`);
   });
 });
