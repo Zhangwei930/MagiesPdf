@@ -68,16 +68,23 @@ function rgb(color: string): [number, number, number] {
 }
 
 /**
- * Viewer space to PDF user space, for one page.
+ * Viewer space to the space MuPDF's annotation setters take, for one page.
  *
- * The viewer measures from the top-left with y downward; a PDF page measures
- * from its box's bottom-left with y upward. A page whose box does not start at
- * the origin — cropped scans do this — needs that offset too, which is why the
- * bounds are read rather than assumed to be `[0 0 w h]`.
+ * They take the page's *displayed* space — origin top-left, y downward, and
+ * already rotated — which is the space the viewer draws in. MuPDF does the
+ * conversion to PDF user space itself when it writes the annotation. So the
+ * only thing to do here is the origin of a page whose box does not start at
+ * zero, which cropped scans have.
+ *
+ * Flipping y here as well put a mark drawn 100pt from the top 742pt from the
+ * top, and it was invisible for a while because `getBounds()` reports in that
+ * same displayed space: reading the mark back through MuPDF returned the
+ * wrong number and compared it against itself. `annotations.test.ts` reads
+ * what actually reached the file, with pdf-lib.
  */
 function pageSpace(page: mupdf.PDFPage): (x: number, y: number) => [number, number] {
-  const [x0, , , y1] = page.getBounds();
-  return (x, y) => [x0 + x, y1 - y];
+  const [x0, y0] = page.getBounds();
+  return (x, y) => [x0 + x, y0 + y];
 }
 
 /** A rectangle as the four corners MuPDF expects for a quad, in page space. */
@@ -85,20 +92,6 @@ function quadOf(rect: AnnotationRect, toPage: (x: number, y: number) => [number,
   const [left, top] = toPage(rect.x, rect.y);
   const [right, bottom] = toPage(rect.x + rect.width, rect.y + rect.height);
   return [left, top, right, top, left, bottom, right, bottom] as mupdf.Quad;
-}
-
-/** Removes what a previous save of this document put here. */
-function clearOwnAnnotations(page: mupdf.PDFPage): void {
-  for (const annotation of page.getAnnotations()) {
-    let author = '';
-    try {
-      author = annotation.getAuthor();
-    } catch {
-      // Not every annotation carries one; those are someone else's by default.
-      continue;
-    }
-    if (author === AUTHOR) page.deleteAnnotation(annotation);
-  }
 }
 
 function pagesTouched(annotations: DocumentAnnotations): number[] {
@@ -130,7 +123,6 @@ export function writeAnnotations(
       if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > pageCount) continue;
       const page = doc.loadPage(pageNumber - 1) as mupdf.PDFPage;
       const toPage = pageSpace(page);
-      clearOwnAnnotations(page);
 
       for (const mark of highlights.filter((entry) => entry.pageNumber === pageNumber)) {
         const annotation = page.createAnnotation('Highlight');
