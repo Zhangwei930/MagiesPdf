@@ -645,7 +645,22 @@ function registerIpc({ pool, getWindow, onSettingsChanged, trustedRendererUrl })
     pages: Number.isInteger(pages) && pages > 0 ? pages : 0,
   }));
 
-  const hostBridge = createHostBridge();
+  const hostBridge = createHostBridge({
+    // A `runtime: 'main'` tool that runs other tools — `advanced.batch`,
+    // `advanced.pipeline` — hands the steps that do not need this bridge back
+    // here, and they go to the pool like any other job. Without it the main
+    // process did that work itself and nothing else in the app moved.
+    runTool: (toolId, files, params, signal, onProgress) => {
+      const jobId = crypto.randomUUID();
+      const abort = () => void pool.cancel(jobId);
+      signal?.addEventListener('abort', abort, { once: true });
+      return pool
+        .run({ jobId, toolId, files, params }, (fraction, message) => {
+          onProgress?.(fraction, message);
+        })
+        .finally(() => signal?.removeEventListener('abort', abort));
+    },
+  });
   const secretStore = getSecretStore();
   const aiHistory = createAiHistoryStore({
     filePath: path.join(app.getPath('userData'), 'ai-history.json'),

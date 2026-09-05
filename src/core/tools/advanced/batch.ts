@@ -1,5 +1,5 @@
 import { ToolError } from '../../errors.ts';
-import { executeTool } from '../../execute.ts';
+import { runSubTool } from '../../subTool.ts';
 import { registry } from '../../registry.ts';
 import type { ToolDescriptor, ToolOutputFile } from '../../types.ts';
 import { reportStep } from '../shared.ts';
@@ -117,7 +117,10 @@ export const batchTool: ToolDescriptor = {
         en: `Processing ${file.name} (${i + 1}/${total})`,
       });
 
-      const result = await executeTool(tool, {
+      // Off the main process where the tool allows it — this tool has to be
+      // `runtime: 'main'` for the sake of steps that need the host, and doing
+      // every step's work here froze the window for the length of the batch.
+      const result = await runSubTool(tool, {
         files: [file],
         params,
         host: ctx.host,

@@ -155,6 +155,22 @@ export interface HostBridge {
   ): Promise<ToolOutputFile>;
   /** Whether an external converter is configured and its executable exists. */
   hasExternalConverter(targetExtension: string): boolean;
+  /**
+   * Run another tool, somewhere other than here.
+   *
+   * `advanced.batch` and `advanced.pipeline` have to be `runtime: 'main'`
+   * because a step might need this bridge — but most steps do not, and doing
+   * their work in the main process froze the window, cancellation and the
+   * local API for the length of the run. Optional: a host that cannot
+   * dispatch simply does not offer it, and the caller runs the tool itself.
+   */
+  runTool?(
+    toolId: string,
+    files: readonly ToolInputFile[],
+    params: Readonly<Record<string, unknown>>,
+    signal?: AbortSignal,
+    onProgress?: (fraction: number, message?: LocalizedText) => void,
+  ): Promise<ToolResult>;
 }
 
 export interface HtmlToPdfOptions {
