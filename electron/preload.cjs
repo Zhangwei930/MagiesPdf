@@ -116,7 +116,7 @@ const api = {
   },
 
   /** Writes outputs to a directory the user chooses. Returns null when cancelled. */
-  saveOutputs: (files, options) => ipcRenderer.invoke('files:save', { files, options }),
+  saveOutputs: (files) => ipcRenderer.invoke('files:save', { files }),
 
   /** Writes a single output through a "save as" dialog. */
   saveOutputAs: (file) => ipcRenderer.invoke('files:saveAs', { file }),
