@@ -19,6 +19,7 @@ import {
 } from './theme/themes.ts';
 import * as docs from './documents.ts';
 import { createEngineSaveTracker } from './engineSave.ts';
+import { acceptsUpdate } from './jobStatus.ts';
 import type { DocumentState } from './documents.ts';
 import type { Locale } from './i18n.ts';
 import { classifyOutput } from './toolApply.ts';
@@ -496,7 +497,13 @@ export const useApp = create<AppState>((set, get) => ({
     bridge().onJobProgress(({ jobId, fraction, message }) => {
       set((state) => ({
         jobs: state.jobs.map((job) =>
-          job.id === jobId ? { ...job, status: 'running', fraction, message } : job,
+          // A worker that has been cancelled is still part-way through
+          // something, and its progress kept arriving. Without this the row
+          // went back to "running" and the result behind it then marked a
+          // cancelled job as done.
+          job.id === jobId && acceptsUpdate(job.status)
+            ? { ...job, status: 'running', fraction, message }
+            : job,
         ),
       }));
     });
@@ -569,7 +576,7 @@ export const useApp = create<AppState>((set, get) => ({
 
         set((state) => ({
           jobs: state.jobs.map((job) =>
-            job.id === jobId && job.status !== 'cancelled'
+            job.id === jobId && acceptsUpdate(job.status)
               ? { ...job, status: 'done', fraction: 1, result, finishedAt: Date.now() }
               : job,
           ),
@@ -589,7 +596,7 @@ export const useApp = create<AppState>((set, get) => ({
 
         set((state) => ({
           jobs: state.jobs.map((job) =>
-            job.id === jobId && job.status !== 'cancelled'
+            job.id === jobId && acceptsUpdate(job.status)
               ? {
                   ...job,
                   status: error.code === 'CANCELLED' ? 'cancelled' : 'error',

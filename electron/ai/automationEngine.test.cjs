@@ -110,6 +110,63 @@ describe('AI automation engine', () => {
     assert.match(pending[0].prompt, /销售\/新增\.xlsx/);
   });
 
+  /**
+   * The daily limit is meant to pace a rule, not to lose files. The baseline
+   * of "what was already there" was advanced over everything present *before*
+   * the files were dealt with, so anything past the day's limit stopped being
+   * a new file — it was never picked up, that day or any other.
+   */
+  it('picks up tomorrow what the day\'s limit left over', async () => {
+    let clock = new Date(2026, 7, 1, 10, 30, 0, 0).getTime();
+    const { engine, setDocuments, store } = await fixture({ now: () => clock });
+    store.createRule({
+      name: '批量审核', prompt: '处理', mode: 'review',
+      trigger: { type: 'folder', extensions: ['.xlsx'] }, maxRunsPerDay: 2,
+    });
+    setDocuments([]);
+    await engine.poll();
+
+    setDocuments([
+      { path: 'a.xlsx', extension: '.xlsx' },
+      { path: 'b.xlsx', extension: '.xlsx' },
+      { path: 'c.xlsx', extension: '.xlsx' },
+      { path: 'd.xlsx', extension: '.xlsx' },
+    ]);
+    await engine.poll();
+
+    assert.deepEqual(
+      store.getState().pending.map((entry) => entry.sourcePath).sort(),
+      ['a.xlsx', 'b.xlsx'],
+      'the day\'s limit is two',
+    );
+
+    // A new day: the limit resets, and what it held back is still waiting.
+    clock = new Date(2026, 7, 2, 10, 30, 0, 0).getTime();
+    await engine.poll();
+
+    assert.deepEqual(
+      store.getState().pending.map((entry) => entry.sourcePath).sort(),
+      ['a.xlsx', 'b.xlsx', 'c.xlsx', 'd.xlsx'],
+      'the two the limit held back must still arrive',
+    );
+  });
+
+  it('does not offer the same file twice once it has been dealt with', async () => {
+    const { engine, setDocuments, store } = await fixture();
+    store.createRule({
+      name: '批量审核', prompt: '处理', mode: 'review',
+      trigger: { type: 'folder', extensions: ['.xlsx'] }, maxRunsPerDay: 5,
+    });
+    setDocuments([]);
+    await engine.poll();
+
+    setDocuments([{ path: 'a.xlsx', extension: '.xlsx' }]);
+    await engine.poll();
+    await engine.poll();
+
+    assert.equal(store.getState().pending.length, 1);
+  });
+
   it('retries pre-tool failures but pauses without retrying after a tool succeeds', async () => {
     let attempts = 0;
     const first = await fixture({

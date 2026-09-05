@@ -141,13 +141,30 @@ function createAutomationEngine({
           : [];
       }));
       const previous = folderBaselines.get(rule.id);
-      folderBaselines.set(rule.id, current);
-      if (!previous) continue;
-      const added = [...current].filter((relativePath) => !previous.has(relativePath)).sort();
-      for (const relativePath of added) {
-        if (!store.canTrigger(rule.id, dateKey)) break;
-        await executeRule(rule, dateKey, relativePath);
+      if (!previous) {
+        folderBaselines.set(rule.id, current);
+        continue;
       }
+      const added = [...current].filter((relativePath) => !previous.has(relativePath)).sort();
+
+      let handled = 0;
+      for (; handled < added.length; handled += 1) {
+        if (!store.canTrigger(rule.id, dateKey)) break;
+        await executeRule(rule, dateKey, added[handled]);
+      }
+
+      // The baseline advances only over the files that were dealt with.
+      // Advancing it over everything present meant a file that arrived once
+      // the day's limit was reached stopped being a *new* file: it was never
+      // picked up, that day or any other. The limit paces a rule; it does not
+      // decide which files it gets to see.
+      const deferred = new Set(added.slice(handled));
+      folderBaselines.set(
+        rule.id,
+        deferred.size === 0
+          ? current
+          : new Set([...current].filter((relativePath) => !deferred.has(relativePath))),
+      );
     }
   }
 
