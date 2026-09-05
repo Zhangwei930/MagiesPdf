@@ -46,3 +46,24 @@ describe('saving what a tool produced', () => {
     }
   });
 });
+
+/**
+ * Closing a dirty tab offers Save / Don't save / Cancel. "Save" used to close
+ * the tab as soon as the save call resolved — but `saveDocumentAs` returns
+ * normally when the user cancels the file dialog, and an edit made while that
+ * dialog was open is not in the bytes that were written. Both close an unsaved
+ * document, and neither raises anything.
+ */
+describe('closing a document after saving it', () => {
+  it('checks the save actually happened before closing', () => {
+    const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+    const chain = /void saveDocument\(target\)[\s\S]{0,900}/.exec(app)?.[0];
+
+    assert.ok(chain, 'the save-then-close chain moved; this test needs updating');
+    assert.match(chain, /isDirty/, 'closes without re-checking for unsaved work');
+    assert.ok(
+      chain.indexOf('isDirty') < chain.indexOf('closeDocument(target)'),
+      'the check has to come before the close',
+    );
+  });
+});
