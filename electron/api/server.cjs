@@ -499,105 +499,114 @@ function createHandler({
             });
             return;
           }
-          const raw = await readBody(req);
-          let body;
-          try {
-            body = raw.length ? JSON.parse(raw.toString('utf8')) : {};
-          } catch {
-            sendJson(res, 400, { error: 'invalid_json', message: 'Body must be JSON' });
-            return;
-          }
-
-          const filesIn = Array.isArray(body.files) ? body.files : [];
-          if (filesIn.length === 0) {
-            sendJson(res, 400, { error: 'invalid_input', message: 'files[] is required' });
-            return;
-          }
-
-          const files = [];
-          const budget = new InputBudget({
-            maxFileBytes: MAX_FILE_BYTES,
-            maxTotalBytes: MAX_TOTAL_FILE_BYTES,
-            maxFiles: MAX_FILES,
-          });
-          for (const entry of filesIn) {
-            if (!entry || typeof entry.name !== 'string' || typeof entry.bytesBase64 !== 'string') {
-              sendJson(res, 400, {
-                error: 'invalid_input',
-                message: 'Each file needs name and bytesBase64',
-              });
-              return;
-            }
-            let buffer;
-            try {
-              safeFileName(entry.name);
-            } catch {
-              sendJson(res, 400, {
-                error: 'invalid_input',
-                message: 'Each file name must be a plain name without a path',
-              });
-              return;
-            }
-            try {
-              buffer = decodeBase64(entry.bytesBase64);
-            } catch {
-              sendJson(res, 400, {
-                error: 'invalid_input',
-                message: `Bad base64 for ${entry.name}`,
-              });
-              return;
-            }
-            try {
-              budget.add(buffer.length);
-            } catch (cause) {
-              sendJson(res, 413, {
-                error: 'input_too_large',
-                message: cause instanceof Error ? cause.message : String(cause),
-              });
-              return;
-            }
-            // Own the bytes: Buffer views often sit on a pooled ArrayBuffer that
-            // worker_threads refuse to transfer ("unsupported type").
-            const owned = new Uint8Array(buffer.length);
-            owned.set(buffer);
-            files.push({
-              name: entry.name,
-              bytes: owned,
-              mime: typeof entry.mime === 'string' ? entry.mime : 'application/octet-stream',
-            });
-          }
-
-          const request = {
-            jobId: randomUUID(),
-            toolId,
-            files,
-            params: body.params && typeof body.params === 'object' ? body.params : {},
-          };
-
-          const runtime = tool.runtime ?? 'worker';
-          if (url.searchParams.get('async') === 'true') {
-            startAsyncJob(request, runtime);
-            sendJson(res, 202, { jobId: request.jobId, status: 'running' });
-            return;
-          }
+          // Taken before the body is read, not after it. Reading an upload
+          // takes as long as the upload takes, and a cap checked before the
+          // read and claimed after it is no cap at all: every request passes
+          // the check while the first one is still arriving, each carrying up
+          // to 128 MB. Held until the handler is done with this request —
+          // including the synchronous run, and released once an async job has
+          // been registered, because `jobs` counts that one instead.
           inFlightSyncRuns += 1;
           try {
-            const result = await runRequest(request, runtime);
-            sendJson(res, 200, serializeResult(result));
-          } catch (cause) {
-            // Worker pool rejects with SerializedToolError; mainRunner does too.
-            const err = serializeToolError(cause);
-            sendJson(res, 422, {
-              error: 'tool_error',
-              code: err.code,
-              message: err.message,
-              userMessage: err.userMessage,
-              details: err.details,
+            const raw = await readBody(req);
+            let body;
+            try {
+              body = raw.length ? JSON.parse(raw.toString('utf8')) : {};
+            } catch {
+              sendJson(res, 400, { error: 'invalid_json', message: 'Body must be JSON' });
+              return;
+            }
+
+            const filesIn = Array.isArray(body.files) ? body.files : [];
+            if (filesIn.length === 0) {
+              sendJson(res, 400, { error: 'invalid_input', message: 'files[] is required' });
+              return;
+            }
+
+            const files = [];
+            const budget = new InputBudget({
+              maxFileBytes: MAX_FILE_BYTES,
+              maxTotalBytes: MAX_TOTAL_FILE_BYTES,
+              maxFiles: MAX_FILES,
             });
+            for (const entry of filesIn) {
+              if (!entry || typeof entry.name !== 'string' || typeof entry.bytesBase64 !== 'string') {
+                sendJson(res, 400, {
+                  error: 'invalid_input',
+                  message: 'Each file needs name and bytesBase64',
+                });
+                return;
+              }
+              let buffer;
+              try {
+                safeFileName(entry.name);
+              } catch {
+                sendJson(res, 400, {
+                  error: 'invalid_input',
+                  message: 'Each file name must be a plain name without a path',
+                });
+                return;
+              }
+              try {
+                buffer = decodeBase64(entry.bytesBase64);
+              } catch {
+                sendJson(res, 400, {
+                  error: 'invalid_input',
+                  message: `Bad base64 for ${entry.name}`,
+                });
+                return;
+              }
+              try {
+                budget.add(buffer.length);
+              } catch (cause) {
+                sendJson(res, 413, {
+                  error: 'input_too_large',
+                  message: cause instanceof Error ? cause.message : String(cause),
+                });
+                return;
+              }
+              // Own the bytes: Buffer views often sit on a pooled ArrayBuffer that
+              // worker_threads refuse to transfer ("unsupported type").
+              const owned = new Uint8Array(buffer.length);
+              owned.set(buffer);
+              files.push({
+                name: entry.name,
+                bytes: owned,
+                mime: typeof entry.mime === 'string' ? entry.mime : 'application/octet-stream',
+              });
+            }
+
+            const request = {
+              jobId: randomUUID(),
+              toolId,
+              files,
+              params: body.params && typeof body.params === 'object' ? body.params : {},
+            };
+
+            const runtime = tool.runtime ?? 'worker';
+            if (url.searchParams.get('async') === 'true') {
+              startAsyncJob(request, runtime);
+              sendJson(res, 202, { jobId: request.jobId, status: 'running' });
+              return;
+            }
+            try {
+              const result = await runRequest(request, runtime);
+              sendJson(res, 200, serializeResult(result));
+            } catch (cause) {
+              // Worker pool rejects with SerializedToolError; mainRunner does too.
+              const err = serializeToolError(cause);
+              sendJson(res, 422, {
+                error: 'tool_error',
+                code: err.code,
+                message: err.message,
+                userMessage: err.userMessage,
+                details: err.details,
+              });
+            }
+            return;
           } finally {
             inFlightSyncRuns -= 1;
           }
-          return;
         }
       }
 

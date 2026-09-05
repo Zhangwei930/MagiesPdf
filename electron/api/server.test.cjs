@@ -734,4 +734,88 @@ describe('how many tool runs may be in flight', () => {
     release();
     await first;
   });
+
+  /**
+   * The test above lets the first request reach the pool before the second
+   * arrives, which is the easy case. Uploads overlap: reading a body takes as
+   * long as the upload does, and the cap was checked *before* the read and
+   * taken *after* it — so any number of requests could pass the check while
+   * the first was still arriving, each carrying up to 128 MB.
+   */
+  it('takes the slot before reading the upload, not after', async () => {
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    let reachedPool = 0;
+    const slowPool = {
+      run: async () => {
+        reachedPool += 1;
+        await held;
+        return { files: [], data: {} };
+      },
+    };
+    const handler = createHandler({
+      pool: slowPool,
+      maxActiveJobs: 1,
+      readCatalog: () => ({
+        tools: [{
+          id: 'edit.compress',
+          runtime: 'worker',
+          input: { min: 1, max: 1, accept: ['application/pdf'] },
+          params: [],
+          name: { zh: '', en: '' },
+          description: { zh: '', en: '' },
+        }],
+      }),
+    });
+
+    const body = JSON.stringify({
+      files: [{ name: 'a.pdf', bytesBase64: Buffer.from('%PDF-').toString('base64') }],
+    });
+
+    /** A request whose body does not finish arriving until it is told to. */
+    const slowUpload = () => {
+      let finishBody;
+      const req = {
+        method: 'POST',
+        url: '/v1/tools/edit.compress',
+        headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
+        on(event, cb) {
+          if (event === 'data') cb(Buffer.from(body));
+          if (event === 'end') finishBody = cb;
+          return req;
+        },
+        destroy() {},
+      };
+      let statusCode = 0;
+      const res = {
+        writeHead(code) {
+          statusCode = code;
+        },
+        end() {},
+      };
+      return {
+        done: handler(req, res),
+        finish: () => finishBody?.(),
+        status: () => statusCode,
+      };
+    };
+
+    // All three are in the handler with their bodies still arriving.
+    const uploads = [slowUpload(), slowUpload(), slowUpload()];
+    await new Promise((resolve) => setImmediate(resolve));
+    for (const upload of uploads) upload.finish();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(reachedPool, 1, 'only one run may be in flight');
+    assert.equal(
+      uploads.filter((upload) => upload.status() === 429).length,
+      2,
+      'the other two must be refused, not queued',
+    );
+
+    release();
+    await Promise.all(uploads.map((upload) => upload.done));
+  });
 });
