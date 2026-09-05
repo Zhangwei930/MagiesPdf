@@ -58,6 +58,18 @@ function cacheControlFor(pathname) {
 }
 
 /** Serves `handle`'s answers over loopback on a port the OS picks. */
+/** `…/editor/<sessionId>` — the frame a request came from, or nothing. */
+function sessionFromReferer(request) {
+  const referer = request.headers?.referer || request.headers?.referrer;
+  if (typeof referer !== 'string' || referer === '') return undefined;
+  try {
+    const match = /\/editor\/([^/?#]+)/.exec(new URL(referer).pathname);
+    return match ? decodeURIComponent(match[1]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function listenLoopback(handle) {
   return new Promise((resolve, reject) => {
     /**
@@ -93,7 +105,14 @@ function listenLoopback(handle) {
       const answer = await handle({
         path: url.pathname,
         method: request.method,
-        session: url.searchParams.get('session') ?? undefined,
+        // The engine asks for a document's images by the key they had in the
+        // document map — `/media/image1.png` — with no session anywhere in the
+        // path. The frame that asked does carry one, in its own url, so the
+        // referrer is what says which document the image belongs to. Without
+        // it every such request fell back to whichever session was last
+        // focused, and two documents each holding an `image1.png` could be
+        // served each other's.
+        session: url.searchParams.get('session') ?? sessionFromReferer(request) ?? undefined,
         body,
         command,
       });
@@ -182,4 +201,10 @@ function createEditorRuntime({ projectRoot, onDocumentSaved } = {}) {
   });
 }
 
-module.exports = { createEditorRuntime, listenLoopback, contentType, cacheControlFor };
+module.exports = {
+  createEditorRuntime,
+  listenLoopback,
+  sessionFromReferer,
+  contentType,
+  cacheControlFor,
+};

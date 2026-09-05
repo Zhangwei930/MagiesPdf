@@ -1,3 +1,4 @@
+const fs = require('node:fs');
 const path = require('node:path');
 
 /**
@@ -20,19 +21,48 @@ const LIMIT = 1000;
 /** Insertion-ordered, so the oldest entry is the first one a Map yields. */
 const targets = new Map();
 
-/**
- * A path in the one spelling this list compares. Windows and macOS treat two
- * casings as the same file, so folding case there is what makes the check
- * match what the filesystem will actually do.
- */
-function normalizeTarget(candidate, platform = process.platform) {
-  if (typeof candidate !== 'string' || candidate === '') return '';
-  const resolved = path.resolve(candidate);
-  return platform === 'win32' || platform === 'darwin' ? resolved.toLowerCase() : resolved;
+/** What the filesystem itself calls this path, or '' when it cannot say. */
+function canonical(resolved, realpath) {
+  try {
+    return realpath(resolved);
+  } catch {
+    // Not there yet — a save-as destination. Its directory usually is, and
+    // that is what decides how the name will be compared.
+    try {
+      return path.join(realpath(path.dirname(resolved)), path.basename(resolved));
+    } catch {
+      return '';
+    }
+  }
 }
 
-function remember(candidate) {
-  const key = normalizeTarget(candidate);
+/**
+ * A path in the one spelling this list compares.
+ *
+ * Windows folds case, so folding is what makes the check match the filesystem.
+ * macOS usually does — but an APFS volume can be case-sensitive, and there
+ * folding is a *widening*: a grant for `/docs/A.pdf` would also permit writing
+ * `/docs/a.pdf`, a different file the user never chose. Knowing a path must
+ * not be enough, which is the whole point of this list.
+ *
+ * So macOS asks the filesystem instead of assuming. Where the volume folds
+ * case, `realpath` answers with the name the file was created under whichever
+ * spelling it was given, and both grants land on the same key; where it does
+ * not, they stay apart. If the filesystem cannot answer at all the old
+ * assumption is kept, because refusing to save on a path we cannot resolve
+ * would break the ordinary case to guard a rare one.
+ */
+function normalizeTarget(candidate, options = {}) {
+  const { platform = process.platform, realpath = fs.realpathSync.native } = options;
+  if (typeof candidate !== 'string' || candidate === '') return '';
+  const resolved = path.resolve(candidate);
+  if (platform === 'win32') return resolved.toLowerCase();
+  if (platform !== 'darwin') return resolved;
+  return canonical(resolved, realpath) || resolved.toLowerCase();
+}
+
+function remember(candidate, options) {
+  const key = normalizeTarget(candidate, options);
   if (key === '') return;
 
   // Re-inserting moves the entry to the back, so a file still in use is not the
@@ -51,8 +81,8 @@ function rememberAll(candidates) {
   for (const candidate of candidates) remember(candidate);
 }
 
-function isWritable(candidate) {
-  const key = normalizeTarget(candidate);
+function isWritable(candidate, options) {
+  const key = normalizeTarget(candidate, options);
   return key !== '' && targets.has(key);
 }
 

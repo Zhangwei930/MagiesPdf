@@ -546,7 +546,16 @@ class AgentRuntime {
           const result = await this.executeTool({
             jobId: randomUUID(),
             toolId: tool.id,
-            files: inputFiles.map(({ id: _id, password: _password, ...file }) => file),
+            // A copy of the bytes, not the workspace's own array. The pool
+            // transfers input buffers rather than copying them — right for a
+            // caller that read the file for this one run, wrong for the
+            // workspace, which keeps its files for the whole turn. Handing the
+            // array over detached it, and the next tool on the same file
+            // received nothing and called the document damaged.
+            files: inputFiles.map(({ id: _id, password: _password, ...file }) => ({
+              ...file,
+              bytes: file.bytes ? new Uint8Array(file.bytes) : file.bytes,
+            })),
             params,
             signal,
             onProgress: (fraction, message) => onEvent({

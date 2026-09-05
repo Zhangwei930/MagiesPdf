@@ -73,3 +73,37 @@ describe('renderAssistantMarkdown', () => {
     assert.match(html, /&lt;img/);
   });
 });
+
+/**
+ * The image schemes claimed to be "narrowed to what the page's CSP permits"
+ * and were not: `img-src 'self' data: blob:` never allowed http or https, so a
+ * remote image in a reply was rendered as an `<img>` the page then refused to
+ * load — a broken picture with no explanation.
+ *
+ * The CSP is the right line and stays where it is. What changes is the claim:
+ * a remote image becomes its alt text, which is the thing the model was
+ * describing anyway.
+ */
+describe('images the page could never load', () => {
+  it('renders a remote image as its text rather than a broken picture', () => {
+    const html = renderAssistantMarkdown('![a chart](https://example.com/chart.png)');
+    assert.doesNotMatch(html, /<img/);
+    assert.match(html, /a chart/);
+  });
+
+  it('still renders the images the page can actually show', () => {
+    assert.match(
+      renderAssistantMarkdown('![tiny](data:image/png;base64,iVBORw0KGgo=)'),
+      /<img src="data:image\/png;base64,iVBORw0KGgo="/,
+    );
+    assert.match(renderAssistantMarkdown('![shot](blob:abc)'), /<img/);
+  });
+
+  /** A link to the same place is still a link — clicking it opens a browser. */
+  it('leaves a link to a remote image alone', () => {
+    assert.match(
+      renderAssistantMarkdown('[the chart](https://example.com/chart.png)'),
+      /<a href="https:\/\/example.com\/chart.png"/,
+    );
+  });
+});

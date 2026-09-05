@@ -239,3 +239,54 @@ describe('AI service', () => {
     }, () => {}), /successful Office tool/);
   });
 });
+
+/**
+ * Web search could be configured in Settings and then quietly did nothing.
+ * The service worked out the provider and handed it to the runtime factory —
+ * but the *default* factory, the one every ordinary chat goes through, did not
+ * forward it to `AgentRuntime`. The runtime accepted the option and never
+ * received it, so no search tool was ever registered and the model was never
+ * told the capability existed.
+ *
+ * Only the injected factory used by these tests passed it on, which is why
+ * nothing caught it.
+ */
+describe('web search reaches the runtime it was configured for', () => {
+  it('hands the provider to the runtime the default factory builds', async () => {
+    let listed = 0;
+    // The shape the runtime consumes: a function name plus the tool definition
+    // it hands to the model.
+    const provider = {
+      listTools: async () => {
+        listed += 1;
+        return [{
+          functionName: 'web_search',
+          providerTool: {
+            type: 'function',
+            function: { name: 'web_search', description: 'search', parameters: { type: 'object' } },
+          },
+        }];
+      },
+      callTool: async () => ({ ok: true, content: '' }),
+    };
+
+    let toolNames = [];
+    const service = serviceWith({
+      // No runtimeFactory: this must go through the real default path.
+      runtimeFactory: undefined,
+      webSearchProvider: provider,
+      readCatalog: () => ({ tools: [] }),
+      model: {
+        async streamMessage(request) {
+          toolNames = (request.tools || []).map((entry) => entry?.function?.name).filter(Boolean);
+          return { content: 'done', tool_calls: [] };
+        },
+      },
+    });
+
+    await service.runTurn({ requestId: 'web-1', prompt: 'what is the news' }, () => {});
+
+    assert.equal(listed > 0, true, 'the provider was asked for its tools');
+    assert.ok(toolNames.includes('web_search'), `the model was offered: ${toolNames.join(', ')}`);
+  });
+});

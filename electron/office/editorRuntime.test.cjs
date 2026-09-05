@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { describe, it } = require('node:test');
-const { cacheControlFor, listenLoopback } = require('./editorRuntime.cjs');
+const { cacheControlFor, listenLoopback, sessionFromReferer } = require('./editorRuntime.cjs');
 
 describe('editor HTTP cache', () => {
   it('never caches session pages or document bytes', () => {
@@ -170,5 +170,42 @@ describe('editor host error handling', () => {
         assert.equal(response.body, 'served');
       },
     );
+  });
+});
+
+/**
+ * Every Office tab keeps its frame mounted, and the engine asks for a
+ * document's images by the key they had in the document map —
+ * `/media/image1.png` — with no session anywhere in the path. Falling back to
+ * whichever session was last focused meant two documents that each hold an
+ * `image1.png` could be served each other's, and a background tab finishing
+ * its load could pick up the foreground document's picture.
+ *
+ * The frame that asked carries the session in its own url.
+ */
+describe('which document an image request belongs to', () => {
+  const asked = (referer) => sessionFromReferer({ headers: referer ? { referer } : {} });
+
+  it('reads the session out of the asking frame', () => {
+    assert.equal(asked('http://127.0.0.1:51234/editor/sess-a'), 'sess-a');
+    assert.equal(asked('http://127.0.0.1:51234/editor/sess-b?x=1'), 'sess-b');
+  });
+
+  it('answers nothing when there is nothing to read', () => {
+    assert.equal(asked(''), undefined);
+    assert.equal(asked('not a url'), undefined);
+    assert.equal(asked('http://127.0.0.1:51234/editors/sdkjs/word/sdk-all-min.js'), undefined);
+  });
+
+  it('decodes a session that had to be escaped', () => {
+    assert.equal(asked('http://127.0.0.1:9/editor/a%2Fb'), 'a/b');
+  });
+
+  it('is only a fallback — an explicit session still wins', () => {
+    const source = require('node:fs').readFileSync(
+      require('node:path').join(__dirname, 'editorRuntime.cjs'),
+      'utf8',
+    );
+    assert.match(source, /searchParams\.get\('session'\) \?\? sessionFromReferer/);
   });
 });

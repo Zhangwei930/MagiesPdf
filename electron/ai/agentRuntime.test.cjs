@@ -832,3 +832,70 @@ describe('Agent runtime', () => {
     assert.equal(events.filter((event) => event.type === 'tool_result' && !event.ok).length, 2);
   });
 });
+
+/**
+ * The worker pool transfers input buffers rather than copying them — a 200 MB
+ * scan should not be duplicated on its way in. That contract is fine for a
+ * caller that read the file for this one run, and wrong for the AI workspace,
+ * which keeps its files for the whole turn: the transfer detached the
+ * workspace's own array, so a second tool on the same file received zero bytes
+ * and reported a damaged PDF.
+ *
+ * Measured before the fix: a three-byte input became `length: 0` the moment it
+ * was dispatched.
+ */
+it('a workspace file survives being handed to a tool', async () => {
+  const source = new Uint8Array([1, 2, 3]);
+  let dispatched = null;
+  let step = 0;
+
+  const runtime = new AgentRuntime({
+    tools: [{
+      id: 'edit.compress',
+      name: { zh: '压缩', en: 'Compress' },
+      description: { zh: '', en: '' },
+      input: { min: 1, max: 1, accept: ['application/pdf'] },
+      params: [],
+    }],
+    model: {
+      async streamMessage() {
+        step += 1;
+        if (step === 1) {
+          return {
+            content: '',
+            tool_calls: [{
+              id: 'call-1',
+              type: 'function',
+              function: {
+                name: 'edit__compress',
+                arguments: '{"input_file_ids":["file-1"]}',
+              },
+            }],
+          };
+        }
+        return { content: 'done', tool_calls: [] };
+      },
+    },
+    executeTool: async (request) => {
+      dispatched = request.files[0].bytes;
+      // Exactly what the worker pool does with the buffers it is given.
+      structuredClone(dispatched.buffer, { transfer: [dispatched.buffer] });
+      return { files: [], summary: { zh: '', en: '' } };
+    },
+    requestApproval: async () => true,
+  });
+
+  await runtime.runTurn({
+    prompt: 'compress it',
+    history: [],
+    locale: 'en',
+    files: [{ id: 'file-1', name: 'a.pdf', mime: 'application/pdf', bytes: source }],
+    config: { baseUrl: 'http://127.0.0.1:11434/v1', apiKey: '', model: 'local', maxSteps: 4 },
+    onEvent: () => {},
+  });
+
+  assert.ok(dispatched, 'the tool actually ran — otherwise this asserts nothing');
+  assert.equal(dispatched.byteLength, 0, 'the pool detached what it was handed');
+  assert.equal(source.byteLength, 3, 'the workspace still has its file for the next step');
+  assert.deepEqual([...source], [1, 2, 3]);
+});

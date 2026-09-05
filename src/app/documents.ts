@@ -21,6 +21,24 @@ import type { PickedFile } from './bridge.ts';
  * showing, and it can refuse to save over it.
  */
 /**
+ * Whether this machine's filesystem treats two spellings as one file.
+ *
+ * Windows and macOS do; Linux does not, and this app ships an AppImage and a
+ * .deb. Folding the case everywhere made `/docs/A.docx` and `/docs/a.docx`
+ * share a tab there — opening the second silently focused the first, which
+ * looks like the document failing to open.
+ *
+ * Set once from `bridge().platform`. It defaults to folding, because that is
+ * what the two platforms most people run do, and because a missed fold merely
+ * opens a second tab while a wrong one hides a document.
+ */
+let pathsFoldCase = true;
+
+export function setPathCaseSensitivity(platform: string): void {
+  pathsFoldCase = platform !== 'linux';
+}
+
+/**
  * How two paths are compared when asking whether a file is already open.
  *
  * Windows accepts either separator and does not distinguish case, so the same
@@ -29,8 +47,13 @@ import type { PickedFile } from './bridge.ts';
  * second tab on a file that is already open, and a second engine session with
  * it. Not a real-path resolution: this is pure, and the answer is only ever
  * used to reuse a tab.
+ *
+ * Where case matters, so does the separator: a backslash is a legal character
+ * in a Linux filename, and rewriting it would merge `/docs/a\b.pdf` with
+ * `/docs/a/b.pdf`.
  */
 export function normalizeDocumentPath(candidate: string): string {
+  if (!pathsFoldCase) return candidate;
   return candidate.replace(/\\/g, '/').toLowerCase();
 }
 
@@ -258,11 +281,25 @@ export function redo(doc: DocumentState): DocumentState {
  * Saving a rendering writes a PDF the user chose the location of, so from then
  * on it is that PDF and not a view of the Office file it started as.
  */
-export function markSaved(doc: DocumentState, path: string): DocumentState {
+/**
+ * Records what reached the disk.
+ *
+ * `written` is the array the save was handed, not the document's current
+ * bytes: a write finishes later, and an edit made while it was in flight is
+ * not on disk. Recording "whatever the document is now" marked that edit saved
+ * — the tab showed no changes, closing it asked nothing, and the edit was
+ * gone. The parameter is required so the distinction cannot be lost again by
+ * someone reading the shorter call as equivalent.
+ */
+export function markSaved(
+  doc: DocumentState,
+  path: string,
+  written: Uint8Array,
+): DocumentState {
   return {
     ...doc,
     path: path === '' ? doc.path : path,
-    savedBytes: doc.bytes,
+    savedBytes: written,
     origin: path === '' ? doc.origin : null,
   };
 }

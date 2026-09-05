@@ -27,8 +27,17 @@ import { Marked, type RendererObject, type Tokens } from 'marked';
  *  which is what decides whether the click is actually handed to the desktop. */
 const LINK_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
 
-/** Schemes an image may load, narrowed further to what the page's CSP permits. */
-const IMAGE_SCHEMES = new Set(['http:', 'https:', 'data:', 'blob:']);
+/**
+ * Schemes an image may load. This is `img-src 'self' data: blob:` from the
+ * page's CSP, and nothing wider.
+ *
+ * `http:` and `https:` were listed here and the CSP never allowed them, so a
+ * remote image was rendered as an `<img>` the page then refused to load — a
+ * broken picture with no explanation. Widening the CSP instead would let a
+ * document decide what this window fetches, which is the thing that policy
+ * exists to prevent; the alt text is what the model was describing anyway.
+ */
+const IMAGE_SCHEMES = new Set(['data:', 'blob:']);
 
 const HTML_ESCAPES: Record<string, string> = {
   '&': '&amp;',

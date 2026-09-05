@@ -132,7 +132,26 @@ describe('AI workspace wiring', () => {
    */
   it('deduplicates a document before the engine is asked to open it', () => {
     assert.match(appSource, /partitionOpenPaths/);
-    assert.match(appSource, /openInEditor\(fresh/);
+  });
+
+  /**
+   * A tab exists only once opening has finished, so deduplicating against the
+   * tab list cannot see a request still in flight. Two overlapping opens of
+   * one file each created a session, and only one was ever closed — the half
+   * of #29 that a tab-based check could never cover.
+   */
+  it('holds one claim per file while it is being opened', () => {
+    assert.match(appSource, /openGuard\.claim\(fresh\)/);
+    assert.match(appSource, /openInEditor\(claimed/);
+    assert.match(appSource, /openGuard\.release\(claimed\)/);
+  });
+
+  /**
+   * Linux distinguishes `/docs/A.docx` from `/docs/a.docx`, and this app ships
+   * an AppImage and a .deb. The comparison is answered once, from the platform.
+   */
+  it('asks the platform whether two spellings are one file', () => {
+    assert.match(appSource, /setPathCaseSensitivity\(bridge\(\)\.platform\)/);
   });
 
   it('deletes a single task from the history as well as clearing all of it', () => {
@@ -196,5 +215,24 @@ describe('AI workspace wiring', () => {
 
     assert.match(aiSettingsSource, /<AiImages/);
     assert.match(aiSettingsSource, /images: next/);
+  });
+});
+
+/**
+ * The panel used to run its own 20-second wait on `onEditorSaved` and throw
+ * away the promise `requestEngineSave` returns. Three things followed: a
+ * failed save became an unhandled rejection while the panel waited out its
+ * own timeout, the two deadlines disagreed (20s here, 60s in the store), and
+ * one success event was handled twice — by the shell's listener and again by
+ * this one.
+ */
+describe('saving before an AI turn', () => {
+  it('waits on the save the store already tracks', () => {
+    assert.match(aiPanelSource, /await useApp\.getState\(\)\.requestEngineSave/);
+  });
+
+  it('does not listen for the save a second time, or discard the promise', () => {
+    assert.doesNotMatch(aiPanelSource, /void useApp\.getState\(\)\.requestEngineSave/);
+    assert.doesNotMatch(aiPanelSource, /onEditorSaved[\s\S]{0,200}engineSaved\(payload\)/);
   });
 });
