@@ -1,5 +1,71 @@
 # Changelog
 
+## 3.4.0 — 2026-09-05
+
+### Highlighting and drawing, actually working
+
+- **A mark now lands where you drew it.** A highlight or a pen stroke 100pt from the top of the page was being written 742pt from the top — near the bottom, on the wrong part of the document. Every mark made in 3.3.0 is in the wrong place; marks made from this version on are not
+- **Marks no longer erase each other.** Each new highlight or stroke deleted the ones before it on that page, so only the last one survived — and a pen stroke wiped out a highlight. They accumulate now. Taking one back is still ⌘Z
+- Drawing on one page while the previous stroke was still being written no longer loses the earlier one
+
+### Updating on macOS
+
+- **Installing an update no longer freezes the app for a minute.** Unpacking the download and replacing the application were being done in a way that stopped the window answering at all — a spinning beachball, with no way to tell whether anything was happening. The work now happens in the background and the notice says which stage it is at
+- The restart is faster: removing the previous version is left until the next launch instead of holding up the restart
+- If an update fails to install, the app says why and restarts into the version you already had, rather than leaving a window that looks normal but can no longer open or save anything
+- **"Restart to install" now asks about unsaved documents first**, as quitting does, and answering "cancel" leaves everything exactly as it was with the update still waiting
+
+### Printing
+
+- **A PDF you opened with a password can now be printed.** It reported "Printing failed" and there was nothing to be done about it, even with the document open and readable in front of you
+- A print that hangs while preparing now gives up and cleans up after itself instead of waiting forever
+
+### Forms
+
+- **Radio buttons work.** A group of options was drawn as a row of tick boxes that all wrote to the same field, so no option could be chosen — only cleared. Picking one now selects it, in the page and in the file
+- Undoing a change to a form field now updates the box on screen too. It kept showing the old value, and applying again wrote back the change you had just undone
+- **"List fields only"** shows the list. It was being discarded, and the document was marked as unsaved for an edit that never happened
+
+### Passwords and encryption
+
+- **Setting a password works from the task pane again.** The fields for the open password, the permissions password and a certificate's passphrase were all hidden, so the tools ran with nothing filled in
+- A password containing a comma is refused with an explanation rather than failing obscurely. Every other character — including `=`, quotes, spaces and non-ASCII — works as it always did
+- Save errors no longer quote your password back at you
+
+### Saving and closing
+
+- **Cancelling a save no longer closes the tab.** Choosing "Save" when closing an unsaved document, then cancelling the file dialog, closed it anyway and lost the work
+- **Cancelling an export no longer reports success.** It said the files were saved and put the results away, so the only way back to them was to run the tool again
+- Cancelling a quit no longer leaves the application unable to work. Everything was being shut down before you were asked about unsaved documents
+
+### Finding
+
+- Typing a new search while the last one is still running no longer fills the box with results for the word you replaced, and no longer leaves "searching…" on screen for the rest of the session
+
+### Speed
+
+- **Batch runs and pipelines no longer freeze the window.** They were doing their work in the same place that draws the interface, so a run over large files stopped everything — including the run's own cancel button — until it finished. This applies to runs started over the local REST API too
+
+### Jobs and folder rules
+
+- **Cancelling a job now sticks.** A cancelled job could go back to "running" and then report itself finished, with a result nobody asked for
+- **A folder rule's daily limit no longer loses files.** Files that arrived after the day's limit was reached were skipped for good, rather than waiting for the next day
+
+### Security
+
+- The update installer removed any similarly-named backup beside the app, not only its own
+- Results are written to the folder you chose in settings or picked in the dialog, and nowhere else
+- Two saves finishing at the same time can no longer overwrite each other's results
+- A malformed signature can no longer make the app ask for gigabytes of memory while checking it
+- An unattended automation rule can no longer reach the web, whatever it was allowed to do
+
+### Under the hood
+
+- Two Office documents open at once no longer risk one being handed the other's images
+- A save the editor could not start is reported straight away instead of waiting out a minute-long timeout, and a late answer from a save that gave up can no longer mark a later one as finished
+- On macOS, a backslash in a file name is treated as part of the name rather than as a folder separator, so two different files no longer share one tab
+- The local REST API's limit on simultaneous runs can no longer be exceeded by uploading several at once
+
 ## 3.3.2 — 2026-09-05
 
 ### Security
