@@ -53,8 +53,38 @@ const defaultClock: Clock = {
 export function createEngineSaveTracker(clock: Clock = defaultClock): EngineSaveTracker {
   const outstanding = new Map<string, Outstanding>();
 
+  /**
+   * Documents whose save gave up while the engine was still owed an answer.
+   *
+   * A receipt names the session, not the request — the engine posts the
+   * document to `/editors/downloadas/<session>` and nothing carries a per-save
+   * token — so an answer arriving after a timeout is indistinguishable from an
+   * answer to whatever was asked next. Letting it settle the next request
+   * marks the tab saved on the strength of bytes from before the edits that
+   * followed, and closing it then throws them away.
+   *
+   * The marker is consumed by the first answer that arrives, or forgotten
+   * after the same window the save was given: a receipt that never comes must
+   * not swallow a later save's.
+   */
+  const abandoned = new Map<string, number>();
+
+  function abandon(id: string, timeoutMs: number): void {
+    const previous = abandoned.get(id);
+    if (previous !== undefined) clock.clearTimeout(previous);
+    abandoned.set(id, clock.setTimeout(() => abandoned.delete(id), timeoutMs));
+  }
+
   /** Takes one document's request, cancelling its timeout. */
   function take(id: string): Outstanding | null {
+    const stale = abandoned.get(id);
+    if (stale !== undefined) {
+      // This answer belongs to the save that timed out, not to whatever is
+      // waiting now.
+      clock.clearTimeout(stale);
+      abandoned.delete(id);
+      return null;
+    }
     const held = outstanding.get(id);
     if (!held) return null;
     outstanding.delete(id);
@@ -79,6 +109,8 @@ export function createEngineSaveTracker(clock: Clock = defaultClock): EngineSave
       });
       const timer = clock.setTimeout(() => {
         outstanding.delete(id);
+        // The engine still owes an answer for this one. See `abandoned`.
+        abandon(id, timeoutMs);
         reject(new Error('The editor did not answer the save in time'));
       }, timeoutMs);
       outstanding.set(id, { promise, resolve, reject, timer });

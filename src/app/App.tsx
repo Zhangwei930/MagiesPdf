@@ -941,6 +941,14 @@ export function App() {
                     }
                     onRequest={(what) => void handleEditorRequest(doc, what)}
                     onExportReady={(title) => void handleEditorExport(doc, title)}
+                    onSaveFailed={(reason) => {
+                      // The engine already knows this save is not happening.
+                      // Without this the request waited out its whole timeout
+                      // and reported that instead of the reason it was given.
+                      if (doc.editor) {
+                        engineSaveFailed({ sessionId: doc.editor.sessionId, message: reason });
+                      }
+                    }}
                   />
                   )}
                 </div>
