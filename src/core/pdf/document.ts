@@ -112,6 +112,13 @@ export interface SaveOptions {
  * encryption into the output. Every save therefore states its intent explicitly:
  * `encrypt=none` unless an encryption block was requested.
  */
+/** Save flags with the password values removed, for error messages and logs. */
+function redactPasswords(flags: readonly string[]): string[] {
+  return flags.map((flag) =>
+    /^(user|owner)-password=/.test(flag) ? `${flag.split('=')[0]}=***` : flag,
+  );
+}
+
 export function saveDocument(doc: mupdf.PDFDocument, options: SaveOptions = {}): Uint8Array {
   const flags: string[] = [];
 
@@ -133,6 +140,20 @@ export function saveDocument(doc: mupdf.PDFDocument, options: SaveOptions = {}):
 
   if (options.encryption) {
     const { method, userPassword, ownerPassword, permissions } = options.encryption;
+    // MuPDF takes these as one comma-separated string with no escape for a
+    // comma inside a value, and its object form is worse than the string: it
+    // replaces commas with colons, so the file would end up encrypted with a
+    // password the user never typed and could never open. Refusing is the
+    // only honest answer. Nothing else needs escaping — `=`, quotes,
+    // backslashes, spaces and non-ASCII all survive.
+    for (const password of [userPassword, ownerPassword]) {
+      if (password.includes(',')) {
+        throw new ToolError('INVALID_PARAM', 'A password may not contain a comma', {
+          zh: '密码不能包含英文逗号（,）。请改用其他字符。',
+          en: 'A password cannot contain a comma. Please use different characters.',
+        });
+      }
+    }
     flags.push(
       `encrypt=${method}`,
       `user-password=${userPassword}`,
@@ -157,7 +178,8 @@ export function saveDocument(doc: mupdf.PDFDocument, options: SaveOptions = {}):
   } catch (cause) {
     throw new ToolError(
       'INTERNAL',
-      `Failed to save PDF (${flags.join(',')}): ${cause instanceof Error ? cause.message : String(cause)}`,
+      // Never the values: two of these flags are the user's passwords.
+      `Failed to save PDF (${redactPasswords(flags).join(',')}): ${cause instanceof Error ? cause.message : String(cause)}`,
       {
         zh: '保存 PDF 时出错，请重试或改用其他选项。',
         en: 'Saving the PDF failed. Try again, or change the options.',

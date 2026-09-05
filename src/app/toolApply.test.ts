@@ -86,6 +86,29 @@ describe('documentTaskParams', () => {
     assert.equal(params.length, 1);
     assert.equal(params[0]?.key, 'level');
   });
+
+  /**
+   * Only the document's *own* open password comes for free. A password the
+   * user is setting — the open password on `security.add-password`, its
+   * permissions password, a certificate's passphrase — is an answer nothing
+   * else can supply, and dropping the field left those tools unusable from
+   * the pane: no way to type one, and a run with an empty password.
+   */
+  it('keeps a password the user has to choose', () => {
+    const params = documentTaskParams(
+      tool({}, [
+        { key: 'password', type: 'password', label: { zh: 'p', en: 'p' }, default: '' },
+        { key: 'userPassword', type: 'password', label: { zh: 'u', en: 'u' }, default: '' },
+        { key: 'ownerPassword', type: 'password', label: { zh: 'o', en: 'o' }, default: '' },
+        { key: 'passphrase', type: 'password', label: { zh: 'c', en: 'c' }, default: '' },
+      ] as ToolMeta['params']),
+    );
+
+    assert.deepEqual(
+      params.map((param) => param.key),
+      ['userPassword', 'ownerPassword', 'passphrase'],
+    );
+  });
 });
 
 describe('canApplyInstantly', () => {

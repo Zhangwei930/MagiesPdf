@@ -203,3 +203,52 @@ describe('countPages', () => {
     assert.equal(countPages(encrypted, 'pw'), 7);
   });
 });
+
+/**
+ * MuPDF takes its write options as one comma-separated string, and there is
+ * no escape for a comma inside a value. Its own object form is worse than
+ * the string: it replaces commas with colons, so a document would be
+ * encrypted with a password the user never typed and could never open.
+ *
+ * Only the comma is a problem — `=`, quotes, backslashes, spaces and
+ * non-ASCII all survive, and are covered here so the guard stays narrow.
+ */
+describe('a password the option string cannot carry', () => {
+  const encrypt = async (userPassword: string) => {
+    const doc = openDocument(await samplePdf({ pages: 1 }));
+    try {
+      return saveDocument(doc, {
+        encryption: {
+          method: 'aes-256',
+          userPassword,
+          ownerPassword: userPassword,
+          permissions: -1,
+        },
+      });
+    } finally {
+      doc.destroy();
+    }
+  };
+
+  it('refuses a comma rather than mangling it', async () => {
+    await assert.rejects(encrypt('alpha,beta'), (error: unknown) => {
+      assert.ok(error instanceof ToolError);
+      assert.equal(error.code, 'INVALID_PARAM');
+      return true;
+    });
+  });
+
+  it('never puts the password in the message', async () => {
+    await assert.rejects(encrypt('alpha,beta'), (error: unknown) => {
+      const text = `${(error as Error).message} ${JSON.stringify((error as ToolError).userMessage)}`;
+      assert.ok(!text.includes('alpha'), `password leaked: ${text}`);
+      return true;
+    });
+  });
+
+  it('leaves every other character alone', async () => {
+    for (const password of ['a=b', 'a:b', 'a b', 'a\\b', '中文密码', "a'b"]) {
+      await assert.doesNotReject(encrypt(password), `rejected ${password}`);
+    }
+  });
+});
