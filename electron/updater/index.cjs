@@ -1,4 +1,4 @@
-const { app } = require('electron');
+const { app, dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const settings = require('../settings.cjs');
 const {
@@ -322,18 +322,46 @@ async function quitAndInstall() {
     // Unpacking ~800 MB takes tens of seconds. Say so, and keep saying it —
     // the alternative is a button that spins with the window unable to answer.
     emitStatus({ state: 'installing', version, message: 'preparing' });
+    // Whether this process still has the pool and the editor sessions it needs
+    // to carry on. Once the preparation has run it does not, whatever happens
+    // next.
+    const putAway = typeof prepareForInstall === 'function';
     try {
       await prepareForInstall?.();
     } catch (err) {
       console.warn('[MagiesPdf/updater] pre-install cleanup failed:', err?.message || err);
     }
 
-    const installed = await macSelfUpdate.installMacUpdateFromZip({
-      zipPath: downloadedFile,
-      bundlePath,
-      expectedVersion: version ?? null,
-      onProgress: (stage) => emitStatus({ state: 'installing', version, message: stage }),
-    });
+    let installed;
+    try {
+      installed = await macSelfUpdate.installMacUpdateFromZip({
+        zipPath: downloadedFile,
+        bundlePath,
+        expectedVersion: version ?? null,
+        onProgress: (stage) => emitStatus({ state: 'installing', version, message: stage }),
+      });
+    } catch (cause) {
+      if (putAway) {
+        // The app was put away before the swap, so this process is a shell: it
+        // cannot open a document, run a tool, or save what it was holding, and
+        // the window would sit there looking normal. The installed app is
+        // intact — a failed swap rolls back — so say what happened and restart
+        // into it.
+        const message = cause instanceof Error ? cause.message : String(cause);
+        try {
+          dialog.showErrorBox('Update failed', `${message}\n\nMagies Office will restart.`);
+        } catch {
+          // No window to attach it to; the restart still has to happen.
+        }
+        try {
+          app.relaunch();
+        } catch (err) {
+          console.warn('[MagiesPdf/updater] relaunch failed:', err?.message || err);
+        }
+        app.quit();
+      }
+      throw cause;
+    }
     try {
       app.relaunch({ execPath: installed.executablePath });
     } catch (err) {
