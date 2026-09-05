@@ -1,5 +1,6 @@
 import { ToolError } from './errors.ts';
-import { executeTool, type ExecuteOptions } from './execute.ts';
+import { type ExecuteOptions } from './execute.ts';
+import { runSubTool } from './subTool.ts';
 import type {
   HostBridge,
   LocalizedText,
@@ -111,7 +112,7 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
       let lastSummary: LocalizedText | undefined;
       for (let f = 0; f < current.length; f += 1) {
         const file = current[f] as ToolInputFile;
-        const leg = await executeTool(tool, executeOptions([file]));
+        const leg = await runSubTool(tool, executeOptions([file]));
         allFiles.push(...leg.files.map(asInputFile));
         lastSummary = leg.summary;
         onProgress?.(
@@ -130,7 +131,7 @@ export async function runPipeline(options: PipelineOptions): Promise<PipelineRes
         },
       };
     } else {
-      result = await executeTool(tool, executeOptions(current));
+      result = await runSubTool(tool, executeOptions(current));
     }
 
     if (result.files.length === 0) {

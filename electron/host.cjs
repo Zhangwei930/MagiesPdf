@@ -216,8 +216,20 @@ async function externalConvert(input, targetExtension, signal) {
   }
 }
 
-function createHostBridge() {
-  return { htmlToPdf, externalConvert, hasExternalConverter };
+/**
+ * @param {object} [options]
+ * @param {(toolId: string, files: unknown[], params: object, signal?: AbortSignal,
+ *          onProgress?: Function) => Promise<unknown>} [options.runTool]
+ *   Runs another tool off this process. `advanced.batch` and
+ *   `advanced.pipeline` have to run here — a step might need this bridge — but
+ *   most steps do not, and doing their work here froze the window, the cancel
+ *   button and the local API for the length of the run. Left out when there is
+ *   nowhere to dispatch to, in which case the caller runs the step itself.
+ */
+function createHostBridge({ runTool } = {}) {
+  const bridge = { htmlToPdf, externalConvert, hasExternalConverter };
+  if (typeof runTool === 'function') bridge.runTool = runTool;
+  return bridge;
 }
 
 module.exports = {

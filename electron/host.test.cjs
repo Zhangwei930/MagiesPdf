@@ -4,6 +4,7 @@ const { describe, it } = require('node:test');
 const {
   PRINT_WEB_PREFERENCES,
   converterConfigFrom,
+  createHostBridge,
   converterSupports,
   isSafePrintRequest,
   safeTemporaryName,
@@ -105,5 +106,51 @@ describe('host boundary helpers', () => {
     assert.equal(isSafePrintRequest('http://127.0.0.1:8737/v1/health'), false);
     assert.equal(isSafePrintRequest('file:///etc/passwd'), false);
     assert.equal(isSafePrintRequest('ws://127.0.0.1/socket'), false);
+  });
+});
+
+/**
+ * `advanced.batch` and `advanced.pipeline` have to be `runtime: 'main'`,
+ * because a step might need this bridge. Most steps do not, and doing their
+ * work in the main process froze the window, its own cancel button, the
+ * editor and the local API for the length of the run — so the bridge offers a
+ * way back out to wherever tools normally run.
+ */
+describe('running another tool from a main-process tool', () => {
+  it('is not offered when there is nowhere to dispatch to', () => {
+    assert.equal(createHostBridge().runTool, undefined);
+  });
+
+  it('is offered when the caller supplies one', async () => {
+    const asked = [];
+    const bridge = createHostBridge({
+      runTool: async (toolId) => {
+        asked.push(toolId);
+        return { files: [] };
+      },
+    });
+
+    await bridge.runTool('edit.compress', [], {});
+    assert.deepEqual(asked, ['edit.compress']);
+  });
+
+  it('keeps the rest of the bridge either way', () => {
+    for (const bridge of [createHostBridge(), createHostBridge({ runTool: async () => ({}) })]) {
+      assert.equal(typeof bridge.htmlToPdf, 'function');
+      assert.equal(typeof bridge.externalConvert, 'function');
+      assert.equal(typeof bridge.hasExternalConverter, 'function');
+    }
+  });
+
+  /** The one this app actually installs sends the step to the job pool. */
+  it('is wired to the pool in ipc.cjs', () => {
+    const source = require('node:fs').readFileSync(
+      require('node:path').join(__dirname, 'ipc.cjs'),
+      'utf8',
+    );
+    const call = /createHostBridge\(\{[\s\S]{0,900}/.exec(source)?.[0] ?? '';
+    assert.match(call, /runTool:/);
+    assert.match(call, /pool\s*\n?\s*\.run\(/, 'the step has to reach the pool');
+    assert.match(call, /pool\.cancel\(jobId\)/, 'cancelling a batch has to reach the step');
   });
 });
