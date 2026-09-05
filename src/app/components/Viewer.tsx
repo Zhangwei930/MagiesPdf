@@ -422,12 +422,6 @@ export function Viewer({
 
   // ---- find ---------------------------------------------------------------
 
-  /** Page text, cached per document; extracting it again per keystroke is slow. */
-  const textCache = useRef(new Map<number, string[]>());
-  useEffect(() => {
-    textCache.current = new Map();
-  }, [doc]);
-
   /**
    * Which search the results on screen belong to.
    *
@@ -437,6 +431,42 @@ export function Viewer({
    * the list then belonged to a word the user had already replaced.
    */
   const searchRun = useRef(0);
+
+  /**
+   * Abandon whatever search is running, because what it was asked has changed.
+   *
+   * Clearing the matches was not enough: the search still owned the run
+   * number, so it finished and filled its own results back in against a box
+   * that now said something else. The next Enter then saw a non-empty list and
+   * stepped through the old word's hits instead of searching for the new one.
+   *
+   * It also clears `searching`, which nothing else would: an abandoned run's
+   * own `finally` does not, precisely because it is no longer current.
+   */
+  const invalidateSearch = useCallback(() => {
+    searchRun.current += 1;
+    setMatches([]);
+    setMatchIndex(0);
+  }, []);
+
+  /**
+   * How many searches are still walking pages.
+   *
+   * `searching` used to be cleared by whichever run was still the current one,
+   * which meant an abandoned run cleared nothing — so emptying the box while a
+   * search was running left the bar saying "searching…" for good. Whoever
+   * finishes last turns the light off instead.
+   */
+  const searchesInFlight = useRef(0);
+
+  /** Page text, cached per document; extracting it again per keystroke is slow. */
+  const textCache = useRef(new Map<number, string[]>());
+  useEffect(() => {
+    textCache.current = new Map();
+    // A search still walking the document that has just been replaced would
+    // otherwise finish and report hits at pages and offsets from the old one.
+    searchRun.current += 1;
+  }, [doc]);
 
   const runSearch = useCallback(
     async (needle: string) => {
@@ -448,6 +478,7 @@ export function Viewer({
         setMatchIndex(0);
         return;
       }
+      searchesInFlight.current += 1;
       setSearching(true);
       try {
         const found: DocumentMatch[] = [];
@@ -474,7 +505,10 @@ export function Viewer({
           setMatchIndex(0);
         }
       } finally {
-        if (isCurrent()) setSearching(false);
+        searchesInFlight.current -= 1;
+        // Not `isCurrent()`: a run that was abandoned still has to account for
+        // itself, or the bar keeps saying "searching…" with nothing running.
+        if (searchesInFlight.current === 0) setSearching(false);
       }
     },
     [doc],
@@ -513,9 +547,8 @@ export function Viewer({
   const closeFind = useCallback(() => {
     setFindOpen(false);
     setQuery('');
-    setMatches([]);
-    setMatchIndex(0);
-  }, []);
+    invalidateSearch();
+  }, [invalidateSearch]);
 
   // ---- editing ------------------------------------------------------------
 
@@ -1148,7 +1181,7 @@ export function Viewer({
               aria-label={t('findPlaceholder', locale)}
               onChange={(event) => {
                 setQuery(event.target.value);
-                setMatches([]);
+                invalidateSearch();
               }}
               className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-[var(--text-muted)]"
             />
