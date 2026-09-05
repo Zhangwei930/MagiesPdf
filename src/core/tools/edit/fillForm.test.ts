@@ -81,3 +81,73 @@ describe('edit.fill-form', () => {
     );
   });
 });
+
+/**
+ * A radio group is several widgets sharing one name, and the value names
+ * which option to select — not whether a box is ticked.
+ *
+ * `applyValue` used to run the checkbox path on every widget of the group in
+ * turn: `isTruthy('B')` is false, so it turned off whichever button was on and
+ * selected nothing. The report was "選 A，填 B 之後還是 A，或者乾脆空了", and
+ * that is exactly what the code does.
+ */
+async function radioPdf(selected = 'A'): Promise<Uint8Array> {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([300, 300]);
+  const group = doc.getForm().createRadioGroup('gender');
+  for (const [index, option] of ['A', 'B', 'C'].entries()) {
+    group.addOptionToPage(option, page, { x: 20, y: 200 - index * 30, width: 15, height: 15 });
+  }
+  group.select(selected);
+  return doc.save({ useObjectStreams: false });
+}
+
+/** What another reader sees, rather than what the writer thinks it wrote. */
+async function selectedOption(bytes: Uint8Array): Promise<string | undefined> {
+  const doc = await PDFDocument.load(bytes);
+  return doc.getForm().getRadioGroup('gender').getSelected();
+}
+
+describe('edit.fill-form and radio groups', () => {
+  it('selects the option the value names', async () => {
+    const result = await executeTool(fillFormTool, {
+      files: [asInput(await radioPdf('A'), 'form.pdf')],
+      params: { mode: 'fill', fields: 'gender=B' },
+    });
+
+    assert.equal(await selectedOption(result.files[0]!.bytes), 'B');
+  });
+
+  it('can move the selection back again', async () => {
+    const first = await executeTool(fillFormTool, {
+      files: [asInput(await radioPdf('A'), 'form.pdf')],
+      params: { mode: 'fill', fields: 'gender=C' },
+    });
+    const second = await executeTool(fillFormTool, {
+      files: [asInput(first.files[0]!.bytes, 'form.pdf')],
+      params: { mode: 'fill', fields: 'gender=A' },
+    });
+
+    assert.equal(await selectedOption(second.files[0]!.bytes), 'A');
+  });
+
+  it('leaves the selection alone when it is already the one asked for', async () => {
+    const result = await executeTool(fillFormTool, {
+      files: [asInput(await radioPdf('B'), 'form.pdf')],
+      params: { mode: 'fill', fields: 'gender=B' },
+    });
+
+    assert.equal(await selectedOption(result.files[0]!.bytes), 'B');
+  });
+
+  /** Silently selecting nothing is how this went unnoticed. */
+  it('says so when the value is not one of the options', async () => {
+    const result = await executeTool(fillFormTool, {
+      files: [asInput(await radioPdf('A'), 'form.pdf')],
+      params: { mode: 'fill', fields: 'gender=Z' },
+    });
+
+    assert.match(result.summary?.en ?? '', /not/i);
+    assert.equal(await selectedOption(result.files[0]!.bytes), 'A', 'and does not clear it');
+  });
+});

@@ -178,6 +178,8 @@ export function Viewer({
   }>({ source: null, byPage: NO_FIELDS });
   /** Values typed into the overlay, keyed by field name, before they are applied. */
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  /** The document the drafts belong to; a different one means they are stale. */
+  const fieldSourceRef = useRef<PdfDocumentHandle | null>(null);
   /** The image being stamped; picked when stamp mode is entered. */
   const [stampImage, setStampImage] = useState<PickedFile | null>(null);
 
@@ -721,6 +723,9 @@ export function Viewer({
 
   const onPageFields = useCallback(
     (source: PdfDocumentHandle, pageNumber: number, found: FormFieldBox[]) => {
+      const sameDocument = fieldSourceRef.current === source;
+      fieldSourceRef.current = source;
+
       setFieldCache((current) => {
         // A page that finished reading after an edit landed belongs to the old
         // document; start a fresh map rather than mixing the two.
@@ -730,9 +735,12 @@ export function Viewer({
         return { source, byPage };
       });
       setDrafts((current) => {
-        const next = { ...current };
-        // Only seed names not already being edited, so scrolling a page back
-        // into view cannot wipe out what the user just typed into it.
+        // Keeping what the user typed is right while it is the same document —
+        // scrolling a page back into view must not wipe out a half-typed
+        // answer. Across an edit it is wrong: after an undo the box went on
+        // showing the value that was undone, and applying again wrote it
+        // straight back into the file.
+        const next = sameDocument ? { ...current } : {};
         for (const field of found) {
           if (!(field.name in next)) next[field.name] = field.value;
         }

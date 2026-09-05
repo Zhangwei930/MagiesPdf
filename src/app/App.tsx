@@ -275,9 +275,8 @@ export function App() {
             picked,
             defaultParams(picked.params),
           );
-          const outcome = classifyOutput(result.files);
           const summary = result.summary ? localized(result.summary, locale) : undefined;
-          if (outcome.kind === 'document') {
+          if (result.changedDocument) {
             // Compress etc. put size before/after in summary — surface it, not just the tool name.
             showTaskFeedback(
               { kind: 'ok', title, detail: summary },

@@ -8,6 +8,7 @@ import {
   canRedo,
   canUndo,
   closeDocument,
+  bytesEqual,
   createDocument,
   isDirty,
   markSaved,
@@ -718,5 +719,34 @@ describe('closeDocument / nextActiveId', () => {
 
   it('reports no active document once the last tab is gone', () => {
     assert.equal(nextActiveId([a], a.id, a.id), null);
+  });
+});
+
+/**
+ * `edit.fill-form` in "list fields only" mode returns the document it read.
+ * Recording that as an edit gave the user an undo step that undoes nothing and
+ * a tab marked unsaved with nothing to save.
+ */
+describe('a run that changed nothing', () => {
+  it('is not an edit', () => {
+    const doc = createDocument(picked('a.pdf', '/docs/a.pdf'));
+    const after = applyEdit(doc, new Uint8Array(doc.bytes));
+
+    assert.equal(after, doc, 'the same document, not a new state');
+    assert.equal(after.past.length, 0, 'no undo step');
+    assert.equal(isDirty(after), false);
+  });
+
+  it('still records one when a byte differs', () => {
+    const doc = createDocument(picked('a.pdf', '/docs/a.pdf'));
+    const after = applyEdit(doc, bytes(2));
+
+    assert.equal(after.past.length, 1);
+    assert.equal(isDirty(after), true);
+  });
+
+  it('tells a shorter buffer from a prefix of a longer one', () => {
+    assert.equal(bytesEqual(new Uint8Array([1, 2]), new Uint8Array([1, 2, 3])), false);
+    assert.equal(bytesEqual(new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 3])), true);
   });
 });

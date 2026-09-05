@@ -107,19 +107,23 @@ export function ApplyToolPanel({ tool, document, onClose }: ApplyToolPanelProps)
     setError('');
     try {
       const result = await applyToolToDocument(document.id, tool, values, extras);
-      if (classifyOutput(result.files).kind === 'document') {
+      setResultSummary(result.summary ? localized(result.summary, locale) : '');
+      if (result.changedDocument) {
         setAppliedEdit(true);
         setOutputs(null);
         setReportRows(null);
-        setResultSummary(result.summary ? localized(result.summary, locale) : '');
         setSavedTo('');
         if (closeAfterApply) onClose();
         return;
       }
+      // The document is as it was, so whatever the run has to say is the
+      // point of it: the field list from "list fields only" used to be
+      // thrown away here while the tab was marked unsaved for an edit that
+      // never happened.
+      const rows = asReportRows(result.data);
       setAppliedEdit(false);
-      setOutputs(result.files);
-      setReportRows(asReportRows(result.data));
-      setResultSummary(result.summary ? localized(result.summary, locale) : '');
+      setReportRows(rows);
+      setOutputs(rows ? null : result.files);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
