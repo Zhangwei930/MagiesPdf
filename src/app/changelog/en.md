@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.4.1 — 2026-10-04
+
+### AI document building on macOS
+
+- **The AI assistant can build and restyle Office documents on macOS again.** Inserting charts, tables, pivot tables, a contents page, page numbers or footnotes, and restyling a presentation all failed in 3.4.0 on macOS: the LibreOffice bundled with the app was damaged while the installer was being made, so the part of it that does this work was stopped by the system the moment it started
+- On **macOS 27** these operations still cannot run: the system no longer lets an app start that part of LibreOffice itself. Previews, converting to PDF and editing documents are not affected. This is being worked on
+
+### Word documents
+
+- **Saving a Word document keeps its font information.** Every save in the built-in editor stripped the details Word uses to choose a stand-in when the reader does not have one of the document's fonts, so on another computer it could appear in a noticeably different typeface
+
+### Security
+
+- Six components the app is built on have been updated to versions that fix published security problems
+
+### Under the hood
+
+- Making an installer now checks that the bundled LibreOffice is intact, so the macOS problem above would stop a release instead of reaching you
+
 ## 3.4.0 — 2026-09-05
 
 ### Highlighting and drawing, actually working
