@@ -5,7 +5,7 @@ const { createOfficePreview } = require('./preview.cjs');
 function dependencies(overrides = {}) {
   const calls = { rendered: [], discarded: [], read: [] };
   const deps = {
-    x2t: {
+    renderer: {
       toPdf: async (sourcePath) => {
         calls.rendered.push(sourcePath);
         return { pdfPath: '/tmp/magies/j1/preview.pdf', workDir: '/tmp/magies/j1' };

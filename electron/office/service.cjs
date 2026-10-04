@@ -108,7 +108,7 @@ function createOfficeService(deps = {}) {
    * without restarting.
    */
   const previewService = () => runtime.preview ?? createOfficePreview({
-    x2t: createLibreOfficeRenderer({
+    renderer: createLibreOfficeRenderer({
       executable: executable(),
       tempRoot: path.join(os.tmpdir(), 'magies-office'),
       fs: runtime.fs,

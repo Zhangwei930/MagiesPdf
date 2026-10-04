@@ -34,14 +34,6 @@ describe('document engine location', () => {
 });
 
 /**
- * The engine ships two builds of the same editor, and they are not
- * interchangeable. The converter renders PDFs by running the desktop build
- * under `editors/`; the embedded editor is the Document Server build, which is
- * the only one that can save. Pointing either at the other's directory breaks
- * it — the converter with a script error, the editor by taking a save path
- * that ends in a native host that is not there.
- */
-/**
  * The engine is one native converter and a great deal of javascript, and only
  * the converter differs between platforms. Keeping the javascript once rather
  * than once per target is the difference between a checkout carrying it five
@@ -94,30 +86,14 @@ describe('engine converter', () => {
   });
 
   /**
-   * PDF rendering silently produces nothing without the font manifest, so the
-   * converter must always be told where it is.
-   */
-  it('always knows where the font manifest is', () => {
-    const built = createEngineX2t({ packaged: true, resourcesPath: '/app/Resources' });
-    assert.equal(
-      built.allFontsPath,
-      path.join('/app/Resources', 'onlyoffice', 'editors', 'sdkjs', 'common', 'AllFonts.js'),
-    );
-  });
-
-  /**
-   * The fonts and the manifest are not the converter, so in a checkout they
-   * are in the one copy of them rather than beside the binary being built for.
+   * The fonts are not the converter, so in a checkout they are in the one
+   * copy of them rather than beside the binary being built for.
    */
   it('reads fonts from the copy shared with the editor', () => {
     const built = createEngineX2t({
       packaged: false, projectRoot: '/repo', platform: 'win32', arch: 'arm64',
     });
     assert.equal(built.fontsDir, path.join('/repo', 'vendor', 'onlyoffice', 'shared', 'fonts'));
-    assert.equal(
-      built.allFontsPath,
-      path.join('/repo', 'vendor', 'onlyoffice', 'shared', 'editors', 'sdkjs', 'common', 'AllFonts.js'),
-    );
   });
 
   /** Work directories hold copies of user documents; they belong in temp. */
@@ -128,7 +104,7 @@ describe('engine converter', () => {
 
   it('exposes the conversions the app needs', () => {
     const built = createEngineX2t({ packaged: false, projectRoot: '/repo' });
-    for (const method of ['toPdf', 'toEditorFormat', 'fromEditorFormat', 'discard']) {
+    for (const method of ['toEditorFormat', 'fromEditorFormat', 'discard']) {
       assert.equal(typeof built[method], 'function', `missing ${method}`);
     }
   });

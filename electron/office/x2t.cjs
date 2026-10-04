@@ -22,9 +22,11 @@ const path = require('node:path');
  * x2t's own format ids, from the converter's `OfficeFileFormatDefines`.
  *
  * Every id here was confirmed against the real converter by putting a document
- * through it, PDF included — but PDF only renders once `m_sAllFontsPath` points
- * at a font manifest. Without it DoctRenderer fails with `<error code="open"/>`,
- * which reads like a broken format id and is not one.
+ * through it. PDF (513) is left out on purpose: the converter renders it through
+ * DoctRenderer, which needs a font manifest describing the machine it runs on —
+ * one that cannot be shipped — and without it fails with `<error code="open"/>`,
+ * which reads like a broken format id and is not one. PDF is the bundled
+ * LibreOffice's job (`libreOfficeRender.cjs`).
  */
 const DOCUMENT_FORMATS = new Map([
   ['.docx', 65],
@@ -37,7 +39,6 @@ const DOCUMENT_FORMATS = new Map([
   ['.xlsx', 257],
   ['.xls', 258],
   ['.ods', 259],
-  ['.pdf', 513],
 ]);
 
 /** One canvas format per editor: text, spreadsheet, presentation. */
@@ -53,9 +54,6 @@ const EDITOR_FORMATS = new Map([
   ['.ppt', 8195],
   ['.odp', 8195],
 ]);
-
-/** Verified by rendering a real document; see `toPdf`. */
-const PDF_FORMAT = 513;
 
 function extensionOf(candidate) {
   return path.extname(String(candidate)).toLowerCase();
@@ -84,7 +82,7 @@ function escapeXml(value) {
     .replaceAll("'", '&apos;');
 }
 
-function paramsXml({ from, to, formatTo, tempDir, fontsDir, allFontsPath }) {
+function paramsXml({ from, to, formatTo, tempDir, fontsDir }) {
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
     '<TaskQueueDataConvert xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">',
@@ -93,7 +91,6 @@ function paramsXml({ from, to, formatTo, tempDir, fontsDir, allFontsPath }) {
     `  <m_nFormatTo>${formatTo}</m_nFormatTo>`,
     `  <m_sTempDir>${escapeXml(tempDir)}</m_sTempDir>`,
     `  <m_sFontDir>${escapeXml(fontsDir)}</m_sFontDir>`,
-    ...(allFontsPath ? [`  <m_sAllFontsPath>${escapeXml(allFontsPath)}</m_sAllFontsPath>`] : []),
     '  <m_bIsNoBase64>true</m_bIsNoBase64>',
     '</TaskQueueDataConvert>',
     '',
@@ -101,7 +98,7 @@ function paramsXml({ from, to, formatTo, tempDir, fontsDir, allFontsPath }) {
 }
 
 function createX2t(deps) {
-  const { executable, fontsDir, tempRoot, fs, run, uniqueId, allFontsPath = '' } = deps;
+  const { executable, fontsDir, tempRoot, fs, run, uniqueId } = deps;
 
   function requireAbsolute(candidate) {
     if (typeof candidate !== 'string' || !path.isAbsolute(candidate)) {
@@ -115,7 +112,7 @@ function createX2t(deps) {
     await fs.mkdir(workDir, { recursive: true });
     await fs.writeFile(
       paramsPath,
-      paramsXml({ from, to, formatTo, tempDir: workDir, fontsDir, allFontsPath }),
+      paramsXml({ from, to, formatTo, tempDir: workDir, fontsDir }),
       'utf8',
     );
     const result = await run(executable, [paramsPath]);
@@ -135,26 +132,6 @@ function createX2t(deps) {
       const binPath = path.join(workDir, 'Editor.bin');
       await convert({ from: sourcePath, to: binPath, formatTo, workDir });
       return { binPath, workDir };
-    },
-
-    /**
-     * Document on disk → a PDF the app's own viewer can show.
-     *
-     * This is what lets an Office file open as a tab instead of launching a
-     * second application. Rendering runs through DoctRenderer, which needs the
-     * font manifest — without `allFontsPath` it fails with an opaque
-     * `<error code="open" />` rather than saying what is missing.
-     */
-    async toPdf(sourcePath) {
-      requireAbsolute(sourcePath);
-      if (editorFormatId(sourcePath) === 0) {
-        throw new Error(`Unsupported document format: ${sourcePath}`);
-      }
-
-      const workDir = path.join(tempRoot, uniqueId());
-      const pdfPath = path.join(workDir, 'preview.pdf');
-      await convert({ from: sourcePath, to: pdfPath, formatTo: PDF_FORMAT, workDir });
-      return { pdfPath, workDir };
     },
 
     /** `Editor.bin` → a document on disk, in the format the target names. */

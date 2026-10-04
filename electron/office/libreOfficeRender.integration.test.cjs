@@ -75,7 +75,7 @@ describe('preview against the bundled renderer', {
     const source = path.join(tempRoot, 'preview.xlsx');
     await fsp.writeFile(source, Buffer.from(createBlankOfficeDocument('sheet').bytes));
 
-    const preview = createOfficePreview({ x2t: renderer, fs: fsp });
+    const preview = createOfficePreview({ renderer, fs: fsp });
     const [file] = await preview.render([source]);
 
     assert.equal(file.name, 'preview.xlsx');

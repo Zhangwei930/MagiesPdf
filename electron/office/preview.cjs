@@ -21,7 +21,7 @@ const KIND_BY_EDITOR = new Map([
 ]);
 
 function createOfficePreview(deps) {
-  const { x2t, fs } = deps;
+  const { renderer, fs } = deps;
 
   async function renderOne(sourcePath) {
     if (typeof sourcePath !== 'string' || !path.isAbsolute(sourcePath)) {
@@ -30,7 +30,7 @@ function createOfficePreview(deps) {
     const kind = KIND_BY_EDITOR.get(editorTypeFor(sourcePath));
     if (!kind) throw new Error(`Unsupported document format: ${sourcePath}`);
 
-    const { pdfPath, workDir } = await x2t.toPdf(sourcePath);
+    const { pdfPath, workDir } = await renderer.toPdf(sourcePath);
     try {
       const bytes = await fs.readFile(pdfPath);
       return {
@@ -46,7 +46,7 @@ function createOfficePreview(deps) {
     } finally {
       // The render holds a copy of the user's document. Once the bytes are in
       // hand it has no reason to stay on disk — including when reading failed.
-      await x2t.discard(workDir);
+      await renderer.discard(workDir);
     }
   }
 
