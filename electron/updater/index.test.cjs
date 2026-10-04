@@ -18,6 +18,9 @@ async function withUpdaterMocks(
     checkForUpdates,
     installMacUpdateFromZip,
     appLocale = 'en-US',
+    // The updater reads the system time zone, and a mainland one puts the
+    // mirror first — pin it so feed order does not depend on the machine.
+    timeZone = 'UTC',
     platform = 'darwin',
     isPackaged = true,
     autoUpdate = true,
@@ -58,6 +61,8 @@ async function withUpdaterMocks(
   const originalLoad = Module._load;
   const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
   Object.defineProperty(process, 'platform', { ...originalPlatform, value: platform });
+  const originalTimeZone = process.env.TZ;
+  process.env.TZ = timeZone;
   Module._load = function patched(request, parent, isMain) {
     if (request === 'electron-updater') {
       return { autoUpdater: fakeAutoUpdater };
@@ -122,6 +127,9 @@ async function withUpdaterMocks(
   } finally {
     Module._load = originalLoad;
     Object.defineProperty(process, 'platform', originalPlatform);
+    // Assigning undefined would store the string "undefined".
+    if (originalTimeZone === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTimeZone;
     delete require.cache[INDEX_PATH];
     delete require.cache[settingsPath];
   }
