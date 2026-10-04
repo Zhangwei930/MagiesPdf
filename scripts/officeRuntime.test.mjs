@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 import {
   LIBREOFFICE_VERSION,
+  danglingLinks,
   officeRuntimeDirectory,
   officeRuntimeExecutable,
   officeRuntimeNotice,
@@ -53,5 +57,29 @@ describe('officeRuntimeSpec', () => {
     assert.match(notice, new RegExp(spec.url.replaceAll('.', '\\.')));
     assert.match(notice, /MPL-2\.0/i);
     assert.match(notice, new RegExp(`/libreoffice/src/${LIBREOFFICE_VERSION}/`));
+  });
+});
+
+/**
+ * What the release of 3.4.0 shipped: LibreOffice.app with every framework link
+ * pointing into the build runner's detached disk image. soffice still answered
+ * `--version`, so the package check passed; the links are what show it.
+ */
+describe('danglingLinks', {
+  skip: process.platform === 'win32' ? 'creating symlinks needs privileges on Windows' : false,
+}, () => {
+  it('names the links that point at nothing, and only those', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'magies-links-'));
+    try {
+      await mkdir(path.join(root, 'Python.framework', 'Versions', '3.12'), { recursive: true });
+      await writeFile(path.join(root, 'Python.framework', 'Versions', '3.12', 'Python'), '');
+      await symlink('3.12', path.join(root, 'Python.framework', 'Versions', 'Current'));
+      const gone = path.join(root, 'Python.framework', 'Resources');
+      await symlink('/Users/runner/work/mount/Python.framework/Resources', gone);
+
+      assert.deepEqual(await danglingLinks(root), [gone]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

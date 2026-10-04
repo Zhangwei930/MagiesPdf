@@ -11,6 +11,7 @@ import {
   mkdir,
   mkdtemp,
   readdir,
+  readFile,
   rename,
   rm,
   writeFile,
@@ -22,6 +23,7 @@ import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import {
   LIBREOFFICE_VERSION,
+  danglingLinks,
   officeRuntimeDirectory,
   officeRuntimeExecutable,
   officeRuntimeNotice,
@@ -125,15 +127,44 @@ async function findFirst(root, predicate) {
   return '';
 }
 
+/**
+ * Whether `target` already holds this runtime, intact.
+ *
+ * The executable being there is not enough. A runtime copied before
+ * `copyTree` kept links verbatim has every framework link dangling, and one
+ * prepared for an earlier LibreOffice would be kept and relabelled with the
+ * new version, since the manifest is rewritten either way.
+ */
+export async function isPrepared(target, platform) {
+  if (!(await exists(officeRuntimeExecutable(target, platform)))) return false;
+  try {
+    const { version } = JSON.parse(await readFile(path.join(target, 'runtime.json'), 'utf8'));
+    if (version !== LIBREOFFICE_VERSION) return false;
+  } catch {
+    return false;
+  }
+  return (await danglingLinks(target)).length === 0;
+}
+
+/**
+ * Copies the runtime out of wherever it was unpacked, links and all.
+ *
+ * Node's `cp` resolves each link to an absolute path into the source unless
+ * told not to — and the source is a disk image about to be detached or a work
+ * directory about to be removed. Inside LibreOffice.app that left every
+ * framework link dangling, which breaks the bundle's code signature, and macOS
+ * then kills LibreOffice's python as it starts (exit 137, nothing on stderr).
+ */
+export async function copyTree(from, to) {
+  await cp(from, to, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+}
+
 async function extractMac(archive, staged, workRoot) {
   const mount = path.join(workRoot, 'mount');
   await mkdir(mount);
   await run('hdiutil', ['attach', archive, '-nobrowse', '-readonly', '-mountpoint', mount]);
   try {
-    await cp(path.join(mount, 'LibreOffice.app'), path.join(staged, 'LibreOffice.app'), {
-      recursive: true,
-      preserveTimestamps: true,
-    });
+    await copyTree(path.join(mount, 'LibreOffice.app'), path.join(staged, 'LibreOffice.app'));
   } finally {
     await run('hdiutil', ['detach', mount]);
   }
@@ -148,7 +179,7 @@ async function extractWindows(archive, staged, workRoot) {
     (candidate) => path.basename(candidate).toLowerCase() === 'soffice.exe',
   );
   if (!soffice) throw new Error('The LibreOffice MSI did not contain soffice.exe');
-  await cp(path.dirname(path.dirname(soffice)), staged, { recursive: true, preserveTimestamps: true });
+  await copyTree(path.dirname(path.dirname(soffice)), staged);
 }
 
 async function extractLinux(archive, staged, workRoot) {
@@ -176,7 +207,7 @@ async function extractLinux(archive, staged, workRoot) {
     (candidate) => path.basename(candidate) === 'soffice' && path.basename(path.dirname(candidate)) === 'program',
   );
   if (!soffice) throw new Error('The LibreOffice packages did not contain program/soffice');
-  await cp(path.dirname(path.dirname(soffice)), staged, { recursive: true, preserveTimestamps: true });
+  await copyTree(path.dirname(path.dirname(soffice)), staged);
 }
 
 async function writeRuntimeMetadata(target, spec) {
@@ -194,8 +225,7 @@ async function prepareOfficeRuntime(platform, arch) {
 
   const spec = officeRuntimeSpec(platform, arch);
   const target = path.join(projectRoot, 'vendor', 'office-runtime', officeRuntimeDirectory(platform, arch));
-  const executable = officeRuntimeExecutable(target, platform);
-  if (await exists(executable)) {
+  if (await isPrepared(target, platform)) {
     await writeRuntimeMetadata(target, spec);
     console.log(`[office-runtime] LibreOffice ${LIBREOFFICE_VERSION} already prepared at ${target}`);
     return;
