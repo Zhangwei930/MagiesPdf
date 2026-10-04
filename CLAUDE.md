@@ -149,6 +149,12 @@ Things that have each cost hours:
   server stores them under. Serving a plain font *applies* that instead, and
   FreeType then opens nothing — which surfaces far away, as a null face while
   the ribbon's style gallery is drawn.
+- **The converter needs the editor's fonts too.** Its `m_sFontDir` is
+  `web/fonts`, the copy the editor is served. Pointed at a directory with no
+  fonts it converts without a word of complaint, but it rebuilds a .docx's
+  font table on every save from the fonts it can find — so each save stripped
+  every font's panose, which Word uses to substitute a font the reader lacks.
+  `x2t.integration.test.cjs` checks that the panose survives.
 - **The font manifest is generated** (`scripts/onlyofficeFonts.mjs`), not
   shipped. It needs four globals, and the engine fails differently without
   each: `__fonts_files`, `__fonts_infos`, `g_fonts_selection_bin` — which must

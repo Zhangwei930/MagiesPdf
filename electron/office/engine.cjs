@@ -71,12 +71,14 @@ function runConverter(executable, args) {
 
 function createEngineX2t(options = {}) {
   const root = engineRoot(options);
-  const shared = engineSharedRoot(options);
   const executable = x2tExecutablePath(root, options.platform ?? process.platform);
   // A work directory holds a copy of the document being converted, so it lives
   // in temp and is removed as soon as the bytes have been read.
   const tempRoot = path.join(os.tmpdir(), 'magies-office');
-  const fontsDir = path.join(shared, 'fonts');
+  // The fonts the editor is served. The converter rebuilds a .docx's font
+  // table from them on every save, and given none it drops each font's panose
+  // — what Word substitutes by when the reader does not have the font.
+  const fontsDir = path.join(editorAssetsRoot(options), 'fonts');
 
   return {
     ...createX2t({
