@@ -40,6 +40,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Electron fetches its binary on first use, not on install. Two suites
+      # asking for it at once both start the download, and the one that spawns
+      # it first fails with ETXTBSY while the other is still writing it.
+      - run: node node_modules/electron/install.js
       # About 1.5 GB of packages, which change only when a pinned version does.
       - uses: actions/cache@v6
         with:
