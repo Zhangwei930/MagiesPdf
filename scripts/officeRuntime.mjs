@@ -1,3 +1,6 @@
+import { access, readdir } from 'node:fs/promises';
+import path from 'node:path';
+
 export const LIBREOFFICE_VERSION = '26.2.5';
 
 const DOWNLOAD_ROOT = `https://download.documentfoundation.org/libreoffice/stable/${LIBREOFFICE_VERSION}`;
@@ -86,4 +89,30 @@ third-party licences. Licence information: ${LICENSE_URL}
 
 Corresponding LibreOffice source code: ${SOURCE_URL}
 `;
+}
+
+/**
+ * Every link under `root` that points at nothing.
+ *
+ * A runtime with one is broken even while it starts. Inside LibreOffice.app
+ * they were framework links, and a framework with them fails its code
+ * signature, so macOS kills LibreOffice's python — while soffice itself still
+ * answers `--version`, which is all a launch check sees.
+ */
+export async function danglingLinks(root) {
+  const found = [];
+  const pending = [root];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    for (const entry of await readdir(current, { withFileTypes: true })) {
+      const candidate = path.join(current, entry.name);
+      if (entry.isSymbolicLink()) {
+        // access follows the link, so it fails exactly when the target is gone.
+        await access(candidate).catch(() => found.push(candidate));
+      } else if (entry.isDirectory()) {
+        pending.push(candidate);
+      }
+    }
+  }
+  return found;
 }

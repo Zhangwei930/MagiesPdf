@@ -3,7 +3,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { LIBREOFFICE_VERSION } from './officeRuntime.mjs';
+import { LIBREOFFICE_VERSION, danglingLinks } from './officeRuntime.mjs';
 
 const execFileAsync = promisify(execFile);
 const scriptPath = fileURLToPath(import.meta.url);
@@ -122,6 +122,18 @@ async function verifyMetadata(executable) {
   }
 }
 
+/**
+ * The launch check below only asks soffice for its version, which a runtime
+ * with its framework links dangling still answers. 3.4.0 shipped that way on
+ * macOS, with every UNO operation failing as its python was killed at start.
+ */
+async function verifyLinks(executable) {
+  const broken = await danglingLinks(runtimeRootFor(executable));
+  if (broken.length > 0) {
+    throw new Error(`Bundled Office has ${broken.length} links that point at nothing, such as ${broken[0]}`);
+  }
+}
+
 async function verifyPackage(root, platform, arch) {
   const candidates = await findOfficeExecutables(root, platform);
   const matching = [];
@@ -133,7 +145,10 @@ async function verifyPackage(root, platform, arch) {
     throw new Error(`No ${platform}-${arch} bundled Office executable was found under ${root}`);
   }
 
-  for (const executable of matching) await verifyMetadata(executable);
+  for (const executable of matching) {
+    await verifyMetadata(executable);
+    await verifyLinks(executable);
+  }
   const executable = matching[0];
   if (hostCanRunTarget(platform, arch)) {
     const launcher = path.join(path.dirname(executable), officeExecutableNames(platform).launcher);
