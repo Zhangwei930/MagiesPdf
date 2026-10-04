@@ -86,14 +86,21 @@ describe('engine converter', () => {
   });
 
   /**
-   * The fonts are not the converter, so in a checkout they are in the one
-   * copy of them rather than beside the binary being built for.
+   * The converter reads the fonts the editor is served. Pointed anywhere else
+   * it still converts, but it rebuilds a .docx's font table on save from the
+   * fonts it can find, and with none every font loses its panose — what Word
+   * substitutes by when the reader does not have the font.
    */
-  it('reads fonts from the copy shared with the editor', () => {
-    const built = createEngineX2t({
-      packaged: false, projectRoot: '/repo', platform: 'win32', arch: 'arm64',
-    });
-    assert.equal(built.fontsDir, path.join('/repo', 'vendor', 'onlyoffice', 'shared', 'fonts'));
+  it('reads the fonts the editor is served', () => {
+    const checkout = { packaged: false, projectRoot: '/repo', platform: 'win32', arch: 'arm64' };
+    assert.equal(
+      createEngineX2t(checkout).fontsDir,
+      path.join('/repo', 'vendor', 'onlyoffice', 'shared', 'web', 'fonts'),
+    );
+    assert.equal(createEngineX2t(checkout).fontsDir, path.join(editorAssetsRoot(checkout), 'fonts'));
+
+    const packaged = { packaged: true, resourcesPath: '/app/Resources' };
+    assert.equal(createEngineX2t(packaged).fontsDir, path.join('/app/Resources', 'onlyoffice', 'web', 'fonts'));
   });
 
   /** Work directories hold copies of user documents; they belong in temp. */

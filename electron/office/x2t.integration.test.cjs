@@ -8,7 +8,7 @@ const { execFile } = require('node:child_process');
 const { describe, it, before, after } = require('node:test');
 const { createX2t, x2tExecutablePath } = require('./x2t.cjs');
 const { createOfficeSessions } = require('./session.cjs');
-const { engineRoot, engineSharedRoot } = require('./engine.cjs');
+const { createEngineX2t, engineRoot } = require('./engine.cjs');
 
 /**
  * The unit tests prove the logic against fakes. This one proves the two
@@ -23,8 +23,8 @@ const { engineRoot, engineSharedRoot } = require('./engine.cjs');
 // this suite quietly skipping while reporting success.
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const RUNTIME_ROOT = engineRoot({ packaged: false, projectRoot: PROJECT_ROOT });
-// Only the converter is per-target; its fonts are the copy the editor shares.
-const SHARED_ROOT = engineSharedRoot({ packaged: false, projectRoot: PROJECT_ROOT });
+// The fonts the app hands the converter, taken from the app rather than restated.
+const { fontsDir: FONTS_DIR } = createEngineX2t({ packaged: false, projectRoot: PROJECT_ROOT });
 const EXECUTABLE = x2tExecutablePath(RUNTIME_ROOT);
 const AVAILABLE = fs.existsSync(EXECUTABLE);
 
@@ -50,7 +50,7 @@ describe('x2t against the vendored engine', { skip: AVAILABLE ? false : 'vendor/
     tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'magies-x2t-'));
     x2t = createX2t({
       executable: EXECUTABLE,
-      fontsDir: path.join(SHARED_ROOT, 'fonts'),
+      fontsDir: FONTS_DIR,
       tempRoot,
       fs: fsp,
       run,
@@ -80,6 +80,30 @@ describe('x2t against the vendored engine', { skip: AVAILABLE ? false : 'vendor/
 
     await x2t.discard(workDir);
     assert.equal(fs.existsSync(workDir), false);
+  });
+
+  /**
+   * The converter rebuilds a .docx's font table on save from the fonts it is
+   * given. Given none, it still saves — with every font's panose gone, which is
+   * what Word substitutes by when the reader does not have the font.
+   */
+  it('keeps every font\'s panose through a save', async () => {
+    const source = path.join(tempRoot, 'fonts.docx');
+    await buildSampleDocx(source);
+
+    const { binPath, workDir } = await x2t.toEditorFormat(source);
+    const target = path.join(tempRoot, 'fonts-out.docx');
+    await x2t.fromEditorFormat(binPath, target);
+
+    const { zipRead } = await import('../../src/core/ooxml/zip.ts');
+    const entry = zipRead(await fsp.readFile(target)).get('word/fontTable.xml');
+    assert.ok(entry, 'the saved document has no font table');
+    const fontTable = Buffer.from(entry).toString('utf8');
+    const fonts = fontTable.match(/<w:font\b/g) ?? [];
+    assert.ok(fonts.length > 0, 'the font table names no fonts');
+    assert.equal((fontTable.match(/<w:panose1\b/g) ?? []).length, fonts.length, 'a font lost its panose');
+
+    await x2t.discard(workDir);
   });
 
   it('drives a full open → edit → save session', async () => {
