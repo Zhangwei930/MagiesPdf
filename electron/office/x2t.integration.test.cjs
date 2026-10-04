@@ -16,7 +16,8 @@ const { createEngineX2t, engineRoot } = require('./engine.cjs');
  * tell us, and where every surprise so far has come from.
  *
  * It is skipped when the engine is not vendored, because `vendor/onlyoffice/`
- * is a ~600 MB unpacked download that is deliberately not in git and not in CI.
+ * is a ~600 MB unpacked download that is deliberately not in git and not in
+ * ci.yml. integration.yml vendors it, and fails if this suite skips.
  */
 
 // Resolved the same way the app resolves it, so moving the engine cannot leave

@@ -15,8 +15,9 @@ const { after, before, describe, it } = require('node:test');
  * `did-finish-load` produced a single blank page from a seven-page file.
  *
  * Runs Electron for real, so it is skipped where there is no display — which
- * includes CI. That is the same trade the LibreOffice integration tests make:
- * the check that needs the real thing runs where the real thing is.
+ * includes ci.yml. That is the same trade the LibreOffice integration tests
+ * make: the check that needs the real thing runs where the real thing is, and
+ * integration.yml gives it a virtual display and fails if it skips.
  */
 
 function electronBinary() {

@@ -1,0 +1,70 @@
+name: integration
+
+# The suites that need the real document engine, the bundled LibreOffice or a
+# display skip in ci.yml, which provides none of them. Each of these bugs lived
+# there unseen: the converter's PDF path could not run in any checkout, the
+# converter was handed a fonts directory that did not exist, and the macOS
+# release shipped a LibreOffice whose python could not start. This runs those
+# suites against the real thing, and fails if any of them skipped.
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'electron/office/**'
+      - 'electron/print*.cjs'
+      - 'scripts/prepareEngine.mjs'
+      - 'scripts/prepare-office-runtime.mjs'
+      - 'scripts/officeRuntime.mjs'
+      - 'scripts/onlyofficeFonts.mjs'
+      - 'src/core/office/**'
+      - '.github/workflows/integration.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # About 1.5 GB of packages, which change only when a pinned version does.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            vendor/.cache
+            .cache/office-runtime
+          key: engine-downloads-${{ hashFiles('scripts/prepareEngine.mjs', 'scripts/officeRuntime.mjs') }}
+      - run: npm run prepare:engine -- --shared
+      - run: npm run prepare:engine -- --platform=linux --arch=x64
+      - run: npm run prepare:office-runtime -- --platform=linux --arch=x64
+      - run: npm run build:node
+      # Ubuntu's AppArmor refuses the unprivileged user namespaces Chromium's
+      # sandbox needs, so Electron would not start for the print suite.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Run the integration suites
+        shell: bash
+        run: |
+          xvfb-run -a node --test --import tsx --test-reporter=tap \
+            'electron/**/*.integration.test.cjs' | tee integration.tap
+      # A suite that skips reports success, which is how all of the above went
+      # unseen. Here every one of them has what it needs, so a skip is a failure.
+      - name: Fail on any skipped suite
+        shell: bash
+        run: |
+          if grep -E '# SKIP' integration.tap; then
+            echo '::error title=An integration suite skipped::Every suite here must run. A skip means the engine, the runtime or the display is missing.'
+            exit 1
+          fi

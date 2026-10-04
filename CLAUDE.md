@@ -23,6 +23,12 @@ npm run prepare:engine -- --platform=win32 --arch=arm64   # one target's convert
 npm run fonts:engine   # regenerate the font manifest from the fonts that ship
 ```
 
+The `*.integration.test.cjs` suites need the real engine, the bundled
+LibreOffice or a display, and skip without them — so in `ci.yml` they always
+skip, and a green run says nothing about them. `.github/workflows/integration.yml`
+prepares all three on Linux and runs them, failing on any skip: on pull requests
+that touch the Office path, weekly, and on demand.
+
 ## Layer rules
 
 Three layers, enforced by ESLint and by the build:
