@@ -49,7 +49,20 @@ describe('preferMirror / detectPreferredFeed', () => {
   });
 
   it('tolerates a missing time zone', () => {
-    assert.equal(preferMirror({ locale: 'en-US', timeZone: '' }), false);
+    // An empty timeZone falls back to the system's, so passing '' would only
+    // test the machine running the suite. Take the system's away instead, both
+    // ways a container without tz data does it.
+    const original = Intl.DateTimeFormat;
+    try {
+      Intl.DateTimeFormat = () => ({ resolvedOptions: () => ({}) });
+      assert.equal(preferMirror({ locale: 'en-US' }), false);
+      Intl.DateTimeFormat = () => {
+        throw new RangeError('no time zone data');
+      };
+      assert.equal(preferMirror({ locale: 'en-US' }), false);
+    } finally {
+      Intl.DateTimeFormat = original;
+    }
   });
 });
 
