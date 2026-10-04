@@ -130,8 +130,8 @@ function extractConverter(file, asset, into) {
  * Links the shared half in beside the converter.
  *
  * This makes a checkout the same shape as a packaged app, where both halves sit
- * in one directory — which matters because the converter's own
- * DoctRenderer.config reaches its scripts through `../editors`.
+ * in one directory, so whatever looks for the editor beside the converter —
+ * the packaging check among them — finds it in either.
  */
 function linkShared(target, projectRoot) {
   const shared = path.join(projectRoot, 'vendor', 'onlyoffice', 'shared');

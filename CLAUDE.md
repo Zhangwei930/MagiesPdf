@@ -161,9 +161,11 @@ Things that have each cost hours:
   the editor behind a dialog and ends by fetching the file it produced. The
   document arrives at `/editors/downloadas/<session>`; the document's `key`
   must *be* the session, or there is nothing to match the upload to.
-- **PDF previews go through the bundled LibreOffice**, not the converter. The
-  converter's own PDF rendering needs a font manifest describing the machine it
-  runs on, which cannot be shipped.
+- **PDF never goes through the converter.** Previews and PDF export are
+  rendered by the bundled LibreOffice. The converter's own PDF rendering needs
+  a font manifest describing the machine it runs on, which cannot be shipped —
+  a manifest generated from the shipped fonts produced pages without type — so
+  `x2t.cjs` has no PDF path and refuses a `.pdf` target as unsupported.
 
 ## Distribution
 

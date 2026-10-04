@@ -24,9 +24,8 @@ What ships, unmodified, under `resources/onlyoffice`:
 - `web/` — the Document Server build of the editor, which the embedded editor
   loads. Javascript and data, identical on every platform.
 
-The desktop build of the editor is used during development, to render PDFs
-through the converter, and is not shipped: the preview a user sees is rendered
-by the bundled LibreOffice instead.
+The desktop build of the editor is neither used nor shipped: PDF previews and
+exports are rendered by the bundled LibreOffice, not by the converter.
 
 ### Modifications
 

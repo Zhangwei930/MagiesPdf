@@ -6,9 +6,10 @@ const { editorTypeFor } = require('./session.cjs');
 /**
  * Renders an Office document to PDF with the bundled LibreOffice, headless.
  *
- * This is what a Word, Sheet or Slide tab actually shows. It deliberately
- * exposes the same two calls as the x2t converter — `toPdf` and `discard` — so
- * the preview service does not know or care which engine produced the page.
+ * This is what a Word, Sheet or Slide tab actually shows, and what an editor's
+ * PDF export writes. It exposes two calls, `toPdf` and `discard`, which is all
+ * the preview service and the session's export ask of a renderer. The x2t
+ * converter has no PDF path of its own: see the format ids in `x2t.cjs`.
  *
  * Headless conversion is not the same thing as launching the editor: no window
  * appears, nothing is left running, and the process exits when the page is

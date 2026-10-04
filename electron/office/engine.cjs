@@ -34,11 +34,11 @@ function engineRoot({
 /**
  * Everything of the engine that is not the converter.
  *
- * Only the converter is a native binary; the editors, the browser build and
- * the fonts are javascript and data, identical on every platform. A checkout
- * keeps one copy of them rather than one per target — five targets would
- * otherwise carry the same 1.4 GB five times — while a packaged app composes
- * both halves into the single directory the runtime reads.
+ * Only the converter is a native binary; the editor and its fonts are
+ * javascript and data, identical on every platform. A checkout keeps one copy
+ * of them rather than one per target — five targets would otherwise carry the
+ * same data five times — while a packaged app composes both halves into the
+ * single directory the runtime reads.
  */
 function engineSharedRoot({
   packaged = app?.isPackaged ?? false,
@@ -52,10 +52,10 @@ function engineSharedRoot({
 /**
  * Where the embedded editor's assets live.
  *
- * Not `editors/`. That is the desktop build, which the converter runs to
- * render PDFs and which cannot save — its save path is a call into a native
- * host. The browser editor is served the Document Server build, which is kept
- * separately because the two cannot share a directory.
+ * The Document Server build, under `web/`. It is the only build of the editor
+ * that can save: the desktop build's save path is a call into a native host
+ * that is not here. The app carries no desktop build at all — the converter
+ * needs none, because PDF is rendered by the bundled LibreOffice.
  */
 function editorAssetsRoot(options = {}) {
   return path.join(engineSharedRoot(options), 'web');
@@ -76,21 +76,18 @@ function createEngineX2t(options = {}) {
   // A work directory holds a copy of the document being converted, so it lives
   // in temp and is removed as soon as the bytes have been read.
   const tempRoot = path.join(os.tmpdir(), 'magies-office');
-  const allFontsPath = path.join(shared, 'editors', 'sdkjs', 'common', 'AllFonts.js');
   const fontsDir = path.join(shared, 'fonts');
 
   return {
     ...createX2t({
       executable,
       fontsDir,
-      allFontsPath,
       tempRoot,
       fs,
       run: options.run ?? runConverter,
       uniqueId: () => crypto.randomUUID(),
     }),
     executablePath: executable,
-    allFontsPath,
     fontsDir,
     tempRoot,
   };

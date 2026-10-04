@@ -41,7 +41,6 @@ describe('x2t format ids', () => {
     assert.equal(documentFormatId('/a/b.pptx'), 129);
     assert.equal(documentFormatId('/a/b.ppt'), 130);
     assert.equal(documentFormatId('/a/b.odp'), 131);
-    assert.equal(documentFormatId('/a/b.pdf'), 513);
   });
 
   it('is case insensitive and rejects anything else', () => {
@@ -128,47 +127,26 @@ describe('x2t conversion', () => {
     );
   });
 
+  /**
+   * PDF is rendered by the bundled LibreOffice, never by the converter: its own
+   * renderer needs a font manifest describing the machine it runs on, which the
+   * app does not ship. Refusing it here makes a stray PDF target fail as what it
+   * is, not as DoctRenderer's opaque `<error code="open" />`.
+   */
+  it('does not write PDF', async () => {
+    assert.equal(documentFormatId('/a/b.pdf'), 0);
+    const x2t = createX2t(dependencies().deps);
+    await assert.rejects(
+      () => x2t.fromEditorFormat('/tmp/magies/job1/Editor.bin', '/docs/report.pdf'),
+      /unsupported/i,
+    );
+    assert.equal('toPdf' in x2t, false);
+  });
+
   it('surfaces a converter failure instead of reporting success', async () => {
     const { deps } = dependencies({ run: async () => ({ code: 1, stderr: 'boom' }) });
     const x2t = createX2t(deps);
     await assert.rejects(() => x2t.toEditorFormat('/docs/report.docx'), /x2t failed/i);
-  });
-
-  /**
-   * Rendering to PDF is how an Office document is shown in the app's own
-   * viewer, so it is the whole single-window story — not an export nicety.
-   */
-  it('renders a document to PDF for the viewer', async () => {
-    const { calls, deps } = dependencies();
-    const x2t = createX2t(deps);
-
-    const result = await x2t.toPdf('/docs/report.docx');
-
-    assert.equal(result.pdfPath, '/tmp/magies/job1/preview.pdf');
-    const [, paramsXml] = calls.written.find(([target]) => String(target).endsWith('.xml'));
-    assert.match(paramsXml, /<m_nFormatTo>513<\/m_nFormatTo>/);
-    assert.match(paramsXml, /<m_sFileTo>\/tmp\/magies\/job1\/preview\.pdf<\/m_sFileTo>/);
-  });
-
-  /**
-   * PDF goes through DoctRenderer, which will not start without the font
-   * manifest. Leaving it out of the params is the difference between a
-   * rendered page and a silent failure, so it is pinned here.
-   */
-  it('tells the renderer where the font manifest is when producing PDF', async () => {
-    const { calls, deps } = dependencies({ allFontsPath: '/engine/AllFonts.js' });
-    const x2t = createX2t(deps);
-
-    await x2t.toPdf('/docs/report.docx');
-
-    const [, paramsXml] = calls.written.find(([target]) => String(target).endsWith('.xml'));
-    assert.match(paramsXml, /<m_sAllFontsPath>\/engine\/AllFonts\.js<\/m_sAllFontsPath>/);
-  });
-
-  it('refuses to render a format it cannot read', async () => {
-    const { deps } = dependencies();
-    const x2t = createX2t(deps);
-    await assert.rejects(() => x2t.toPdf('/docs/report.exe'), /unsupported/i);
   });
 
   it('cleans up a work directory on request', async () => {

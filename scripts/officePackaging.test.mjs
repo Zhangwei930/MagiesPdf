@@ -48,10 +48,9 @@ describe('document engine packaging', () => {
   });
 
   /**
-   * The engine ships as two builds that are not interchangeable: the desktop
-   * one the converter renders PDFs with, and the browser one the editor is
-   * served from. A package with only the first opens documents read-only and
-   * fails the moment anyone edits.
+   * The engine ships as two halves that are not interchangeable: the converter,
+   * and the browser build the editor is served from. A package with only the
+   * first opens documents and fails the moment anyone edits.
    */
   it('fails packaging when the browser build is absent', () => {
     const noBrowserBuild = (candidate) => !candidate.includes('/web/');
@@ -122,11 +121,10 @@ describe('what of the engine is packaged', () => {
       'web/web-apps/apps/documenteditor/mobile/index.html',
       'web/web-apps/apps/documenteditor/embed/index.html',
       'web/web-apps/apps/visioeditor/main/index.html',
-      // The desktop build and the font data it needs exist for one thing:
-      // rendering PDFs through the converter, which nothing here does — the
-      // preview goes through the bundled LibreOffice, which needs no font
-      // manifest and works on every platform. Shipping them would also ship
-      // a manifest describing the build machine's fonts.
+      // The desktop build and its font data were only ever for rendering
+      // PDFs through the converter, which this app does not do. An older
+      // checkout may still have them, and they must not ship: they would
+      // carry a manifest describing the build machine's fonts.
       'editors/sdkjs/word/sdk-all.js',
       'editors/web-apps/vendor/xregexp/xregexp-all-min.js',
       'fonts/AllFonts.js',

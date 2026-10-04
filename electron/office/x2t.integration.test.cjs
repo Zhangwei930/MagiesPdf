@@ -51,7 +51,6 @@ describe('x2t against the vendored engine', { skip: AVAILABLE ? false : 'vendor/
     x2t = createX2t({
       executable: EXECUTABLE,
       fontsDir: path.join(SHARED_ROOT, 'fonts'),
-      allFontsPath: path.join(SHARED_ROOT, 'editors', 'sdkjs', 'common', 'AllFonts.js'),
       tempRoot,
       fs: fsp,
       run,
@@ -81,23 +80,6 @@ describe('x2t against the vendored engine', { skip: AVAILABLE ? false : 'vendor/
 
     await x2t.discard(workDir);
     assert.equal(fs.existsSync(workDir), false);
-  });
-
-  /**
-   * The single-window story in one test: an Office file becomes something the
-   * app's own PDF viewer can render, with no second application involved.
-   */
-  it('renders a document to a PDF the viewer can open', async () => {
-    const source = path.join(tempRoot, 'preview.docx');
-    await buildSampleDocx(source);
-
-    const { pdfPath, workDir } = await x2t.toPdf(source);
-
-    assert.ok(fs.existsSync(pdfPath), 'no PDF was produced');
-    const header = await fsp.readFile(pdfPath);
-    assert.equal(header.subarray(0, 5).toString(), '%PDF-');
-
-    await x2t.discard(workDir);
   });
 
   it('drives a full open → edit → save session', async () => {
