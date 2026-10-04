@@ -24,6 +24,13 @@ export default defineConfig({
   server: {
     port: 5273,
     strictPort: true,
+    watch: {
+      // vendor/ holds the document engine and LibreOffice: tens of thousands of
+      // files, HTML help among them, and Vite reloads the page for every HTML
+      // file it sees change. Preparing LibreOffice once reloaded the dev window
+      // nearly 20,000 times. Nothing the renderer imports lives in any of these.
+      ignored: ['**/vendor/**', '**/.cache/**', '**/release/**', '**/coverage/**'],
+    },
   },
   build: {
     outDir: 'dist',
